@@ -36,7 +36,8 @@
 
 #include <QMenu>
 #include <QToolButton>
-#include <QApplication> // qApp
+#include <QApplication>
+#include <QRegularExpression>
 #include <QScreen>
 #include <QWindow>
 
@@ -1069,12 +1070,12 @@ NATRON_NAMESPACE_ANONYMOUS_ENTER
 static QStringList
 explode(const QString& str)
 {
-    QRegExp rx( QString::fromUtf8("(\\ |\\-|\\.|\\/|\\t|\\n)") ); //RegEx for ' ' '/' '.' '-' '\t' '\n'
+    QRegularExpression rx(QString::fromUtf8("[ ./\\t\\n-]")); //RegEx for ' ' '/' '.' '-' '\t' '\n'
     QStringList ret;
     int startIndex = 0;
 
     while (true) {
-        int index = str.indexOf(rx, startIndex);
+        int index = rx.match(str, startIndex).capturedStart();
 
         if (index == -1) {
             ret.push_back( str.mid(startIndex) );
@@ -2076,13 +2077,13 @@ ViewerGL::tabletEvent(QTabletEvent* e)
     switch ( e->type() ) {
     case QEvent::TabletPress: {
         switch ( e->pointerType() ) {
-        case QTabletEvent::Cursor:
+        case QPointingDevice::PointerType::Cursor:
             _imp->pointerTypeOnPress  = ePenTypeCursor;
             break;
-        case QTabletEvent::Eraser:
+        case QPointingDevice::PointerType::Eraser:
             _imp->pointerTypeOnPress  = ePenTypeEraser;
             break;
-        case QTabletEvent::Pen:
+        case QPointingDevice::PointerType::Pen:
         default:
             _imp->pointerTypeOnPress  = ePenTypePen;
             break;

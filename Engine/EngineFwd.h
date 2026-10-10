@@ -48,6 +48,8 @@ class access;
 
 // Qt
 
+#include <QStringList>
+
 class QByteArray;
 class QChar;
 class QDateTime;
@@ -61,7 +63,6 @@ class QNetworkRequest;
 class QProcess;
 class QSettings;
 class QString;
-class QStringList;
 class QThread;
 class QTimer;
 class QUrl;

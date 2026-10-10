@@ -52,7 +52,7 @@ CLANG_DIAG_ON(deprecated-register)
 #ifdef OFX_SUPPORTS_MULTITHREAD
 #include <QThread>
 #include <QThreadStorage>
-#include <QtConcurrentMap> // QtCore on Qt4, QtConcurrent on Qt5
+#include <QtConcurrentMap>
 #endif
 CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)

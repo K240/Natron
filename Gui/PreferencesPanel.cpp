@@ -42,6 +42,7 @@ CLANG_DIAG_OFF(uninitialized)
 #include <QStyledItemDelegate>
 #include <QHeaderView>
 #include <QPainter>
+#include <QRegularExpression>
 CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)
 
@@ -819,10 +820,10 @@ PreferencesPanel::filterPlugins(const QString & txt)
             pattern.push_back(txt[i]);
         }
         pattern.push_back( QLatin1Char('*') );
-        QRegExp expr(pattern, Qt::CaseInsensitive, QRegExp::WildcardUnix);
+        QRegularExpression expr(QRegularExpression::wildcardToRegularExpression(pattern, QRegularExpression::NonPathWildcardConversion), QRegularExpression::CaseInsensitiveOption);
         std::list<QTreeWidgetItem*> itemsToDisplay;
         for (PluginTreeNodeList::iterator it = _imp->pluginsList.begin(); it != _imp->pluginsList.end(); ++it) {
-            if ( it->plugin && it->plugin->getLabelWithoutSuffix().contains(expr) ) {
+            if ( it->plugin && expr.match(it->plugin->getLabelWithoutSuffix()).hasMatch() ) {
                 itemsToDisplay.push_back(it->item);
             } else {
                 it->item->setExpanded(false);

@@ -20,7 +20,7 @@
 // ***** BEGIN PYTHON BLOCK *****
 // from <https://docs.python.org/3/c-api/intro.html#include-files>:
 // "Since Python may define some pre-processor definitions which affect the standard headers on some systems, you must include Python.h before any standard headers are included."
-#undef Py_LIMITED_API  // Needed for PyRun_SimpleString, PyRun_String, Py_NoUserSiteDirectory
+#undef Py_LIMITED_API  // Needed for PyRun_SimpleString and PyRun_String.
 #include <Python.h>
 // ***** END PYTHON BLOCK *****
 
@@ -2936,12 +2936,6 @@ AppManager::initPython()
 
     return;
 #endif
-    //Disable user sites as they could conflict with Natron bundled packages.
-    //If this is set, Python won’t add the user site-packages directory to sys.path.
-    //See https://www.python.org/dev/peps/pep-0370/
-    qputenv("PYTHONNOUSERSITE", "1");
-    ++Py_NoUserSiteDirectory;
-
     //
     // set up paths, clear those that don't exist or are not valid
     //
@@ -3003,7 +2997,7 @@ AppManager::initPython()
     }
     // Set QT_API for QtPy
     // https://github.com/spyder-ide/qtpy
-    qputenv("QT_API", "pyside2");
+    qputenv("QT_API", "pyside6");
 } // AppManager::initPython
 
 void

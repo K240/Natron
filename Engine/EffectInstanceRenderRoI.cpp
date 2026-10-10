@@ -38,8 +38,8 @@
 #include <QThreadPool>
 #include <QReadWriteLock>
 #include <QCoreApplication>
-#include <QtConcurrentMap> // QtCore on Qt4, QtConcurrent on Qt5
-#include <QtConcurrentRun> // QtCore on Qt4, QtConcurrent on Qt5
+#include <QtConcurrentMap>
+#include <QtConcurrentRun>
 
 #include "Global/QtCompat.h"
 
@@ -1517,7 +1517,8 @@ EffectInstance::renderRoI(const RenderRoIArgs & args,
         ///locks belongs to an instance)
 
 
-        std::unique_ptr<QMutexLocker> locker;
+        std::unique_ptr<QtCompat::MutexLocker> instanceLocker;
+        std::unique_ptr<QtCompat::RecursiveMutexLocker> pluginLocker;
 
 
         EffectInstancePtr renderInstance;
@@ -1535,14 +1536,15 @@ EffectInstance::renderRoI(const RenderRoIArgs & args,
         assert(renderInstance);
 
         if (safety == eRenderSafetyInstanceSafe) {
-            locker.reset( new QMutexLocker( &getNode()->getRenderInstancesSharedMutex() ) );
+            instanceLocker.reset( new QtCompat::MutexLocker( &getNode()->getRenderInstancesSharedMutex() ) );
         } else if (safety == eRenderSafetyUnsafe) {
             const Plugin* p = getNode()->getPlugin();
             assert(p);
-            locker.reset( new QMutexLocker( p->getPluginLock() ) );
+            pluginLocker.reset( new QtCompat::RecursiveMutexLocker( p->getPluginLock() ) );
         } else {
             // no need to lock
-            Q_UNUSED(locker);
+            Q_UNUSED(instanceLocker);
+            Q_UNUSED(pluginLocker);
         }
 
 

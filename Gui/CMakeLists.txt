@@ -27,12 +27,11 @@ list(APPEND PYGUI_INCLUDE_DIRS ${PYSIDE_INCLUDE_DIRS} ${PYSIDE_INCLUDE_DIRS}/QtC
     ${PYSIDE_INCLUDE_DIRS}/QtGui ${PYSIDE_INCLUDE_DIRS}/QtWidgets)
 list(APPEND PYGUI_INCLUDE_DIRS ${QTCORE_INCLUDE_DIRS} ${QTGUI_INCLUDE_DIRS}
     ${QTWIDGETS_INCLUDE_DIRS} ${Python3_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
+list(APPEND PYGUI_INCLUDE_DIRS ${Qt6OpenGLWidgets_INCLUDE_DIRS})
 list(TRANSFORM PYGUI_INCLUDE_DIRS PREPEND "-I" OUTPUT_VARIABLE PYGUI_INCS)
 set(PYGUI_HEADER PySide${PYSIDE_VERSION_MAJOR}_Gui_Python.h)
 
-if(NATRON_QT6)
-    set(QT_OPENGLWIDGETS Qt::OpenGLWidgets)
-endif()
+set(QT_OPENGLWIDGETS Qt::OpenGLWidgets)
 
 set(shiboken_args
     "-std=c++17" "--enable-parent-ctor-heuristic" "--use-isnull-as-nb_nonzero"
@@ -40,14 +39,19 @@ set(shiboken_args
     ${PYGUI_INCS}
     "-T../Engine" "-T${PYSIDE_TYPESYSTEMS}" "--output-directory=${PYGUI_OUT}"
     "${PYGUI_HEADER}" "typesystem_natronGui.xml")
+if(WIN32)
+    list(PREPEND shiboken_args "--clang-options=-DNOMINMAX,-DNATRON_BUILD_NUMBER=0")
+endif()
 
-execute_process(COMMAND ${Python3_EXECUTABLE} ../tools/utils/sourceList.py typesystem_natronGui.xml ${PYGUI_OUT}
+execute_process(COMMAND ${NATRON_PYTHON_COMMAND} ../tools/utils/sourceList.py typesystem_natronGui.xml ${PYGUI_OUT}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     OUTPUT_VARIABLE PyGui_SOURCES)
 set_property(SOURCE ${PyGui_SOURCES} PROPERTY SKIP_AUTOGEN ON)
+set_property(SOURCE ${PyGui_SOURCES} APPEND PROPERTY COMPILE_OPTIONS
+    "$<IF:$<CXX_COMPILER_ID:MSVC>,/UPy_LIMITED_API,-UPy_LIMITED_API>")
 add_custom_command(OUTPUT ${PyGui_SOURCES}
     COMMAND $<TARGET_FILE:${SHIBOKEN_EXE}> ${shiboken_args}
-    COMMAND ${Python3_EXECUTABLE} ../tools/utils/sourceCleanup.py typesystem_natronGui.xml ${PYGUI_OUT}
+    COMMAND ${NATRON_PYTHON_COMMAND} ../tools/utils/sourceCleanup.py typesystem_natronGui.xml ${PYGUI_OUT}
     DEPENDS ${SHIBOKEN_EXE} ${PYGUI_HEADER} NatronEngine ${NatronGui_HEADERS} ../tools/utils/sourceCleanup.py typesystem_natronGui.xml
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 

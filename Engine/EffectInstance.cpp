@@ -38,8 +38,8 @@
 
 #include <QReadWriteLock>
 #include <QCoreApplication>
-#include <QtConcurrentMap> // QtCore on Qt4, QtConcurrent on Qt5
-#include <QtConcurrentRun> // QtCore on Qt4, QtConcurrent on Qt5
+#include <QtConcurrentMap>
+#include <QtConcurrentRun>
 
 #include "Global/QtCompat.h"
 
@@ -4097,9 +4097,9 @@ EffectInstance::attachOpenGLContext_public(const OSGLContextPtr& glContext,
 {
     NON_RECURSIVE_ACTION();
     bool concurrentGLRender = supportsConcurrentOpenGLRenders();
-    std::unique_ptr<QMutexLocker> locker;
+    std::unique_ptr<QtCompat::RecursiveMutexLocker> locker;
     if (concurrentGLRender) {
-        locker.reset( new QMutexLocker(&_imp->attachedContextsMutex) );
+        locker.reset( new QtCompat::RecursiveMutexLocker(&_imp->attachedContextsMutex) );
     } else {
         _imp->attachedContextsMutex.lock();
     }
@@ -4158,9 +4158,9 @@ EffectInstance::dettachOpenGLContext_public(const OSGLContextPtr& glContext, con
 {
     NON_RECURSIVE_ACTION();
     bool concurrentGLRender = supportsConcurrentOpenGLRenders();
-    std::unique_ptr<QMutexLocker> locker;
+    std::unique_ptr<QtCompat::RecursiveMutexLocker> locker;
     if (concurrentGLRender) {
-        locker.reset( new QMutexLocker(&_imp->attachedContextsMutex) );
+        locker.reset( new QtCompat::RecursiveMutexLocker(&_imp->attachedContextsMutex) );
     }
 
 

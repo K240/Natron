@@ -1,0 +1,22 @@
+diff --git a/CImg/Inpaint/inpaint.h b/CImg/Inpaint/inpaint.h
+--- a/CImg/Inpaint/inpaint.h
++++ b/CImg/Inpaint/inpaint.h
+@@ -139,7 +139,10 @@
+   weights.draw_gaussian((float)p1,(float)p1,patch_size/15.0f,&one)/=patch_size2;
+   unsigned int target_index = 0;
+ 
++  _cimg_abort_init_openmp;
++  cimg_abort_init;
+   while (true) {
++    cimg_abort_test;
+ 
+     // Extract mask border points and compute priorities to find target point.
+     unsigned int nb_border_points = 0;
+@@ -416,6 +419,7 @@
+     // Generate blending scales.
+     CImg<T> result = _inpaint_patch_crop(ox,oy,ox + dx - 1,oy + dy - 1,0);
+     for (unsigned int blend_iter = 1; blend_iter<=blend_scales; ++blend_iter) {
++      cimg_abort_test;
+       const unsigned int
+         _blend_width = blend_iter*blend_size/blend_scales,
+         blend_width = _blend_width?_blend_width + 1 - (_blend_width%2):0;

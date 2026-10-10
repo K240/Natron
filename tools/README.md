@@ -2,6 +2,15 @@
 
 This directory contains various tools to help building and maintaining Natron.
 
+The current Natron build uses `build-windows-qt6.ps1` and
+`run-windows-qt6.ps1`; see [BUILDING.md](../BUILDING.md). The former
+Jenkins/buildmaster Natron entry points are retired. SDK and installer
+scripts below are historical tooling and need a Qt 6 port before reuse.
+
+`build-windows-ofx.ps1` builds the remaining standard OpenFX sets with CMake and
+MSYS2 UCRT64. `run-windows-qt6.ps1 -Program OfxSmoke` checks their rendering, and
+`-Program OfxGuiSmoke` checks a GUI graph. See [INSTALL_WINDOWS.md](../INSTALL_WINDOWS.md).
+
 - **MacPorts**
   
   Repository for Natron-specific ports for MacPorts. Some ports are not in MacPorts (e.g. openimageio), some have extra patches that fix specific issues (licensing, universal builds, etc.). Next to each `Portfile`, we always store the original MacPorts `Portfile.orig` and the `Portfile.patch` to apply. The `check.sh` script helps checking which `Portfile`s have to be updated after a `sudo port selfupdate`.

@@ -85,12 +85,6 @@ set(mv_HEADERS
     libmv/tracking/track_region.h
     libmv/tracking/trklt_region_tracker.h
 )
-if(MSVC)
-    set(mv_HEADERS
-        third_party/msinttypes/inttypes.h
-        third_party/msinttypes/stdint.h
-)
-endif()
 set(mv_SOURCES
     libmv/autotrack/autotrack.cc
     libmv/autotrack/predict_tracks.cc
@@ -105,9 +99,6 @@ set(mv_SOURCES
 )
 add_library(mv STATIC ${mv_HEADERS} ${mv_SOURCES})
 target_include_directories(mv PUBLIC third_party .)
-if(MSVC)
-    target_include_directories(mv PUBLIC third_party/msinttypes)
-endif()
 target_compile_definitions(mv PUBLIC LIBMV_NO_FAST_DETECTOR=)
 target_link_libraries(mv PUBLIC Ceres::ceres)
 set_target_properties(mv PROPERTIES POSITION_INDEPENDENT_CODE ON)

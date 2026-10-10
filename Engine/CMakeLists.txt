@@ -36,14 +36,20 @@ set(shiboken_args
     "-I." "-I.." "-I../Global" "-I../libs/OpenFX/include" ${PYENGINE_INCS}
     "-T${PYSIDE_TYPESYSTEMS}" "--output-directory=${PYENGINE_OUT}"
     "${PYENGINE_HEADER}" "typesystem_engine.xml")
+if(WIN32)
+    list(PREPEND shiboken_args "--clang-options=-DNOMINMAX,-DNATRON_BUILD_NUMBER=0")
+endif()
 
-execute_process(COMMAND ${Python3_EXECUTABLE} ../tools/utils/sourceList.py typesystem_engine.xml ${PYENGINE_OUT}
+execute_process(COMMAND ${NATRON_PYTHON_COMMAND} ../tools/utils/sourceList.py typesystem_engine.xml ${PYENGINE_OUT}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     OUTPUT_VARIABLE PyEngine_SOURCES)
 set_property(SOURCE ${PyEngine_SOURCES} PROPERTY SKIP_AUTOGEN ON)
+# Natron's injected binding code uses the full CPython API.
+set_property(SOURCE ${PyEngine_SOURCES} APPEND PROPERTY COMPILE_OPTIONS
+    "$<IF:$<CXX_COMPILER_ID:MSVC>,/UPy_LIMITED_API,-UPy_LIMITED_API>")
 add_custom_command(OUTPUT ${PyEngine_SOURCES}
     COMMAND $<TARGET_FILE:${SHIBOKEN_EXE}> ${shiboken_args}
-    COMMAND ${Python3_EXECUTABLE} ../tools/utils/sourceCleanup.py typesystem_engine.xml ${PYENGINE_OUT}
+    COMMAND ${NATRON_PYTHON_COMMAND} ../tools/utils/sourceCleanup.py typesystem_engine.xml ${PYENGINE_OUT}
     DEPENDS ${SHIBOKEN_EXE} ${PYENGINE_HEADER} ${NatronEngine_HEADERS} ../tools/utils/sourceCleanup.py typesystem_engine.xml
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 

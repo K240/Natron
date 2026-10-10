@@ -36,7 +36,7 @@ CLANG_DIAG_OFF(uninitialized)
 #include <QPixmapCache>
 #include <QApplication>
 #include <QFontDatabase>
-#include <QtConcurrentRun> // QtCore on Qt4, QtConcurrent on Qt5
+#include <QtConcurrentRun>
 CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)
 
@@ -946,7 +946,7 @@ GuiApplicationManager::initGui(const CLArgs& args)
     QObject::connect( &_imp->updateSplashscreenTimer, SIGNAL(timeout()), this, SLOT(onFontconfigTimerTriggered()) );
     _imp->updateSplashscreenTimer.start(1000);
 
-    _imp->fontconfigUpdateWatcher->setFuture( QtConcurrent::run(_imp.get(), &GuiApplicationManagerPrivate::updateFontConfigCache) );
+    _imp->fontconfigUpdateWatcher->setFuture( QtConcurrent::run([manager = _imp.get()]() { manager->updateFontConfigCache(); }) );
 
     Gui::loadStyleSheet();
 
@@ -954,7 +954,8 @@ GuiApplicationManager::initGui(const CLArgs& args)
     _imp->documentation.reset(new DocumentationManager);
     _imp->documentation->startServer();
 
-    return exec();
+    const int eventLoopResult = exec();
+    return eventLoopResult == 0;
 } // GuiApplicationManager::initGui
 
 void

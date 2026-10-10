@@ -1,0 +1,33 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index bbf98e52..0675cf75 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -24,7 +24,7 @@ ENDIF(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
+ ########################################################################
+ # Project setup
+ ########################################################################
+-CMAKE_MINIMUM_REQUIRED(VERSION 3.1)
++CMAKE_MINIMUM_REQUIRED(VERSION 3.24)
+ PROJECT(OpenFXMisc CXX)
+ ENABLE_TESTING()
+ 
+@@ -50,7 +50,7 @@ endif()
+ 
+ include(FindOpenGL REQUIRED)
+ 
+-set (CMAKE_CXX_STANDARD 11)
++set (CMAKE_CXX_STANDARD 17)
+ 
+ # Use -Ofast when applicable (implies -ffast-math)
+ if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+@@ -476,8 +476,8 @@ SET_TARGET_PROPERTIES(CImg PROPERTIES SUFFIX ".ofx")
+ if(APPLE)
+     set_target_properties(CImg PROPERTIES LINK_FLAGS "-bundle -fvisibility=hidden -exported_symbols_list,${OFX_SUPPORT_HEADER_DIR}/osxSymbols")
+     set_target_properties(CImg PROPERTIES INSTALL_RPATH "@loader_path/../Frameworks;@loader_path/../Libraries")
+-elseif(WIN32)
+-    set_target_properties(CImg PROPERTIES LINK_FLAGS "-fvisibility=hidden,--version-script=${OFX_SUPPORT_HEADER_DIR}/linuxSymbols")
++elseif(MINGW)
++    set_target_properties(CImg PROPERTIES LINK_FLAGS "-Wl,--version-script=${OFX_SUPPORT_HEADER_DIR}/linuxSymbols")
+ else()
+ # Linux & FreeBSD
+     set_target_properties(CImg PROPERTIES LINK_FLAGS "-Wl,-fvisibility=hidden,--version-script=${OFX_SUPPORT_HEADER_DIR}/linuxSymbols")

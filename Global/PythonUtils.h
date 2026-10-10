@@ -53,12 +53,12 @@ NATRON_NAMESPACE_ENTER
 NATRON_PYTHON_NAMESPACE_ENTER
 
 /**
- * @brief Calls Py_SetPythonHome and set PYTHONPATH
+ * @brief Configure bundled Python paths through PYTHONHOME and PYTHONPATH
  **/
 void setupPythonEnv(const std::string& binPath);
 
 /**
- * @brief Must be called after setupPythonEnv(), calls Py_SetProgramName and Py_Initialize, PySys_SetArgv
+ * @brief Initialize Python with PyConfig after setupPythonEnv()
  * @returns A pointer to the main module
  **/
 PyObject* initializePython3(const std::vector<wchar_t*>& commandLineArgsWide);

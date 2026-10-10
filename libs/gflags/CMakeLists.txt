@@ -36,4 +36,8 @@ if(WIN32)
 endif()
 add_library(gflags STATIC ${gflags_HEADERS} ${gflags_SOURCES})
 target_include_directories(gflags PUBLIC . src src/gflags)
+if(MSVC)
+    target_compile_definitions(gflags PUBLIC
+        GFLAGS_DLL_DECL= GFLAGS_DLL_DECLARE_FLAG= GFLAGS_DLL_DEFINE_FLAG=)
+endif()
 set_target_properties(gflags PROPERTIES POSITION_INDEPENDENT_CODE ON)

@@ -1,0 +1,52 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 88fa919..f3d0085 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -24,7 +24,7 @@ ENDIF(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
+ ########################################################################
+ # Project setup
+ ########################################################################
+-CMAKE_MINIMUM_REQUIRED(VERSION 3.1)
++CMAKE_MINIMUM_REQUIRED(VERSION 3.24)
+ PROJECT(Arena CXX)
+ ENABLE_TESTING()
+ 
+@@ -79,7 +79,7 @@ if(${HALDCLUT})
+     pkg_search_module(CURL REQUIRED libcurl)
+ endif()
+ 
+-set (CMAKE_CXX_STANDARD 11)
++set (CMAKE_CXX_STANDARD 17)
+ 
+ # Use -Ofast when applicable (implies -ffast-math)
+ if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+diff --git a/Text/TextOFX.cpp b/Text/TextOFX.cpp
+index 59a082c..3d1e403 100644
+--- a/Text/TextOFX.cpp
++++ b/Text/TextOFX.cpp
+@@ -27,6 +27,7 @@
+ #include "ofxsTransformInteract.h"
+ 
+ #include <iostream>
++#include <numbers>
+ #include <cmath>
+ #include <cstring>
+ #include <algorithm>
+@@ -1052,7 +1053,7 @@ void TextFXPlugin::render(const OFX::RenderArguments &args)
+             rotateY = ytext;
+         }
+         cairo_translate(cr, rotateX, rotateY);
+-        cairo_rotate(cr, -rotate * (M_PI/180.0));
++        cairo_rotate(cr, -rotate * (std::numbers::pi/180.0));
+         cairo_translate(cr, -rotateX, -rotateY);
+     }
+ 
+@@ -1112,7 +1113,7 @@ void TextFXPlugin::render(const OFX::RenderArguments &args)
+                     arcX = xtext;
+                     arcY = ytext;
+                 }
+-                cairo_arc(cr, arcX, arcY, std::floor(arcRadius * args.renderScale.x + 0.5), 0.0, arcAngle * (M_PI/180.0));
++                cairo_arc(cr, arcX, arcY, std::floor(arcRadius * args.renderScale.x + 0.5), 0.0, arcAngle * (std::numbers::pi/180.0));
+                 cairo_path_t *path;
+                 cairo_save(cr);
+                 path = cairo_copy_path_flat(cr);
