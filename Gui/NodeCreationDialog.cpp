@@ -36,7 +36,7 @@ CLANG_DIAG_OFF(uninitialized)
 #include <QTimer>
 #include <QApplication>
 #include <QListView>
-#include <QSettings>
+#include "Global/AppSettings.h"
 #include <QRegularExpression>
 #include <QApplication>
 #include <QStringListModel>
@@ -344,7 +344,7 @@ static int
 getPluginWeight(const QString& pluginID,
                 int majVersion)
 {
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+    AppSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
     QString propName( pluginID + QString::number(majVersion) + QString::fromUtf8("_tab_weight") );
     int curValue = settings.value( propName, QVariant(0) ).toInt();
 
@@ -355,7 +355,7 @@ static void
 incrementPluginWeight(const QString& pluginID,
                       int majVersion)
 {
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+    AppSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
     QString propName( pluginID + QString::number(majVersion) + QString::fromUtf8("_tab_weight") );
     int curValue = settings.value( propName, QVariant(0) ).toInt();
 

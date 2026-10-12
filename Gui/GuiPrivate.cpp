@@ -35,7 +35,7 @@
 #include <QMutex>
 #include <QCoreApplication>
 #include <QAction>
-#include <QSettings>
+#include "Global/AppSettings.h"
 #include <QDebug>
 #include <QThread>
 #include <QCheckBox>
@@ -619,7 +619,7 @@ GuiPrivate::checkProjectLockAndWarn(const QString& projectPath,
 void
 GuiPrivate::restoreGuiGeometry()
 {
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+    AppSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
 
     settings.beginGroup( QString::fromUtf8("MainWindow") );
 
@@ -700,7 +700,7 @@ GuiPrivate::restoreGuiGeometry()
 void
 GuiPrivate::saveGuiGeometry()
 {
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+    AppSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
 
     settings.beginGroup( QString::fromUtf8("MainWindow") );
     settings.setValue( QString::fromUtf8("pos"), _gui->pos() );

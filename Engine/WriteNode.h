@@ -57,13 +57,13 @@ struct WriteNodePrivate;
 class WriteNode
     : public NodeGroup
 {
-GCC_DIAG_SUGGEST_OVERRIDE_OFF
+    GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
-GCC_DIAG_SUGGEST_OVERRIDE_ON
+    GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
 
-    static EffectInstance* BuildEffect(NodePtr n)
+    static EffectInstance *BuildEffect(NodePtr n)
     {
         return new WriteNode(n);
     }
@@ -84,8 +84,9 @@ public:
     void setEmbeddedWriter(const NodePtr& node);
 
     static bool isVideoWriter(const std::string& pluginID);
-    
+
     virtual bool isWriter() const OVERRIDE FINAL WARN_UNUSED_RETURN;
+    virtual bool supportsVulkanRender() const OVERRIDE FINAL;
     virtual bool isVideoWriter() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual bool isGenerator() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual bool isOutput() const OVERRIDE FINAL WARN_UNUSED_RETURN;
@@ -96,7 +97,7 @@ public:
     virtual std::string getPluginID() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual std::string getPluginLabel() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual std::string getPluginDescription() const OVERRIDE FINAL WARN_UNUSED_RETURN;
-    virtual void getPluginGrouping(std::list<std::string>* grouping) const OVERRIDE FINAL;
+    virtual void getPluginGrouping(std::list<std::string> *grouping) const OVERRIDE FINAL;
     virtual void onEffectCreated(bool mayCreateFileDialog, const CreateNodeArgs& defaultParamValues) OVERRIDE FINAL;
     virtual bool isSubGraphUserVisible() const OVERRIDE FINAL WARN_UNUSED_RETURN
     {

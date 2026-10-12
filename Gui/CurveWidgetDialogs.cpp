@@ -37,7 +37,7 @@ GCC_DIAG_UNUSED_PRIVATE_FIELD_ON
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QThread>
-#include <QSettings>
+#include "Global/AppSettings.h"
 #include <QDebug>
 
 #include "Engine/AppManager.h" // appPTR
@@ -205,7 +205,7 @@ ImportExportCurveDialog::ImportExportCurveDialog(bool isExportDialog,
     QObject::connect( _buttonBox, SIGNAL(accepted()), this, SLOT(accept()) );
     _mainLayout->addWidget(_buttonBox);
 
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+    AppSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
     QByteArray state;
     if (isExportDialog) {
         state = settings.value( QLatin1String("CurveWidgetExportDialog") ).toByteArray();
@@ -219,7 +219,7 @@ ImportExportCurveDialog::ImportExportCurveDialog(bool isExportDialog,
 
 ImportExportCurveDialog::~ImportExportCurveDialog()
 {
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+    AppSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
 
     if (_isExportDialog) {
         settings.setValue( QLatin1String("CurveWidgetExportDialog"), saveState() );

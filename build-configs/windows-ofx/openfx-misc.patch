@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index bbf98e52..0675cf75 100644
+index bbf98e52..55f24f95 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -24,7 +24,7 @@ ENDIF(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
@@ -11,16 +11,38 @@ index bbf98e52..0675cf75 100644
  PROJECT(OpenFXMisc CXX)
  ENABLE_TESTING()
  
-@@ -50,7 +50,7 @@ endif()
+@@ -48,9 +48,8 @@ if(NOT CMAKE_GENERATOR MATCHES "Xcode|Visual Studio")
+   MESSAGE (STATUS "    Configuration:"  ${CMAKE_BUILD_TYPE})
+ endif()
  
- include(FindOpenGL REQUIRED)
+-include(FindOpenGL REQUIRED)
  
 -set (CMAKE_CXX_STANDARD 11)
 +set (CMAKE_CXX_STANDARD 17)
  
  # Use -Ofast when applicable (implies -ffast-math)
  if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-@@ -476,8 +476,8 @@ SET_TARGET_PROPERTIES(CImg PROPERTIES SUFFIX ".ofx")
+@@ -106,7 +105,7 @@ FILE(GLOB SUPPORT_SOURCES
+ )
+ 
+ #ADD_LIBRARY(Support STATIC )
+-#TARGET_COMPILE_DEFINITIONS(Support PRIVATE OFX_SUPPORTS_OPENGLRENDER OFX_EXTENSIONS_TUTTLE OFX_EXTENSIONS_NUKE OFX_EXTENSIONS_NATRON OFX_EXTENSIONS_VEGAS NOMINMAX)
++#TARGET_COMPILE_DEFINITIONS(Support PRIVATE OFX_EXTENSIONS_TUTTLE OFX_EXTENSIONS_NUKE OFX_EXTENSIONS_NATRON OFX_EXTENSIONS_VEGAS NOMINMAX)
+ 
+ FILE(GLOB MISC_SOURCES
+   "Add/*.cpp"
+@@ -368,9 +367,7 @@ elseif(${CMAKE_SYSTEM_NAME} STREQUAL "FreeBSD" OR ${CMAKE_SYSTEM_NAME} STREQUAL
+     set_target_properties(Misc PROPERTIES INSTALL_RPATH "$ORIGIN/../../Libraries")
+ endif()
+ 
+-TARGET_COMPILE_DEFINITIONS(Misc PRIVATE OFX_EXTENSIONS_VEGAS OFX_EXTENSIONS_NUKE OFX_EXTENSIONS_NATRON OFX_EXTENSIONS_TUTTLE OFX_SUPPORTS_OPENGLRENDER NOMINMAX)
+-#TARGET_LINK_LIBRARIES(Misc Support ${OPENGL_gl_LIBRARY})
+-TARGET_LINK_LIBRARIES(Misc ${OPENGL_gl_LIBRARY})
++TARGET_COMPILE_DEFINITIONS(Misc PRIVATE OFX_EXTENSIONS_VEGAS OFX_EXTENSIONS_NUKE OFX_EXTENSIONS_NATRON OFX_EXTENSIONS_TUTTLE NOMINMAX)
+ 
+ FILE(GLOB CIMG_SOURCES
+   "CImg/CImg.h"
+@@ -476,15 +473,15 @@ SET_TARGET_PROPERTIES(CImg PROPERTIES SUFFIX ".ofx")
  if(APPLE)
      set_target_properties(CImg PROPERTIES LINK_FLAGS "-bundle -fvisibility=hidden -exported_symbols_list,${OFX_SUPPORT_HEADER_DIR}/osxSymbols")
      set_target_properties(CImg PROPERTIES INSTALL_RPATH "@loader_path/../Frameworks;@loader_path/../Libraries")
@@ -31,3 +53,1737 @@ index bbf98e52..0675cf75 100644
  else()
  # Linux & FreeBSD
      set_target_properties(CImg PROPERTIES LINK_FLAGS "-Wl,-fvisibility=hidden,--version-script=${OFX_SUPPORT_HEADER_DIR}/linuxSymbols")
+     set_target_properties(CImg PROPERTIES INSTALL_RPATH "$ORIGIN/../../Libraries")
+ endif()
+ 
+-TARGET_COMPILE_DEFINITIONS(CImg PRIVATE OFX_EXTENSIONS_VEGAS OFX_EXTENSIONS_NUKE OFX_EXTENSIONS_NATRON OFX_EXTENSIONS_TUTTLE OFX_SUPPORTS_OPENGLRENDER NOMINMAX)
++TARGET_COMPILE_DEFINITIONS(CImg PRIVATE OFX_EXTENSIONS_VEGAS OFX_EXTENSIONS_NUKE OFX_EXTENSIONS_NATRON OFX_EXTENSIONS_TUTTLE NOMINMAX)
+ #TARGET_LINK_LIBRARIES(CImg Support)
+ TARGET_LINK_LIBRARIES(CImg)
+ 
+diff --git a/ColorLookup/ColorLookup.cpp b/ColorLookup/ColorLookup.cpp
+index 8e3a4c7d..3288192d 100644
+--- a/ColorLookup/ColorLookup.cpp
++++ b/ColorLookup/ColorLookup.cpp
+@@ -25,36 +25,7 @@
+ #include <cfloat> // DBL_MAX
+ #include <algorithm>
+ 
+-#if !( defined(_WIN32) || defined(__WIN32__) || defined(WIN32) )
+-#define GL_GLEXT_PROTOTYPES
+-#endif
+-#ifdef __APPLE__
+-#ifndef GL_SILENCE_DEPRECATION
+-#define GL_SILENCE_DEPRECATION // Yes, we are still doing OpenGL 2.1
+-#endif
+-#include <OpenGL/gl.h>
+-#include <OpenGL/glext.h>
+-#else
+-#ifdef _WIN32
+-#define WIN32_LEAN_AND_MEAN
+-#ifndef NOMINMAX
+-#define NOMINMAX
+-#endif
+-#include <windows.h>
+-#endif
+-
+-#include <GL/gl.h>
+-#include <GL/glext.h>
+-#endif
+-
+-#if defined(_WIN32) || defined(__WIN32__) || defined(WIN32)
+-#ifndef GL_VERSION_1_4
+-typedef void (APIENTRYP PFNGLBLENDFUNCSEPARATEPROC)(GLenum sfactorRGB, GLenum dfactorRGB, GLenum sfactorAlpha, GLenum dfactorAlpha);
+-#endif
+-#ifndef GL_VERSION_2_0
+-typedef void (APIENTRYP PFNGLBLENDEQUATIONSEPARATEPROC)(GLenum modeRGB, GLenum modeAlpha);
+-#endif
+-#endif
++#include "NatronParametricInteract.h"
+ 
+ #include "ofxsProcessing.H"
+ #include "ofxsMaskMix.h"
+@@ -1540,14 +1511,12 @@ public:
+         addParamToSlaveTo(_display);
+         addParamToSlaveTo(_updateHistogram);
+         addParamToSlaveTo(_hasBackgroundInteract);
+-#if defined(_WIN32) || defined(__WIN32__) || defined(WIN32)
+-        glBlendEquationSeparate = (PFNGLBLENDEQUATIONSEPARATEPROC)wglGetProcAddress("glBlendEquationSeparate");
+-        glBlendFuncSeparate = (PFNGLBLENDFUNCSEPARATEPROC)wglGetProcAddress("glBlendFuncSeparate");
+-#endif
++
+     }
+ 
+     virtual bool draw(const DrawArgs &args) OVERRIDE FINAL
+     {
++        NatronOFX::Draw draw;
+         const double time = args.time;
+         bool hasBackgroundInteract = _hasBackgroundInteract->getValueAtTime(time);
+ 
+@@ -1569,8 +1538,8 @@ public:
+             if (nbValues > 0) {
+                 // let us draw one slice every 8 pixels
+                 const int nComponents = 3;
+-                GLfloat color[nComponents];
+-                glBegin(GL_TRIANGLE_STRIP);
++                float color[nComponents];
++                draw.begin(NatronOFX::Primitive::TriangleStrip);
+                 try { // getValue may throw
+                     for (int position = 0; position <= nbValues; ++position) {
+                         // position to evaluate the param at
+@@ -1582,16 +1551,16 @@ public:
+                             double value = _lookupTableParam->getValue(lutIndex, time, parametricPos);
+                             value += _lookupTableParam->getValue(kCurveMaster, time, parametricPos) - parametricPos;
+                             // set that in the lut
+-                            color[component] = (GLfloat)value;
++                            color[component] = (float)value;
+                         }
+-                        glColor3f(color[0], color[1], color[2]);
+-                        glVertex2d(parametricPos, rangeMin);
+-                        glVertex2d(parametricPos, rangeMax);
++                        draw.color(color[0], color[1], color[2]);
++                        draw.vertex(parametricPos, rangeMin);
++                        draw.vertex(parametricPos, rangeMax);
+                     }
+                 } catch (...) {
+                     stat = kOfxStatFailed;
+                 }
+-                glEnd();
++                draw.end();
+             }
+             throwSuiteStatusException(stat);
+         }
+@@ -1604,73 +1573,63 @@ public:
+             }
+             if (histogram.hmax > 0 && histogram.rangemin < histogram.rangemax && !histogram.histogram.empty()) {
+                 double binSize = (histogram.rangemax - histogram.rangemin) / HISTOGRAM_BINS;
+-                glEnable(GL_BLEND);
+-#if defined(_WIN32) || defined(__WIN32__) || defined(WIN32)
+-                if (glBlendEquationSeparate) {
+-                    glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+-                }
+-                if (glBlendFuncSeparate) {
+-                    glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ONE, GL_ONE);
+-                }
+-#else
+-                glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+-                glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ONE, GL_ONE);
+-#endif
++
++                draw.addBlend();
+                 for (int c = 0; c < 3; ++c) {
+-                    glBegin(GL_QUADS);
++                    draw.begin(NatronOFX::Primitive::Quads);
+                     // use three colors with equal luminance (0.33), so that the blue is visible and their sum is white
+                     // we divide by two to get 50% white.
+                     switch (c) {
+                         case 0:
+-                            glColor3f(0.711519527404004f/2, 0.164533420851110f/2, 0.164533420851110f/2);
++                            draw.color(0.711519527404004f/2, 0.164533420851110f/2, 0.164533420851110f/2);
+                             break;
+                         case 1:
+-                            glColor3f(0.f/2, 0.546986106552894f/2, 0.f/2);
++                            draw.color(0.f/2, 0.546986106552894f/2, 0.f/2);
+                             break;
+                         case 2:
+-                            glColor3f(0.288480472595996f/2, 0.288480472595996f/2, 0.835466579148890f/2);
++                            draw.color(0.288480472595996f/2, 0.288480472595996f/2, 0.835466579148890f/2);
+                             break;
+                     }
+                     for (unsigned int i = 0; i < HISTOGRAM_BINS; ++i) {
+                         double binMinX = histogram.rangemin + i * binSize;
+                         double binMaxX = binMinX + binSize;
+                         double binY = histogram.histogram[c* HISTOGRAM_BINS + i] / (double)histogram.hmax;
+-                        glVertex2d(binMinX, 0);
+-                        glVertex2d(binMinX, binY);
+-                        glVertex2d(binMaxX, binY);
+-                        glVertex2d(binMaxX, 0);
++                        draw.vertex(binMinX, 0);
++                        draw.vertex(binMinX, binY);
++                        draw.vertex(binMaxX, binY);
++                        draw.vertex(binMaxX, 0);
+                     }
+-                    glEnd(); // GL_QUADS
++                    draw.end(); 
+                 }
+             }
+         }
+ 
+         if (args.hasPickerColour) {
+-            //glEnable(GL_BLEND);
+-            //glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+-            //glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ONE, GL_ONE);
+-            glLineWidth(1.5);
+-            glBegin(GL_LINES);
++
++
++
++            draw.lineWidth(1.5);
++            draw.begin(NatronOFX::Primitive::Lines);
+             {
+                 // the following are magic colors, they all have the same Rec709 luminance
+                 const OfxRGBColourD red   = {0.711519527404004, 0.164533420851110, 0.164533420851110};      //set red color to red curve
+                 const OfxRGBColourD green = {0., 0.546986106552894, 0.};        //set green color to green curve
+                 const OfxRGBColourD blue  = {0.288480472595996, 0.288480472595996, 0.835466579148890};      //set blue color to blue curve
+                 const OfxRGBColourD alpha  = {0.398979, 0.398979, 0.398979};
+-                glColor3d(red.r, red.g, red.b);
+-                glVertex2d(args.pickerColour.r, rangeMin);
+-                glVertex2d(args.pickerColour.r, rangeMax);
+-                glColor3d(green.r, green.g, green.b);
+-                glVertex2d(args.pickerColour.g, rangeMin);
+-                glVertex2d(args.pickerColour.g, rangeMax);
+-                glColor3d(blue.r, blue.g, blue.b);
+-                glVertex2d(args.pickerColour.b, rangeMin);
+-                glVertex2d(args.pickerColour.b, rangeMax);
+-                glColor3d(alpha.r, alpha.g, alpha.b);
+-                glVertex2d(args.pickerColour.a, rangeMin);
+-                glVertex2d(args.pickerColour.a, rangeMax);
++                draw.color(red.r, red.g, red.b);
++                draw.vertex(args.pickerColour.r, rangeMin);
++                draw.vertex(args.pickerColour.r, rangeMax);
++                draw.color(green.r, green.g, green.b);
++                draw.vertex(args.pickerColour.g, rangeMin);
++                draw.vertex(args.pickerColour.g, rangeMax);
++                draw.color(blue.r, blue.g, blue.b);
++                draw.vertex(args.pickerColour.b, rangeMin);
++                draw.vertex(args.pickerColour.b, rangeMax);
++                draw.color(alpha.r, alpha.g, alpha.b);
++                draw.vertex(args.pickerColour.a, rangeMin);
++                draw.vertex(args.pickerColour.a, rangeMax);
+             }
+-            glEnd();
++            draw.end();
+         }
+ 
+         return true;
+@@ -1684,18 +1643,14 @@ protected:
+     PushButtonParam* _updateHistogram;
+     ParametricParam* _lookupTableParam;
+     Double2DParam* _range;
+-private:
+-#if defined(_WIN32) || defined(__WIN32__) || defined(WIN32)
+-    PFNGLBLENDEQUATIONSEPARATEPROC glBlendEquationSeparate;
+-    PFNGLBLENDFUNCSEPARATEPROC glBlendFuncSeparate;
+-#endif
++
+ };
+ 
+ // We are lucky, there's only one lookupTable param, so we need only one interact
+ // descriptor. If there were several, be would have to use a template parameter,
+ // as in propTester.cpp
+ class ColorLookupInteractDescriptor
+-    : public DefaultParamInteractDescriptor<ColorLookupInteractDescriptor, ColorLookupInteract>
++    : public NatronOFX::ParametricDescriptor<ColorLookupInteractDescriptor, ColorLookupInteract>
+ {
+ public:
+     virtual void describe() OVERRIDE FINAL
+@@ -1819,7 +1774,7 @@ ColorLookupPluginFactory::describeInContext(ImageEffectDescriptor &desc,
+         param->setHint(kParamLookupTableHint);
+         {
+             ColorLookupInteractDescriptor* interact = new ColorLookupInteractDescriptor;
+-            param->setInteractDescriptor(interact);
++            NatronOFX::setBackground(param, interact);
+         }
+ 
+         // define it as three dimensional
+diff --git a/ContactSheet/ContactSheet.cpp b/ContactSheet/ContactSheet.cpp
+index 4a6ed49e..e5c8e2b3 100644
+--- a/ContactSheet/ContactSheet.cpp
++++ b/ContactSheet/ContactSheet.cpp
+@@ -26,22 +26,7 @@
+ #include <algorithm>
+ #include <cmath>
+ 
+-#ifdef __APPLE__
+-#ifndef GL_SILENCE_DEPRECATION
+-#define GL_SILENCE_DEPRECATION // Yes, we are still doing OpenGL 2.1
+-#endif
+-#include <OpenGL/gl.h>
+-#else
+-#ifdef _WIN32
+-#define WIN32_LEAN_AND_MEAN
+-#ifndef NOMINMAX
+-#define NOMINMAX
+-#endif
+-#include <windows.h>
+-#endif
+-
+-#include <GL/gl.h>
+-#endif
++#include "NatronOverlayInteract.h"
+ 
+ 
+ #include "ofxsMacros.h"
+@@ -761,31 +746,20 @@ ContactSheetInteract::draw(const OFX::DrawArgs &args)
+ 
+     bool hiDPI = _hiDPI ? _hiDPI->getValue() : false;
+     double screenPixelRatio = hiDPI ? 2 : 1;
+-#ifdef OFX_EXTENSIONS_NATRON
+-    screenPixelRatio *= args.screenPixelRatio;
+-    //hiDPI |= args.screenPixelRatio > 1;
+-#endif
+-    //TextRenderer::Font font = hiDPI ? TextRenderer::FONT_TIMES_ROMAN_24 : TextRenderer::FONT_HELVETICA_12;
++
+ 
+     OfxRGBColourD color = { 0.8, 0.8, 0.8 };
+     getSuggestedColour(color);
+     //const OfxPointD& pscale = args.pixelScale;
+-    GLdouble projection[16];
+-    glGetDoublev( GL_PROJECTION_MATRIX, projection);
+-    GLint viewport[4];
+-    glGetIntegerv(GL_VIEWPORT, viewport);
+-    OfxPointD shadow; // how much to translate GL_PROJECTION to get exactly one pixel on screen
+-    shadow.x = 2. / (projection[0] * viewport[2]);
+-    shadow.y = 2. / (projection[5] * viewport[3]);
+-
+-    //glPushAttrib(GL_ALL_ATTRIB_BITS); // caller is responsible for protecting attribs
+-    glDisable(GL_LINE_STIPPLE);
+-    glEnable(GL_LINE_SMOOTH);
+-    glDisable(GL_POINT_SMOOTH);
+-    glEnable(GL_BLEND);
+-    glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE);
+-    glLineWidth(3.f * screenPixelRatio);
+-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
++    const OfxPointD shadow = args.pixelScale;
++
++    NatronOFX::overlayDrawing().dashed(false);
++    NatronOFX::overlayDrawing().smoothLines(true);
++    NatronOFX::overlayDrawing().roundPoints(false);
++
++
++    NatronOFX::overlayDrawing().lineWidth(3.f * screenPixelRatio);
++
+ 
+     double x1 = rod.x1 + cellw * c;
+     double x2 = rod.x1 + cellw * (c + 1);
+@@ -797,22 +771,22 @@ ContactSheetInteract::draw(const OFX::DrawArgs &args)
+     // l = 1: drawing
+     for (int l = 0; l < 2; ++l) {
+         // shadow (uses GL_PROJECTION)
+-        glMatrixMode(GL_PROJECTION);
++
+         int direction = (l == 0) ? 1 : -1;
+         // translate (1,-1) pixels
+-        glTranslated(direction * shadow.x, -direction * shadow.y, 0);
+-        glMatrixMode(GL_MODELVIEW); // Modelview should be used on Nuke
++        NatronOFX::overlayDrawing().offsetShadow(direction * shadow.x, -direction * shadow.y);
++
+ 
+-        glColor3f( (float)color.r * l, (float)color.g * l, (float)color.b * l );
++        NatronOFX::overlayDrawing().colour( (float)color.r * l, (float)color.g * l, (float)color.b * l );
+ 
+-        glBegin(GL_LINE_LOOP);
+-        glVertex2d(x1, y1);
+-        glVertex2d(x1, y2);
+-        glVertex2d(x2, y2);
+-        glVertex2d(x2, y1);
+-        glEnd();
++        NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::LineLoop);
++        NatronOFX::overlayDrawing().vertex(x1, y1);
++        NatronOFX::overlayDrawing().vertex(x1, y2);
++        NatronOFX::overlayDrawing().vertex(x2, y2);
++        NatronOFX::overlayDrawing().vertex(x2, y1);
++        NatronOFX::overlayDrawing().end();
+     }
+-    //glPopAttrib();
++
+     
+     return true;
+ }
+@@ -883,7 +857,7 @@ ContactSheetInteract::penDown(const OFX::PenArgs &args)
+ mDeclarePluginFactory(ContactSheetPluginFactory, {}, {});
+ 
+ #ifdef SELECTION
+-class ContactSheetOverlayDescriptor : public DefaultEffectOverlayDescriptor<ContactSheetOverlayDescriptor, ContactSheetInteract> {};
++class ContactSheetOverlayDescriptor : public NatronOFX::OverlayDescriptor<ContactSheetOverlayDescriptor, ContactSheetInteract> {};
+ #endif
+ 
+ void
+@@ -931,7 +905,7 @@ ContactSheetPluginFactory::describe(OFX::ImageEffectDescriptor &desc)
+ #endif
+ 
+ #ifdef SELECTION
+-    desc.setOverlayInteractDescriptor( new ContactSheetOverlayDescriptor);
++    NatronOFX::setOverlay(desc, new ContactSheetOverlayDescriptor);
+ #endif
+ }
+ 
+diff --git a/CopyRectangle/CopyRectangle.cpp b/CopyRectangle/CopyRectangle.cpp
+index 59616703..501412f3 100644
+--- a/CopyRectangle/CopyRectangle.cpp
++++ b/CopyRectangle/CopyRectangle.cpp
+@@ -21,6 +21,7 @@
+  * OFX CopyRectangle plugin.
+  */
+ 
++#include "NatronOverlayInteract.h"
+ #include <cmath>
+ #include <cfloat> // DBL_MAX
+ #include <algorithm>
+@@ -625,7 +626,7 @@ CopyRectanglePluginFactory::describe(ImageEffectDescriptor &desc)
+     // and scale the transform appropriately.
+     // All other functions are usually in canonical coordinates.
+     desc.setSupportsMultiResolution(kSupportsMultiResolution);
+-    desc.setOverlayInteractDescriptor(new RectangleOverlayDescriptor);
++    NatronOFX::setOverlay(desc, new RectangleOverlayDescriptor);
+ 
+ #ifdef OFX_EXTENSIONS_NATRON
+     desc.setChannelSelector(ePixelComponentNone); // we have our own channel selector
+diff --git a/CornerPin/CornerPin.cpp b/CornerPin/CornerPin.cpp
+index e8bac748..df452074 100644
+--- a/CornerPin/CornerPin.cpp
++++ b/CornerPin/CornerPin.cpp
+@@ -40,24 +40,8 @@
+ #include <iostream>
+ #endif
+ 
+-#ifdef __APPLE__
+-#ifndef GL_SILENCE_DEPRECATION
+-#define GL_SILENCE_DEPRECATION // Yes, we are still doing OpenGL 2.1
+-#endif
+-#include <OpenGL/gl.h>
+-#else
+-#ifdef _WIN32
+-#define WIN32_LEAN_AND_MEAN
+-#ifndef NOMINMAX
+-#define NOMINMAX
+-#endif
+-#include <windows.h>
+-#endif
++#include "NatronOverlayInteract.h"
+ 
+-#include <GL/gl.h>
+-#endif
+-
+-#include "ofxsOGLTextRenderer.h"
+ #include "ofxsTransform3x3.h"
+ #include "ofxsThreadSuite.h"
+ #include "ofxsOGLHiDPI.h"
+@@ -654,38 +638,7 @@ CornerPinTransformInteract::draw(const DrawArgs &args)
+         0.8, 0.8, 0.8
+     };
+     getSuggestedColour(color);
+-    GLdouble projection[16];
+-    glGetDoublev( GL_PROJECTION_MATRIX, projection);
+-    GLint viewport[4];
+-    glGetIntegerv(GL_VIEWPORT, viewport);
+-#ifdef CORNERPIN_DEBUG_OPENGL
+-    GLdouble modelview[16];
+-    glGetDoublev( GL_MODELVIEW_MATRIX, modelview);
+-    std::cout << "modelview:\n";
+-    {
+-        GLdouble *m = modelview;
+-        std::cout << "[[" << m[0] << ',' << m[1] << ',' << m[2] << ',' << m[3] << "]\n [" << m[4] << ',' << m[5] << ',' << m[6] << ',' << m[7] << "]\n [" << m[8] << ',' << m[9] << ',' << m[10] << ',' << m[11] << "]\n [" << m[12] << ',' << m[13] << ',' << m[14] << ',' << m[15] << "]]\n";
+-    }
+-    std::cout << "projection:\n";
+-    {
+-        GLdouble *m = projection;
+-        std::cout << "[[" << m[0] << ',' << m[1] << ',' << m[2] << ',' << m[3] << "]\n [" << m[4] << ',' << m[5] << ',' << m[6] << ',' << m[7] << "]\n [" << m[8] << ',' << m[9] << ',' << m[10] << ',' << m[11] << "]\n [" << m[12] << ',' << m[13] << ',' << m[14] << ',' << m[15] << "]]\n";
+-    }
+-    {
+-        std::cout << "projection*modelview:\n";
+-        Matrix4x4 p(projection);
+-        Matrix4x4 m(modelview);
+-        Matrix4x4 pm = p * m;
+-        std::cout << "[[" << pm(0, 0) << ',' << pm(0, 1) << ',' << pm(0, 2) << ',' << pm(0, 3) << "]\n [" << pm(1, 0) << ',' << pm(1, 1) << ',' << pm(1, 2) << ',' << pm(1, 3) << "]\n [" << pm(2, 0) << ',' << pm(2, 1) << ',' << pm(2, 2) << ',' << pm(2, 3) << "]\n [" << pm(3, 0) << ',' << pm(3, 1) << ',' << pm(3, 2) << ',' << pm(3, 3) << "]]\n";
+-    }
+-    std::cout << "viewport:\n";
+-    {
+-        std::cout << "[" << viewport[0] << ',' << viewport[1] << ',' << viewport[2] << ',' << viewport[3] << "]\n";
+-    }
+-#endif
+-    OfxPointD shadow; // how much to translate GL_PROJECTION to get exactly one pixel on screen
+-    shadow.x = 2. / (projection[0] * viewport[2]);
+-    shadow.y = 2. / (projection[5] * viewport[3]);
++    const OfxPointD shadow = args.pixelScale;
+ 
+     OfxPointD to[4];
+     OfxPointD from[4];
+@@ -712,11 +665,7 @@ CornerPinTransformInteract::draw(const DrawArgs &args)
+ 
+     bool hiDPI = _hiDPI ? _hiDPI->getValue() : false;
+     double screenPixelRatio = hiDPI ? 2 : 1;
+-#ifdef OFX_EXTENSIONS_NATRON
+-    screenPixelRatio *= args.screenPixelRatio;
+-    hiDPI |= args.screenPixelRatio > 1;
+-#endif
+-    TextRenderer::Font font = hiDPI ? TextRenderer::FONT_TIMES_ROMAN_24 : TextRenderer::FONT_HELVETICA_12;
++
+ 
+     OfxPointD p[4];
+     OfxPointD q[4];
+@@ -740,32 +689,31 @@ CornerPinTransformInteract::draw(const DrawArgs &args)
+         }
+     }
+ 
+-    //glPushAttrib(GL_ALL_ATTRIB_BITS); // caller is responsible for protecting attribs
+ 
+-    //glDisable(GL_LINE_STIPPLE);
+-    glEnable(GL_LINE_SMOOTH);
+-    //glEnable(GL_POINT_SMOOTH);
+-    glEnable(GL_BLEND);
+-    glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE);
+-    glLineWidth(1.5f * screenPixelRatio);
+-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
++    //NatronOFX::overlayDrawing().dashed(false);
++    NatronOFX::overlayDrawing().smoothLines(true);
++    //NatronOFX::overlayDrawing().roundPoints(true);
+ 
+-    glPointSize(POINT_SIZE * screenPixelRatio);
++
++    NatronOFX::overlayDrawing().lineWidth(1.5f * screenPixelRatio);
++
++
++    NatronOFX::overlayDrawing().pointSize(POINT_SIZE * screenPixelRatio);
+     // Draw everything twice
+     // l = 0: shadow
+     // l = 1: drawing
+     for (int l = 0; l < 2; ++l) {
+         // shadow (uses GL_PROJECTION)
+-        glMatrixMode(GL_PROJECTION);
++
+         int direction = (l == 0) ? 1 : -1;
+         // translate (1,-1) pixels
+-        glTranslated(direction * shadow.x, -direction * shadow.y, 0);
+-        glMatrixMode(GL_MODELVIEW); // Modelview should be used on Nuke
++        NatronOFX::overlayDrawing().offsetShadow(direction * shadow.x, -direction * shadow.y);
++
+ 
+         // Draw the motion curve a bit darker
+         const double darken = 0.8;
+-        glColor3d(color.r * darken * l, color.g * darken * l, color.b * darken * l);
+-        glPointSize(POINT_SIZE * screenPixelRatio);
++        NatronOFX::overlayDrawing().colour(color.r * darken * l, color.g * darken * l, color.b * darken * l);
++        NatronOFX::overlayDrawing().pointSize(POINT_SIZE * screenPixelRatio);
+ 
+         for (int i = enableBegin; i < enableEnd; ++i) {
+             if (enable[i]) {
+@@ -774,44 +722,43 @@ CornerPinTransformInteract::draw(const DrawArgs &args)
+             }
+         }
+ 
+-        glColor3f( (float)(color.r / 2) * l, (float)(color.g / 2) * l, (float)(color.b / 2) * l );
+-        glBegin(GL_LINES);
++        NatronOFX::overlayDrawing().colour( (float)(color.r / 2) * l, (float)(color.g / 2) * l, (float)(color.b / 2) * l );
++        NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Lines);
+         for (int i = enableBegin; i < enableEnd; ++i) {
+             if (enable[i]) {
+-                glVertex2d(p[i].x, p[i].y);
+-                glVertex2d(q[i].x, q[i].y);
++                NatronOFX::overlayDrawing().vertex(p[i].x, p[i].y);
++                NatronOFX::overlayDrawing().vertex(q[i].x, q[i].y);
+             }
+         }
+-        glEnd();
+-        glColor3f( (float)color.r * l, (float)color.g * l, (float)color.b * l );
+-        glBegin(GL_LINE_LOOP);
++        NatronOFX::overlayDrawing().end();
++        NatronOFX::overlayDrawing().colour( (float)color.r * l, (float)color.g * l, (float)color.b * l );
++        NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::LineLoop);
+         for (int i = enableBegin; i < enableEnd; ++i) {
+             if (enable[i]) {
+-                glVertex2d(p[i].x, p[i].y);
++                NatronOFX::overlayDrawing().vertex(p[i].x, p[i].y);
+             }
+         }
+-        glEnd();
+-        glBegin(GL_POINTS);
++        NatronOFX::overlayDrawing().end();
++        NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Points);
+         for (int i = enableBegin; i < enableEnd; ++i) {
+             if (enable[i]) {
+                 if ( (_hovering == i) || (_dragging == i) ) {
+-                    glColor3f(0.f * l, 1.f * l, 0.f * l);
++                    NatronOFX::overlayDrawing().colour(0.f * l, 1.f * l, 0.f * l);
+                 } else {
+-                    glColor3f( (float)color.r * l, (float)color.g * l, (float)color.b * l );
++                    NatronOFX::overlayDrawing().colour( (float)color.r * l, (float)color.g * l, (float)color.b * l );
+                 }
+-                glVertex2d(p[i].x, p[i].y);
++                NatronOFX::overlayDrawing().vertex(p[i].x, p[i].y);
+             }
+         }
+-        glEnd();
+-        glColor3f( (float)color.r * l, (float)color.g * l, (float)color.b * l );
++        NatronOFX::overlayDrawing().end();
++        NatronOFX::overlayDrawing().colour( (float)color.r * l, (float)color.g * l, (float)color.b * l );
+         for (int i = enableBegin; i < enableEnd; ++i) {
+             if (enable[i]) {
+-                TextRenderer::bitmapString(p[i].x, p[i].y + POINT_SIZE * screenPixelRatio, useFrom ? kParamFrom[i] : kParamTo[i], font);
++                NatronOFX::overlayDrawing().text(p[i].x, p[i].y + POINT_SIZE * screenPixelRatio * args.pixelScale.y, useFrom ? kParamFrom[i] : kParamTo[i]);
+             }
+         }
+     }
+ 
+-    //glPopAttrib();
+ 
+     return true;
+ } // CornerPinTransformInteract::draw
+@@ -1018,7 +965,7 @@ CornerPinTransformInteract::loseFocus(const FocusArgs & /*args*/)
+ }
+ 
+ class CornerPinOverlayDescriptor
+-    : public DefaultEffectOverlayDescriptor<CornerPinOverlayDescriptor, CornerPinTransformInteract>
++    : public NatronOFX::OverlayDescriptor<CornerPinOverlayDescriptor, CornerPinTransformInteract>
+ {
+ };
+ 
+@@ -1329,7 +1276,7 @@ CornerPinPluginFactory::describe(ImageEffectDescriptor &desc)
+ 
+     Transform3x3Describe(desc, false);
+ 
+-    desc.setOverlayInteractDescriptor(new CornerPinOverlayDescriptor);
++    NatronOFX::setOverlay(desc, new CornerPinOverlayDescriptor);
+ }
+ 
+ void
+@@ -1372,7 +1319,7 @@ CornerPinMaskedPluginFactory::describe(ImageEffectDescriptor &desc)
+ 
+     Transform3x3Describe(desc, true);
+ 
+-    desc.setOverlayInteractDescriptor(new CornerPinOverlayDescriptor);
++    NatronOFX::setOverlay(desc, new CornerPinOverlayDescriptor);
+ }
+ 
+ void
+diff --git a/Crop/Crop.cpp b/Crop/Crop.cpp
+index 7e9f1177..dc3e79f0 100644
+--- a/Crop/Crop.cpp
++++ b/Crop/Crop.cpp
+@@ -21,6 +21,7 @@
+  * OFX Crop plugin.
+  */
+ 
++#include "NatronOverlayInteract.h"
+ #include <cmath>
+ #include <cfloat> // DBL_MAX
+ #include <algorithm>
+@@ -802,7 +803,7 @@ private:
+ };
+ 
+ class CropOverlayDescriptor
+-    : public DefaultEffectOverlayDescriptor<CropOverlayDescriptor, CropInteract>
++    : public NatronOFX::OverlayDescriptor<CropOverlayDescriptor, CropInteract>
+ {
+ };
+ 
+@@ -839,7 +840,7 @@ CropPluginFactory::describe(ImageEffectDescriptor &desc)
+     // and scale the transform appropriately.
+     // All other functions are usually in canonical coordinates.
+     desc.setSupportsMultiResolution(kSupportsMultiResolution);
+-    desc.setOverlayInteractDescriptor(new CropOverlayDescriptor);
++    NatronOFX::setOverlay(desc, new CropOverlayDescriptor);
+ #ifdef OFX_EXTENSIONS_NUKE
+     // ask the host to render all planes
+     desc.setPassThroughForNotProcessedPlanes(ePassThroughLevelRenderAllRequestedPlanes);
+diff --git a/DenoiseSharpen/DenoiseSharpen.cpp b/DenoiseSharpen/DenoiseSharpen.cpp
+index 9a823cf6..77842a77 100644
+--- a/DenoiseSharpen/DenoiseSharpen.cpp
++++ b/DenoiseSharpen/DenoiseSharpen.cpp
+@@ -51,6 +51,7 @@
+ 
+ #if defined(_OPENMP)
+ #define _GLIBCXX_PARALLEL // enable libstdc++ parallel STL algorithm (eg nth_element, sort...)
++#include "NatronOverlayInteract.h"
+ #include <omp.h>
+ #else
+ #define kUseMultithread // define to use the multithread suite
+@@ -3277,7 +3278,7 @@ DenoiseSharpenPlugin::updateSecret()
+ }
+ 
+ class DenoiseSharpenOverlayDescriptor
+-    : public DefaultEffectOverlayDescriptor<DenoiseSharpenOverlayDescriptor, RectangleInteract>
++    : public NatronOFX::OverlayDescriptor<DenoiseSharpenOverlayDescriptor, RectangleInteract>
+ {
+ };
+ 
+@@ -3314,7 +3315,7 @@ DenoiseSharpenPluginFactory::describe(ImageEffectDescriptor &desc)
+     desc.setSupportsMultipleClipPARs(kSupportsMultipleClipPARs);
+     desc.setSupportsMultipleClipDepths(kSupportsMultipleClipDepths);
+     desc.setRenderThreadSafety(kRenderThreadSafety);
+-    desc.setOverlayInteractDescriptor(new DenoiseSharpenOverlayDescriptor);
++    NatronOFX::setOverlay(desc, new DenoiseSharpenOverlayDescriptor);
+ 
+ #ifdef OFX_EXTENSIONS_NATRON
+     desc.setChannelSelector(ePixelComponentNone); // we have our own channel selector
+diff --git a/Distortion/Distortion.cpp b/Distortion/Distortion.cpp
+index 0dfcd0bb..07e5dbea 100644
+--- a/Distortion/Distortion.cpp
++++ b/Distortion/Distortion.cpp
+@@ -38,6 +38,7 @@
+  */
+ // This node concatenates transforms upstream.
+ 
++#include "NatronOverlayInteract.h"
+ #include <cmath>
+ #include <cfloat> // DBL_MAX
+ #include <cstdlib> // atoi
+@@ -3482,7 +3483,7 @@ DistortionPluginFactory<plugin, majorVersion>::describe(ImageEffectDescriptor &d
+     }
+ #endif
+     if (plugin == eDistortionPluginLensDistortion) {
+-        desc.setOverlayInteractDescriptor(new GeneratorOverlayDescriptor);
++        NatronOFX::setOverlay(desc, new GeneratorOverlayDescriptor);
+     }
+     if ( (plugin == eDistortionPluginLensDistortion && this->getMajorVersion() < kPluginVersionLensDistortionMajor) ||
+          (plugin != eDistortionPluginLensDistortion && this->getMajorVersion() < kPluginVersionMajor) ) {
+diff --git a/GodRays/GodRays.cpp b/GodRays/GodRays.cpp
+index 2fea49f6..31269179 100644
+--- a/GodRays/GodRays.cpp
++++ b/GodRays/GodRays.cpp
+@@ -21,6 +21,7 @@
+  * OFX GodRays plugin.
+  */
+ 
++#include "NatronOverlayInteract.h"
+ #include <cmath>
+ #include <cfloat> // DBL_MAX
+ #include <iostream>
+@@ -1174,7 +1175,7 @@ GodRaysPluginFactory::describe(ImageEffectDescriptor &desc)
+ 
+     Transform3x3Describe(desc, true);
+ 
+-    desc.setOverlayInteractDescriptor(new TransformOverlayDescriptorOldParams);
++    NatronOFX::setOverlay(desc, new TransformOverlayDescriptorOldParams);
+ }
+ 
+ void
+diff --git a/HSVTool/HSVTool.cpp b/HSVTool/HSVTool.cpp
+index 404a47b4..ae0e310b 100644
+--- a/HSVTool/HSVTool.cpp
++++ b/HSVTool/HSVTool.cpp
+@@ -22,6 +22,7 @@
+  */
+ 
+ #define _USE_MATH_DEFINES
++#include "NatronOverlayInteract.h"
+ #include <cmath>
+ #include <cfloat> // DBL_MAX
+ #include <algorithm>
+@@ -1821,7 +1822,7 @@ private:
+ };
+ 
+ class HSVToolOverlayDescriptor
+-    : public DefaultEffectOverlayDescriptor<HSVToolOverlayDescriptor, HSVToolInteract>
++    : public NatronOFX::OverlayDescriptor<HSVToolOverlayDescriptor, HSVToolInteract>
+ {
+ };
+ 
+@@ -1852,7 +1853,7 @@ HSVToolPluginFactory::describe(ImageEffectDescriptor &desc)
+     desc.setSupportsMultipleClipPARs(kSupportsMultipleClipPARs);
+     desc.setSupportsMultipleClipDepths(kSupportsMultipleClipDepths);
+     desc.setRenderThreadSafety(kRenderThreadSafety);
+-    desc.setOverlayInteractDescriptor(new HSVToolOverlayDescriptor);
++    NatronOFX::setOverlay(desc, new HSVToolOverlayDescriptor);
+ #ifdef OFX_EXTENSIONS_NATRON
+     desc.setChannelSelector(ePixelComponentRGBA);
+ #endif
+diff --git a/HueCorrect/HueCorrect.cpp b/HueCorrect/HueCorrect.cpp
+index 5adc1ddb..11bbb88d 100644
+--- a/HueCorrect/HueCorrect.cpp
++++ b/HueCorrect/HueCorrect.cpp
+@@ -25,22 +25,7 @@
+ #include <cfloat> // DBL_MAX
+ #include <algorithm>
+ 
+-#ifdef __APPLE__
+-#ifndef GL_SILENCE_DEPRECATION
+-#define GL_SILENCE_DEPRECATION // Yes, we are still doing OpenGL 2.1
+-#endif
+-#include <OpenGL/gl.h>
+-#else
+-#ifdef _WIN32
+-#define WIN32_LEAN_AND_MEAN
+-#ifndef NOMINMAX
+-#define NOMINMAX
+-#endif
+-#include <windows.h>
+-#endif
+-
+-#include <GL/gl.h>
+-#endif
++#include "NatronParametricInteract.h"
+ 
+ #include "ofxsProcessing.H"
+ #include "ofxsMaskMix.h"
+@@ -765,6 +750,7 @@ public:
+ 
+     virtual bool draw(const DrawArgs &args) OVERRIDE FINAL
+     {
++        NatronOFX::Draw draw;
+         if ( _hueVsHue && _hueVsHue->getValue() ) {
+             // let us draw one slice every 8 pixels
+             const int sliceWidth = 8;
+@@ -772,7 +758,7 @@ public:
+             const float v = 0.3;
+             int nbValues = args.pixelScale.x > 0 ? std::ceil( (_xMax - _xMin) / (sliceWidth * args.pixelScale.x) ) : 1;
+ 
+-            glBegin (GL_TRIANGLE_STRIP);
++            draw.begin(NatronOFX::Primitive::TriangleStrip);
+ 
+             for (int position = -nbValues; position <= 2 * nbValues; ++position) {
+                 // position to evaluate the param at
+@@ -782,34 +768,34 @@ public:
+                 float h = (parametricPos - 1) / 6;
+                 float r, g, b;
+                 Color::hsv_to_rgb( h, s, v, &r, &g, &b );
+-                glColor3f(r, g, b);
+-                glVertex2f(parametricPos+9, _yMin-(_yMax-_yMin));
+-                glVertex2f(parametricPos-9, _yMax+(_yMax-_yMin));
++                draw.color(r, g, b);
++                draw.vertex(parametricPos+9, _yMin-(_yMax-_yMin));
++                draw.vertex(parametricPos-9, _yMax+(_yMax-_yMin));
+             }
+ 
+-            glEnd();
++            draw.end();
+ 
+             if (args.hasPickerColour) {
+-                glLineWidth(1.5);
+-                glBegin(GL_LINES);
++                draw.lineWidth(1.5);
++                draw.begin(NatronOFX::Primitive::Lines);
+                 {
+                     float h, s, v;
+                     Color::rgb_to_hsv( args.pickerColour.r, args.pickerColour.g, args.pickerColour.b, &h, &s, &v );
+                     const OfxRGBColourD yellow   = {1, 1, 0};
+-                    glColor3f(yellow.r, yellow.g, yellow.b);
++                    draw.color(yellow.r, yellow.g, yellow.b);
+                     // map [0,1] to [0,6]
+                     h = _xMin + h * (_xMax - _xMin) + 1;
+                     if (h > 6) {
+                         h -= 6;
+                     }
+-                    glVertex2f(h-6+3, _yMin);
+-                    glVertex2f(h-6-3, _yMax);
+-                    glVertex2f(h+3, _yMin);
+-                    glVertex2f(h-3, _yMax);
+-                    glVertex2f(h+6+3, _yMin);
+-                    glVertex2f(h+6-3, _yMax);
++                    draw.vertex(h-6+3, _yMin);
++                    draw.vertex(h-6-3, _yMax);
++                    draw.vertex(h+3, _yMin);
++                    draw.vertex(h-3, _yMax);
++                    draw.vertex(h+6+3, _yMin);
++                    draw.vertex(h+6-3, _yMax);
+                 }
+-                glEnd();
++                draw.end();
+             }
+             return true;
+         }
+@@ -821,7 +807,7 @@ public:
+         const float v = 0.3;
+         int nbValues = args.pixelScale.x > 0 ? std::ceil( (_xMax - _xMin) / (sliceWidth * args.pixelScale.x) ) : 1;
+ 
+-        glBegin (GL_TRIANGLE_STRIP);
++        draw.begin(NatronOFX::Primitive::TriangleStrip);
+ 
+         for (int position = 0; position <= nbValues; ++position) {
+             // position to evaluate the param at
+@@ -831,34 +817,34 @@ public:
+             float h = (parametricPos - 1) / 6;
+             float r, g, b;
+             Color::hsv_to_rgb( h, s, v, &r, &g, &b );
+-            glColor3f(r, g, b);
+-            glVertex2f(parametricPos, _yMin);
+-            glVertex2f(parametricPos, _yMax);
++            draw.color(r, g, b);
++            draw.vertex(parametricPos, _yMin);
++            draw.vertex(parametricPos, _yMax);
+         }
+ 
+-        glEnd();
++        draw.end();
+ 
+         if (args.hasPickerColour) {
+-            glLineWidth(1.5);
+-            glBegin(GL_LINES);
++            draw.lineWidth(1.5);
++            draw.begin(NatronOFX::Primitive::Lines);
+             {
+                 float h, s, v;
+                 Color::rgb_to_hsv( args.pickerColour.r, args.pickerColour.g, args.pickerColour.b, &h, &s, &v );
+                 const OfxRGBColourD yellow   = {1, 1, 0};
+                 const OfxRGBColourD grey  = {2. / 3., 2. / 3., 2. / 3.};
+-                glColor3f(yellow.r, yellow.g, yellow.b);
++                draw.color(yellow.r, yellow.g, yellow.b);
+                 // map [0,1] to [0,6]
+                 h = _xMin + h * (_xMax - _xMin) + 1;
+                 if (h > 6) {
+                     h -= 6;
+                 }
+-                glVertex2f(h, _yMin);
+-                glVertex2f(h, _yMax);
+-                glColor3f(grey.r, grey.g, grey.b);
+-                glVertex2f(_xMin, s);
+-                glVertex2f(_xMax, s);
++                draw.vertex(h, _yMin);
++                draw.vertex(h, _yMax);
++                draw.color(grey.r, grey.g, grey.b);
++                draw.vertex(_xMin, s);
++                draw.vertex(_xMax, s);
+             }
+-            glEnd();
++            draw.end();
+         }
+ 
+         return true;
+@@ -877,7 +863,7 @@ protected:
+ // descriptor. If there were several, be would have to use a template parameter,
+ // as in propTester.cpp
+ class HueCorrectInteractDescriptor
+-    : public DefaultParamInteractDescriptor<HueCorrectInteractDescriptor, HueCorrectInteract>
++    : public NatronOFX::ParametricDescriptor<HueCorrectInteractDescriptor, HueCorrectInteract>
+ {
+ public:
+     virtual void describe() OVERRIDE FINAL
+@@ -976,7 +962,7 @@ HueCorrectPluginFactory::describeInContext(ImageEffectDescriptor &desc,
+         param->setHint(kParamHueHint);
+         {
+             HueCorrectInteractDescriptor* interact = new HueCorrectInteractDescriptor;
+-            param->setInteractDescriptor(interact);
++            NatronOFX::setBackground(param, interact);
+         }
+ 
+         param->setDimension(kCurveNb);
+@@ -1559,7 +1545,7 @@ HueKeyerPluginFactory::describeInContext(ImageEffectDescriptor &desc,
+         param->setHint(kParamKeyerHueHint);
+         {
+             HueCorrectInteractDescriptor* interact = new HueCorrectInteractDescriptor;
+-            param->setInteractDescriptor(interact);
++            NatronOFX::setBackground(param, interact);
+         }
+ 
+         // define it as three dimensional
+diff --git a/HueCorrect/HueCorrect1.cpp b/HueCorrect/HueCorrect1.cpp
+index 9d83c757..afad39ee 100644
+--- a/HueCorrect/HueCorrect1.cpp
++++ b/HueCorrect/HueCorrect1.cpp
+@@ -25,22 +25,7 @@
+ #include <cfloat> // DBL_MAX
+ #include <algorithm>
+ 
+-#ifdef __APPLE__
+-#ifndef GL_SILENCE_DEPRECATION
+-#define GL_SILENCE_DEPRECATION // Yes, we are still doing OpenGL 2.1
+-#endif
+-#include <OpenGL/gl.h>
+-#else
+-#ifdef _WIN32
+-#define WIN32_LEAN_AND_MEAN
+-#ifndef NOMINMAX
+-#define NOMINMAX
+-#endif
+-#include <windows.h>
+-#endif
+-
+-#include <GL/gl.h>
+-#endif
++#include "NatronParametricInteract.h"
+ 
+ #include "ofxsProcessing.H"
+ #include "ofxsMaskMix.h"
+@@ -748,6 +733,7 @@ public:
+ 
+     virtual bool draw(const DrawArgs &args) OVERRIDE FINAL
+     {
++        NatronOFX::Draw draw;
+         //const double time = args.time;
+ 
+         // let us draw one slice every 8 pixels
+@@ -756,7 +742,7 @@ public:
+         const float v = 0.3;
+         int nbValues = args.pixelScale.x > 0 ? std::ceil( (_xMax - _xMin) / (sliceWidth * args.pixelScale.x) ) : 1;
+ 
+-        glBegin (GL_TRIANGLE_STRIP);
++        draw.begin(NatronOFX::Primitive::TriangleStrip);
+ 
+         for (int position = 0; position <= nbValues; ++position) {
+             // position to evaluate the param at
+@@ -766,34 +752,34 @@ public:
+             float h = (parametricPos - 1) / 6;
+             float r, g, b;
+             Color::hsv_to_rgb( h, s, v, &r, &g, &b );
+-            glColor3f(r, g, b);
+-            glVertex2f(parametricPos, _yMin);
+-            glVertex2f(parametricPos, _yMax);
++            draw.color(r, g, b);
++            draw.vertex(parametricPos, _yMin);
++            draw.vertex(parametricPos, _yMax);
+         }
+ 
+-        glEnd();
++        draw.end();
+ 
+         if (args.hasPickerColour) {
+-            glLineWidth(1.5);
+-            glBegin(GL_LINES);
++            draw.lineWidth(1.5);
++            draw.begin(NatronOFX::Primitive::Lines);
+             {
+                 float h, s, v;
+                 Color::rgb_to_hsv( args.pickerColour.r, args.pickerColour.g, args.pickerColour.b, &h, &s, &v );
+                 const OfxRGBColourD yellow   = {1, 1, 0};
+                 const OfxRGBColourD grey  = {2. / 3., 2. / 3., 2. / 3.};
+-                glColor3f(yellow.r, yellow.g, yellow.b);
++                draw.color(yellow.r, yellow.g, yellow.b);
+                 // map [0,1] to [0,6]
+                 h = _xMin + h * (_xMax - _xMin) + 1;
+                 if (h > 6) {
+                     h -= 6;
+                 }
+-                glVertex2f(h, _yMin);
+-                glVertex2f(h, _yMax);
+-                glColor3f(grey.r, grey.g, grey.b);
+-                glVertex2f(_xMin, s);
+-                glVertex2f(_xMax, s);
++                draw.vertex(h, _yMin);
++                draw.vertex(h, _yMax);
++                draw.color(grey.r, grey.g, grey.b);
++                draw.vertex(_xMin, s);
++                draw.vertex(_xMax, s);
+             }
+-            glEnd();
++            draw.end();
+         }
+ 
+         return true;
+@@ -811,7 +797,7 @@ protected:
+ // descriptor. If there were several, be would have to use a template parameter,
+ // as in propTester.cpp
+ class HueCorrectInteractDescriptor
+-    : public DefaultParamInteractDescriptor<HueCorrectInteractDescriptor, HueCorrectInteract>
++    : public NatronOFX::ParametricDescriptor<HueCorrectInteractDescriptor, HueCorrectInteract>
+ {
+ public:
+     virtual void describe() OVERRIDE FINAL
+@@ -912,7 +898,7 @@ HueCorrectPluginFactory::describeInContext(ImageEffectDescriptor &desc,
+         param->setHint(kParamHueHint);
+         {
+             HueCorrectInteractDescriptor* interact = new HueCorrectInteractDescriptor;
+-            param->setInteractDescriptor(interact);
++            NatronOFX::setBackground(param, interact);
+         }
+ 
+         // define it as three dimensional
+diff --git a/ImageStatistics/ImageStatistics.cpp b/ImageStatistics/ImageStatistics.cpp
+index 7ed244ef..a6657e93 100644
+--- a/ImageStatistics/ImageStatistics.cpp
++++ b/ImageStatistics/ImageStatistics.cpp
+@@ -21,6 +21,7 @@
+  * OFX ImageStatistics plugin.
+  */
+ 
++#include "NatronOverlayInteract.h"
+ #include <cmath>
+ #include <cfloat> // DBL_MAX
+ #include <climits>
+@@ -1898,7 +1899,7 @@ private:
+ };
+ 
+ class ImageStatisticsOverlayDescriptor
+-    : public DefaultEffectOverlayDescriptor<ImageStatisticsOverlayDescriptor, ImageStatisticsInteract>
++    : public NatronOFX::OverlayDescriptor<ImageStatisticsOverlayDescriptor, ImageStatisticsInteract>
+ {
+ };
+ 
+@@ -1934,7 +1935,7 @@ ImageStatisticsPluginFactory::describe(ImageEffectDescriptor &desc)
+     // and scale the transform appropriately.
+     // All other functions are usually in canonical coordinates.
+     desc.setSupportsMultiResolution(kSupportsMultiResolution);
+-    desc.setOverlayInteractDescriptor(new ImageStatisticsOverlayDescriptor);
++    NatronOFX::setOverlay(desc, new ImageStatisticsOverlayDescriptor);
+ #ifdef OFX_EXTENSIONS_NATRON
+     desc.setChannelSelector(ePixelComponentNone);
+ #endif
+diff --git a/LayerContactSheet/LayerContactSheet.cpp b/LayerContactSheet/LayerContactSheet.cpp
+index 612a110f..28d5c95e 100644
+--- a/LayerContactSheet/LayerContactSheet.cpp
++++ b/LayerContactSheet/LayerContactSheet.cpp
+@@ -26,22 +26,7 @@
+ #include <algorithm>
+ #include <cmath>
+ 
+-#ifdef __APPLE__
+-#ifndef GL_SILENCE_DEPRECATION
+-#define GL_SILENCE_DEPRECATION // Yes, we are still doing OpenGL 2.1
+-#endif
+-#include <OpenGL/gl.h>
+-#else
+-#ifdef _WIN32
+-#define WIN32_LEAN_AND_MEAN
+-#ifndef NOMINMAX
+-#define NOMINMAX
+-#endif
+-#include <windows.h>
+-#endif
+-
+-#include <GL/gl.h>
+-#endif
++#include "NatronOverlayInteract.h"
+ 
+ 
+ #include "ofxsMacros.h"
+@@ -49,7 +34,6 @@
+ #include "ofxsCopier.h"
+ #include "ofxsCoords.h"
+ #include "ofxsFilter.h"
+-#include "ofxsOGLTextRenderer.h"
+ #include "ofxsOGLHiDPI.h"
+ 
+ #ifdef OFX_EXTENSIONS_NUKE
+@@ -604,22 +588,12 @@ LayerContactSheetInteract::draw(const OFX::DrawArgs &args)
+ 
+     bool hiDPI = _hiDPI ? _hiDPI->getValue() : false;
+     //double screenPixelRatio = hiDPI ? 2 : 1;
+-#ifdef OFX_EXTENSIONS_NATRON
+-    //screenPixelRatio *= args.screenPixelRatio;
+-    hiDPI |= args.screenPixelRatio > 1;
+-#endif
+-    TextRenderer::Font font = hiDPI ? TextRenderer::FONT_TIMES_ROMAN_24 : TextRenderer::FONT_HELVETICA_12;
++
+ 
+     OfxRGBColourD color = { 0.8, 0.8, 0.8 };
+     getSuggestedColour(color);
+     //const OfxPointD& pscale = args.pixelScale;
+-    GLdouble projection[16];
+-    glGetDoublev( GL_PROJECTION_MATRIX, projection);
+-    GLint viewport[4];
+-    glGetIntegerv(GL_VIEWPORT, viewport);
+-    OfxPointD shadow; // how much to translate GL_PROJECTION to get exactly one pixel on screen
+-    shadow.x = 2. / (projection[0] * viewport[2]);
+-    shadow.y = 2. / (projection[5] * viewport[3]);
++    const OfxPointD shadow = args.pixelScale;
+ 
+     for (std::size_t layer = 0; layer < planes.size(); ++layer) {
+         std::string name = planes[layer];
+@@ -674,15 +648,15 @@ LayerContactSheetInteract::draw(const OFX::DrawArgs &args)
+         // l = 1: drawing
+         for (int l = 0; l < 2; ++l) {
+             // shadow (uses GL_PROJECTION)
+-            glMatrixMode(GL_PROJECTION);
++
+             int direction = (l == 0) ? 1 : -1;
+             // translate (1,-1) pixels
+-            glTranslated(direction * shadow.x, -direction * shadow.y, 0);
+-            glMatrixMode(GL_MODELVIEW); // Modelview should be used on Nuke
++            NatronOFX::overlayDrawing().offsetShadow(direction * shadow.x, -direction * shadow.y);
++
+ 
+-            glColor3f(color.r * l, color.g * l, color.b * l);
++            NatronOFX::overlayDrawing().colour(color.r * l, color.g * l, color.b * l);
+ 
+-            TextRenderer::bitmapString(imageRoD.x1, imageRoD.y1, name.c_str(), font);
++            NatronOFX::overlayDrawing().text(imageRoD.x1, imageRoD.y1, name.c_str());
+         }
+     }
+ 
+@@ -695,7 +669,7 @@ LayerContactSheetInteract::draw(const OFX::DrawArgs &args)
+ 
+ mDeclarePluginFactory(LayerContactSheetPluginFactory, {}, {});
+ 
+-class LayerContactSheetOverlayDescriptor : public DefaultEffectOverlayDescriptor<LayerContactSheetOverlayDescriptor, LayerContactSheetInteract> {};
++class LayerContactSheetOverlayDescriptor : public NatronOFX::OverlayDescriptor<LayerContactSheetOverlayDescriptor, LayerContactSheetInteract> {};
+ 
+ void
+ LayerContactSheetPluginFactory::describe(OFX::ImageEffectDescriptor &desc)
+@@ -744,7 +718,7 @@ LayerContactSheetPluginFactory::describe(OFX::ImageEffectDescriptor &desc)
+     desc.setChannelSelector(ePixelComponentNone);
+ #endif
+ 
+-    desc.setOverlayInteractDescriptor( new LayerContactSheetOverlayDescriptor);
++    NatronOFX::setOverlay(desc, new LayerContactSheetOverlayDescriptor);
+ }
+ 
+ void
+diff --git a/NoOp/NoOp.cpp b/NoOp/NoOp.cpp
+index b30ef781..7dc9e8cc 100644
+--- a/NoOp/NoOp.cpp
++++ b/NoOp/NoOp.cpp
+@@ -22,6 +22,7 @@
+  * Does nothing.
+  */
+ 
++#include "NatronOverlayInteract.h"
+ #include <sstream> // stringstream
+ 
+ #include "ofxsProcessing.H"
+@@ -911,7 +912,7 @@ NoOpPluginFactory::describe(ImageEffectDescriptor &desc)
+ #ifdef OFX_EXTENSIONS_NATRON
+     desc.setChannelSelector(ePixelComponentNone);
+ #endif
+-    desc.setOverlayInteractDescriptor(new GeneratorOverlayDescriptor);
++    NatronOFX::setOverlay(desc, new GeneratorOverlayDescriptor);
+ }
+ 
+ void
+diff --git a/Position/Position.cpp b/Position/Position.cpp
+index adb38134..614f9333 100644
+--- a/Position/Position.cpp
++++ b/Position/Position.cpp
+@@ -21,6 +21,7 @@
+  * OFX Position plugin.
+  */
+ 
++#include "NatronOverlayInteract.h"
+ #include <cmath>
+ #include <cfloat> // DBL_MAX
+ #include <iostream>
+@@ -335,7 +336,7 @@ PositionPluginFactory::describe(ImageEffectDescriptor &desc)
+     desc.setSupportsMultipleClipDepths(kSupportsMultipleClipDepths);
+     desc.setRenderThreadSafety(kRenderThreadSafety);
+ 
+-    desc.setOverlayInteractDescriptor(new PositionOverlayDescriptor<PositionInteractParam>);
++    NatronOFX::setOverlay(desc, new PositionOverlayDescriptor<PositionInteractParam>);
+ #ifdef OFX_EXTENSIONS_NUKE
+     // ask the host to render all planes
+     desc.setPassThroughForNotProcessedPlanes(ePassThroughLevelRenderAllRequestedPlanes);
+diff --git a/Ramp/Ramp.cpp b/Ramp/Ramp.cpp
+index 944bf7ba..aa54f734 100644
+--- a/Ramp/Ramp.cpp
++++ b/Ramp/Ramp.cpp
+@@ -21,6 +21,7 @@
+  * OFX Ramp plugin.
+  */
+ 
++#include "NatronOverlayInteract.h"
+ #include <cmath>
+ #include <algorithm>
+ 
+@@ -781,7 +782,7 @@ RampPluginFactory::describe(ImageEffectDescriptor &desc)
+     // and scale the transform appropriately.
+     // All other functions are usually in canonical coordinates.
+     desc.setSupportsMultiResolution(kSupportsMultiResolution);
+-    desc.setOverlayInteractDescriptor(new RampOverlayDescriptorOldParams);
++    NatronOFX::setOverlay(desc, new RampOverlayDescriptorOldParams);
+ 
+ #ifdef OFX_EXTENSIONS_NATRON
+     desc.setChannelSelector(ePixelComponentNone); // we have our own channel selector
+diff --git a/ReConverge/ReConverge.cpp b/ReConverge/ReConverge.cpp
+index 37473287..8ea7fd14 100644
+--- a/ReConverge/ReConverge.cpp
++++ b/ReConverge/ReConverge.cpp
+@@ -25,6 +25,7 @@
+ 
+ #ifdef DEBUG
+ 
++#include "NatronOverlayInteract.h"
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cfloat> // DBL_MAX
+@@ -405,7 +406,7 @@ ReConvergePluginFactory::describe(ImageEffectDescriptor &desc)
+     desc.setSupportsMultipleClipPARs(kSupportsMultipleClipPARs);
+     desc.setSupportsMultipleClipDepths(kSupportsMultipleClipDepths);
+ 
+-    desc.setOverlayInteractDescriptor(new PositionOverlayDescriptor<ConvergePointParam>);
++    NatronOFX::setOverlay(desc, new PositionOverlayDescriptor<ConvergePointParam>);
+ #ifdef OFX_EXTENSIONS_NATRON
+     desc.setChannelSelector(ePixelComponentNone);
+ #endif
+diff --git a/Shadertoy/Shadertoy.cpp b/Shadertoy/Shadertoy.cpp
+index 6825d646..0c965b93 100644
+--- a/Shadertoy/Shadertoy.cpp
++++ b/Shadertoy/Shadertoy.cpp
+@@ -32,9 +32,9 @@
+  - add GLSL Sandbox uniforms (except backbuffer), see doc for GLSL Sandbox uniforms at https://github.com/jolivain/glslsandbox-player/blob/master/README#L112
+  */
+ 
+-#if defined(OFX_SUPPORTS_OPENGLRENDER) || defined(HAVE_OSMESA) // at least one is required for this plugin
+ 
+ #include "Shadertoy.h"
++#include "Global/OpenFX/NatronVulkanRenderSuite.h"
+ 
+ #include <cfloat> // DBL_MAX
+ #include <cstddef>
+@@ -57,7 +57,6 @@
+ 
+ #include "ofxsImageEffect.h"
+ #include "ofxsMacros.h"
+-#include "ofxOpenGLRender.h"
+ #include "ofxsCoords.h"
+ #include "ofxsFormatResolution.h"
+ 
+@@ -871,28 +870,11 @@ namespace Shadertoy {
+ #define kParamInputHintLabel "Hint"
+ #define kParamInputHintHint "Help for this input."
+ 
+-#if defined(OFX_SUPPORTS_OPENGLRENDER) && defined(HAVE_OSMESA)
+-#define kParamEnableGPU "enableGPU"
+-#define kParamEnableGPULabel "Enable GPU Render"
+-#define kParamEnableGPUHint \
+-    "Enable GPU-based OpenGL render.\n" \
+-    "If the checkbox is checked but is not enabled (i.e. it cannot be unchecked), GPU render can not be enabled or disabled from the plugin and is probably part of the host options.\n" \
+-    "If the checkbox is not checked and is not enabled (i.e. it cannot be checked), GPU render is not available on this host."
+-#endif
+ 
+-#ifdef HAVE_OSMESA
+-#define kParamCPUDriver "cpuDriver"
+-#define kParamCPUDriverLabel "CPU Driver"
+-#define kParamCPUDriverHint "Driver for CPU rendering. May be \"softpipe\" , \"llvmpipe\"  or \"swr\" (OpenSWR, not always available)."
+-#define kParamCPUDriverOptionSoftPipe "softpipe", "Gallium softpipe driver from Mesa. A reference signle-threaded driver (slower, has GL_EXT_texture_filter_anisotropic GL_ARB_texture_query_lod GL_ARB_pipeline_statistics_query).", "softpipe"
+-#define kParamCPUDriverOptionLLVMPipe "llvmpipe", "Gallium llvmpipe driver from Mesa, if available. Uses LLVM for x86 JIT code generation and is multi-threaded (faster, has GL_ARB_buffer_storage GL_EXT_polygon_offset_clamp).", "llvmpipe"
+-#define kParamCPUDriverOptionSWR "swr", "OpenSWR driver from Mesa, if available. Fully utilizes modern instruction sets like AVX and AVX2 to achieve high rendering performance.", "swr"
+-#define kParamCPUDriverDefault ShadertoyPlugin::eCPUDriverLLVMPipe
+-#endif
+ 
+ #define kParamRendererInfo "rendererInfo"
+ #define kParamRendererInfoLabel "Renderer Info..."
+-#define kParamRendererInfoHint "Retrieve information about the current OpenGL renderer."
++#define kParamRendererInfoHint "Retrieve information about the current Vulkan renderer."
+ 
+ #define kParamHelp "helpButton"
+ #define kParamHelpLabel "Help..."
+@@ -1083,8 +1065,6 @@ ShadertoyPlugin::ShadertoyPlugin(OfxImageEffectHandle handle)
+     , _paramMaxInt  (NBUNIFORMS, (IntParam*)     NULL)
+     , _paramMaxFloat(NBUNIFORMS, (DoubleParam*)  NULL)
+     , _paramMaxVec2 (NBUNIFORMS, (Double2DParam*)     NULL)
+-    , _enableGPU(NULL)
+-    , _cpuDriver(NULL)
+     , _imageShaderID(1)
+     , _imageShaderUniformsID(1)
+     , _imageShaderUpdateParams(false)
+@@ -1097,16 +1077,11 @@ ShadertoyPlugin::ShadertoyPlugin(OfxImageEffectHandle handle)
+     , _imageShaderInputWrap(NBINPUTS, eWrapRepeat)
+     , _imageShaderBBox(eBBoxDefault)
+     , _imageShaderCompiled(false)
+-    , _openGLContextData()
+-    , _openGLContextAttached(false)
+     , _presets(gPresetsDefault)
+ {
+     try {
+         _imageShaderMutex.reset(new Mutex);
+         _rendererInfoMutex.reset(new Mutex);
+-#if defined(HAVE_OSMESA)
+-        _osmesaMutex.reset(new Mutex);
+-#endif
+     } catch (const std::exception& e) {
+ #      ifdef DEBUG
+         std::cout << "ERROR in createInstance(): Multithread::Mutex creation returned " << e.what() << std::endl;
+@@ -1224,22 +1199,9 @@ ShadertoyPlugin::ShadertoyPlugin(OfxImageEffectHandle handle)
+         _paramMaxVec2[i]  = fetchDouble2DParam(kParamMaxVec2  + nb);
+         assert(_paramGroup[i] && _paramType[i] && _paramName[i] && _paramLabel[i] && _paramHint[i] && _paramValueBool[i] && _paramValueInt[i] && _paramValueFloat[i] && _paramValueVec2[i] && _paramValueVec3[i] && _paramValueVec4[i]);
+     }
+-#if defined(OFX_SUPPORTS_OPENGLRENDER) && defined(HAVE_OSMESA)
+-    _enableGPU = fetchBooleanParam(kParamEnableGPU);
+-    assert(_enableGPU);
+-    if (!hostDescription.supportsOpenGLRender) {
+-        _enableGPU->setEnabled(false);
+-    }
+-    setSupportsOpenGLRender( _enableGPU->getValue() );
+-#endif
+ 
+-    initOpenGL();
+-#if defined(HAVE_OSMESA)
+-    if ( OSMesaDriverSelectable() ) {
+-        _cpuDriver = fetchChoiceParam(kParamCPUDriver);
+-    }
+-    initMesa();
+-#endif
++    enableVulkanClips();
++    if (!hasVulkan()) throwHostMissingSuiteException(kNatronOfxVulkanRenderSuite);
+     _imageShaderCompile->setEnabled(false); // always compile on first render
+ 
+     // Trigger a render, so that the shader is compiled and parameters are updated.
+@@ -1262,10 +1224,7 @@ ShadertoyPlugin::syncPrivateData()
+ 
+ ShadertoyPlugin::~ShadertoyPlugin()
+ {
+-    exitOpenGL();
+-#if defined(HAVE_OSMESA)
+-    exitMesa();
+-#endif
++    _vulkanShader.reset();
+ }
+ 
+ ////////////////////////////////////////////////////////////////////////////////
+@@ -1278,38 +1237,7 @@ ShadertoyPlugin::~ShadertoyPlugin()
+ void
+ ShadertoyPlugin::render(const RenderArguments &args)
+ {
+-    if ( !kSupportsRenderScale && ( (args.renderScale.x != 1.) || (args.renderScale.y != 1.) ) ) {
+-        throwSuiteStatusException(kOfxStatFailed);
+-    }
+-    for (unsigned i = 0; i < NBINPUTS; ++i) {
+-        assert( kSupportsMultipleClipPARs   || !_srcClips[i] || _srcClips[i]->getPixelAspectRatio() == _dstClip->getPixelAspectRatio() );
+-        assert( kSupportsMultipleClipDepths || !_srcClips[i] || _srcClips[i]->getPixelDepth()       == _dstClip->getPixelDepth() );
+-    }
+-
+-    bool openGLRender = false;
+-#if defined(OFX_SUPPORTS_OPENGLRENDER)
+-    openGLRender = args.openGLEnabled;
+-
+-    if (getImageEffectHostDescription()->hostName.compare(0, 14, "DaVinciResolve") == 0) {
+-        // DaVinci Resolve advertises GL supported but doesn't enable it here :|
+-        // DaVinci always executes the standard render, but when render is called an OpenGL
+-        // context is attached, thus we can do off-screen rendering.
+-        // We execute the OpenGL code, but with args.openGLEnabled = false, which creates a
+-        // framebuffer and reads back the rendered image using glReadPixels.
+-        openGLRender = true;
+-    }
+-
+-    // do the rendering
+-    if (openGLRender) {
+-        return renderGL(args);
+-    }
+-#endif
+-#ifdef HAVE_OSMESA
+-    if (!openGLRender) {
+-        return renderMesa(args);
+-    }
+-#endif // HAVE_OSMESA
+-    throwSuiteStatusException(kOfxStatFailed);
++    renderVulkan(args);
+ }
+ 
+ // overriding getRegionOfDefinition is necessary to tell the host that we do not support render scale
+@@ -1879,16 +1807,6 @@ ShadertoyPlugin::updateExtra()
+         if ( label.empty() ) {
+             label = name;
+         }
+-#if 0
+-        if ( !name.empty() ) {
+-            if ( !hint.empty() ) {
+-                hint += '\n';
+-            }
+-            hint += "This parameter corresponds to 'uniform ";
+-            hint += mapUniformTypeToStr(t);
+-            hint += " " + name + "'.";
+-        }
+-#endif
+         if ( name.empty() ) {
+             _paramGroup[i]->setLabel( kGroupParameterLabel + unsignedToString(i) );
+         } else {
+@@ -2231,44 +2149,17 @@ ShadertoyPlugin::changedParam(const InstanceChangedArgs &args,
+             message = _rendererInfo;
+         }
+         if ( message.empty() ) {
+-            sendMessage(Message::eMessageMessage, "", "OpenGL renderer info not yet available.\n"
++            sendMessage(Message::eMessageMessage, "", "Renderer info not yet available.\n"
+                         "Please execute at least one image render and try again.");
+         } else {
+             sendMessage(Message::eMessageMessage, "", message);
+         }
+     } else if (paramName == kParamHelp) {
+         sendMessage(Message::eMessageMessage, "", kPluginDescription);
+-#if defined(HAVE_OSMESA)
+-    } else if (paramName == kParamEnableGPU) {
+-        setSupportsOpenGLRender( _enableGPU->getValueAtTime(args.time) );
+-        {
+-            AutoMutex lock( _rendererInfoMutex.get() );
+-            _rendererInfo.clear();
+-        }
+-    } else if (paramName == kParamCPUDriver) {
+-        {
+-            AutoMutex lock( _rendererInfoMutex.get() );
+-            _rendererInfo.clear();
+-        }
+-#endif
+     }
+ } // ShadertoyPlugin::changedParam
+ 
+ mDeclarePluginFactory(ShadertoyPluginFactory, {ofxsThreadSuiteCheck();}, {});
+-#if 0
+-void
+-ShadertoyPluginFactory::load()
+-{
+-    // we can't be used on hosts that don't support the OpenGL suite
+-    // returning an error here causes a blank menu entry in Nuke
+-    //#if defined(OFX_SUPPORTS_OPENGLRENDER) && !defined(HAVE_OSMESA)
+-    //const ImageEffectHostDescription &hostDescription = *getImageEffectHostDescription();
+-    //if (!hostDescription.supportsOpenGLRender) {
+-    //    throwHostMissingSuiteException(kOfxOpenGLRenderSuite);
+-    //}
+-    //#endif
+-}
+-#endif
+ 
+ void
+ ShadertoyPluginFactory::describe(ImageEffectDescriptor &desc)
+@@ -2313,27 +2204,12 @@ ShadertoyPluginFactory::describe(ImageEffectDescriptor &desc)
+     desc.setSupportsMultipleClipPARs(kSupportsMultipleClipPARs);
+     // say we can support multiple pixel depths and let the clip preferences action deal with it all.
+     desc.setSupportsMultipleClipDepths(kSupportsMultipleClipDepths);
++    desc.getPropertySet().propSetInt(kNatronOfxImageEffectPropVulkanRenderSupported, ShadertoyPlugin::hasVulkanClips() ? 1 : 0, 0, false);
++    desc.getPropertySet().propSetInt(kNatronOfxImageEffectPropVulkanRenderRequired, 1, 0, false);
++    // Natron's native shader suite also renders directly into Vulkan clips.
++    if (!ShadertoyPlugin::hasVulkan()) {
+     // we support OpenGL rendering (could also say "needed" here)
+-#ifdef OFX_SUPPORTS_OPENGLRENDER
+-#ifdef HAVE_OSMESA
+-    desc.setSupportsOpenGLRender(true);
+-#else
+-    desc.setNeedsOpenGLRender(true);
+-    desc.setSupportsRenderQuality(true);
+-
+-    /*
+-     * If a host supports OpenGL rendering then it flags this with the string
+-     * property ::kOfxImageEffectOpenGLRenderSupported on its descriptor property
+-     * set. Effects that cannot run without OpenGL support should examine this in
+-     * ::kOfxActionDescribe action and return a ::kOfxStatErrMissingHostFeature
+-     * status flag if it is not set to "true".
+-     */
+-    const ImageEffectHostDescription &hostDescription = *getImageEffectHostDescription();
+-    if (!hostDescription.supportsOpenGLRender) {
+-        throwSuiteStatusException(kOfxStatErrMissingHostFeature);
+     }
+-#endif
+-#endif
+ #ifdef OFX_EXTENSIONS_NATRON
+     desc.setChannelSelector(ePixelComponentNone);
+ #endif
+@@ -2585,11 +2461,6 @@ ShadertoyPluginFactory::describeInContext(ImageEffectDescriptor &desc,
+                                           ContextEnum context)
+ {
+     const ImageEffectHostDescription &hostDescription = *getImageEffectHostDescription();
+-#if defined(OFX_SUPPORTS_OPENGLRENDER) && !defined(HAVE_OSMESA)
+-    if (!hostDescription.supportsOpenGLRender) {
+-        throwHostMissingSuiteException(kOfxOpenGLRenderSuite);
+-    }
+-#endif
+ 
+     // parse the Shadertoy.txt file from the resources to fetch the presets
+     string resourcesPath = desc.getPropertySet().propGetString(kOfxPluginPropFilePath, /*throwOnFailure=*/false) + "/Contents/Resources";
+@@ -3223,48 +3094,6 @@ ShadertoyPluginFactory::describeInContext(ImageEffectDescriptor &desc,
+     }
+ 
+ 
+-#if defined(OFX_SUPPORTS_OPENGLRENDER) && defined(HAVE_OSMESA)
+-    {
+-        BooleanParamDescriptor* param = desc.defineBooleanParam(kParamEnableGPU);
+-        param->setLabel(kParamEnableGPULabel);
+-        param->setHint(kParamEnableGPUHint);
+-        const ImageEffectHostDescription &hostDescription = *getImageEffectHostDescription();
+-        // Resolve advertises OpenGL support in its host description, but never calls render with OpenGL enabled
+-        if ( hostDescription.supportsOpenGLRender && (hostDescription.hostName.compare(0, 14, "DaVinciResolve") != 0) ) {
+-            param->setDefault(true);
+-            if (hostDescription.APIVersionMajor * 100 + hostDescription.APIVersionMinor < 104) {
+-                // Switching OpenGL render from the plugin was introduced in OFX 1.4
+-                param->setEnabled(false);
+-            }
+-        } else {
+-            param->setDefault(false);
+-            param->setEnabled(false);
+-        }
+-
+-        if (page) {
+-            page->addChild(*param);
+-        }
+-    }
+-#endif
+-#if defined(HAVE_OSMESA)
+-    if ( ShadertoyPlugin::OSMesaDriverSelectable() ) {
+-        ChoiceParamDescriptor* param = desc.defineChoiceParam(kParamCPUDriver);
+-        param->setLabel(kParamCPUDriverLabel);
+-        param->setHint(kParamCPUDriverHint);
+-        assert(param->getNOptions() == ShadertoyPlugin::eCPUDriverSoftPipe);
+-        param->appendOption(kParamCPUDriverOptionSoftPipe);
+-        assert(param->getNOptions() == ShadertoyPlugin::eCPUDriverLLVMPipe);
+-        param->appendOption(kParamCPUDriverOptionLLVMPipe);
+-        assert(param->getNOptions() == ShadertoyPlugin::eCPUDriverSWR);
+-        param->appendOption(kParamCPUDriverOptionSWR);
+-        param->setDefault(kParamCPUDriverDefault);
+-        param->setAnimates(false);
+-        if (page) {
+-            page->addChild(*param);
+-        }
+-    }
+-
+-#endif
+ 
+     {
+         PushButtonParamDescriptor* param = desc.definePushButtonParam(kParamRendererInfo);
+@@ -3294,6 +3123,5 @@ ShadertoyPluginFactory::createInstance(OfxImageEffectHandle handle,
+ static ShadertoyPluginFactory p(kPluginIdentifier, kPluginVersionMajor, kPluginVersionMinor);
+ mRegisterPluginFactoryInstance(p)
+ 
+-#endif // OFX_SUPPORTS_OPENGLRENDER
+ 
+ } // namespace Shadertoy
+diff --git a/Shadertoy/Shadertoy.h b/Shadertoy/Shadertoy.h
+index 467bfb50..1d70e27f 100644
+--- a/Shadertoy/Shadertoy.h
++++ b/Shadertoy/Shadertoy.h
+@@ -46,26 +46,14 @@ namespace Shadertoy {
+ 
+ void getShadertoyPluginID(OFX::PluginFactoryArray &ids);
+ 
+-struct ShadertoyShaderOpenGL;
++struct NativeVulkanShaderData;
+ 
+ /** @brief The plugin that does our work */
+ class ShadertoyPlugin
+     : public OFX::ImageEffect
+ {
+-#if defined(HAVE_OSMESA)
+-    struct OSMesaPrivate;
+-#endif
+ 
+ public:
+-#if defined(HAVE_OSMESA)
+-    enum CPUDriverEnum
+-    {
+-        eCPUDriverSoftPipe = 0,
+-        eCPUDriverLLVMPipe,
+-        eCPUDriverSWR,
+-    };
+-
+-#endif
+ 
+     enum UniformTypeEnum
+     {
+@@ -340,9 +328,6 @@ public:
+ 
+     virtual ~ShadertoyPlugin();
+ 
+-#ifdef HAVE_OSMESA
+-    static bool OSMesaDriverSelectable();
+-#endif
+ 
+ public:
+     static const char* mapUniformTypeToStr(UniformTypeEnum e)
+@@ -378,28 +363,13 @@ private:
+     /* Override the render */
+     virtual void render(const OFX::RenderArguments &args) OVERRIDE FINAL;
+ 
+-    /* The purpose of this action is to allow a plugin to set up any data it may need
+-       to do OpenGL rendering in an instance. */
+-    virtual void* contextAttached(bool createContextData) OVERRIDE FINAL;
+-    /* The purpose of this action is to allow a plugin to deallocate any resource
+-       allocated in \ref ::kOfxActionOpenGLContextAttached just before the host
+-       decouples a plugin from an OpenGL context. */
+-    virtual void contextDetached(void* contextData) OVERRIDE FINAL;
+-
+-    /* The OpenGL context is also set when beginSequenceRender() and endSequenceRender()
+-       are called. This may be useful to allocate/deallocate sequence-specific OpenGL data. */
+-    //virtual void beginSequenceRender(const OFX::BeginSequenceRenderArguments &args) OVERRIDE FINAL;
+-    //virtual void endSequenceRender(const OFX::EndSequenceRenderArguments &args) OVERRIDE FINAL;
+-
+-    void initOpenGL();
+-    void initMesa();
+-    void exitOpenGL();
+-    void exitMesa();
+-    void renderGL(const OFX::RenderArguments &args);
+-    void renderMesa(const OFX::RenderArguments &args);
+-    void* contextAttachedMesa(bool createContextData);
+-    void contextDetachedMesa(void* contextData);
+-
++    void renderVulkan(const OFX::RenderArguments &args);
++public:
++    static bool hasVulkan();
++    static bool hasVulkanClips();
++    void enableVulkanClips();
++private:
++    std::shared_ptr<NativeVulkanShaderData> _vulkanShader;
+     // override the rod call
+     virtual bool getRegionOfDefinition(const OFX::RegionOfDefinitionArguments &args, OfxRectD &rod) OVERRIDE FINAL;
+ 
+@@ -469,8 +439,6 @@ private:
+     std::vector<OFX::IntParam *> _paramMaxInt;
+     std::vector<OFX::DoubleParam *> _paramMaxFloat;
+     std::vector<OFX::Double2DParam *> _paramMaxVec2;
+-    OFX::BooleanParam *_enableGPU;
+-    OFX::ChoiceParam *_cpuDriver;
+     OFX::auto_ptr<Mutex> _imageShaderMutex;
+     unsigned int _imageShaderID; // an ID that changes each time the shadertoy changes and needs to be recompiled
+     unsigned int _imageShaderUniformsID; // an ID that changes each time the uniform names or count changed
+@@ -484,39 +452,11 @@ private:
+     std::vector<WrapEnum> _imageShaderInputWrap;
+     BBoxEnum _imageShaderBBox;
+     bool _imageShaderCompiled;
+-    struct OpenGLContextData
+-    {
+-        OpenGLContextData()
+-            : haveAniso(false)
+-            , maxAnisoMax(1.)
+-            , imageShader(NULL)
+-            , imageShaderID(0)
+-            , imageShaderUniformsID(0)
+-        {
+-        }
+-
+-        bool haveAniso;
+-        float maxAnisoMax;
+-        void *imageShader; //shader information
+-        unsigned int imageShaderID; // the shader ID compiled for this context
+-        unsigned int imageShaderUniformsID; // the ID for custom uniform locations
+-    };
+-
+-    OpenGLContextData _openGLContextData; // (OpenGL-only) - the single openGL context, in case the host does not support kNatronOfxImageEffectPropOpenGLContextData
+-    bool _openGLContextAttached; // (OpenGL-only) - set to true when the contextAttached function is executed - used for checking non-conformant hosts such as Sony Catalyst
+     OFX::auto_ptr<Mutex> _rendererInfoMutex;
+     std::string _rendererInfo;
+ 
+     std::vector<Preset> _presets;
+     
+-#if defined(HAVE_OSMESA)
+-    // A list of Mesa contexts available for rendering.
+-    // renderMesa() pops the last element, uses it, then pushes it back.
+-    // A new context is created if the list is empty.
+-    // That way, we can have multithreaded OSMesa rendering without having to create a context at each render
+-    std::list<OSMesaPrivate *> _osmesa;
+-    OFX::auto_ptr<Mutex> _osmesaMutex;
+-#endif
+ };
+ 
+ void getChannelInfo(const char* fragmentShader, unsigned channel, std::string& label, std::string& hint, ShadertoyPlugin::FilterEnum& filter, ShadertoyPlugin::WrapEnum& wrap);
+diff --git a/TrackerPM/TrackerPM.cpp b/TrackerPM/TrackerPM.cpp
+index 4c1c6641..9695340f 100644
+--- a/TrackerPM/TrackerPM.cpp
++++ b/TrackerPM/TrackerPM.cpp
+@@ -21,6 +21,7 @@
+  * Basic tracker with exhaustive search algorithm OFX plugin.
+  */
+ 
++#include "NatronOverlayInteract.h"
+ #include <cmath>
+ #include <cfloat> // DBL_MAX
+ #include <map>
+@@ -936,7 +937,7 @@ TrackerPMPluginFactory::describe(ImageEffectDescriptor &desc)
+     // rendertwicealways must be set to true if the tracker cannot handle interlaced content (most don't)
+     desc.setRenderTwiceAlways(true);
+     desc.setRenderThreadSafety(kRenderThreadSafety);
+-    desc.setOverlayInteractDescriptor(new TrackerRegionOverlayDescriptor);
++    NatronOFX::setOverlay(desc, new TrackerRegionOverlayDescriptor);
+ 
+ #ifdef OFX_EXTENSIONS_NATRON
+     // This plug-in is deprecated since Natron has its new tracker implementation
+diff --git a/Transform/Transform.cpp b/Transform/Transform.cpp
+index 0000aacd..9ce27aa4 100644
+--- a/Transform/Transform.cpp
++++ b/Transform/Transform.cpp
+@@ -21,6 +21,7 @@
+  * OFX Transform & DirBlur plugins.
+  */
+ 
++#include "NatronOverlayInteract.h"
+ #include <cmath>
+ #include <iostream>
+ 
+@@ -433,7 +434,7 @@ TransformPluginFactory::describe(ImageEffectDescriptor &desc)
+ 
+     Transform3x3Describe(desc, false);
+ 
+-    desc.setOverlayInteractDescriptor(new TransformOverlayDescriptorOldParams);
++    NatronOFX::setOverlay(desc, new TransformOverlayDescriptorOldParams);
+ }
+ 
+ void
+@@ -477,7 +478,7 @@ TransformMaskedPluginFactory::describe(ImageEffectDescriptor &desc)
+ 
+     Transform3x3Describe(desc, true);
+ 
+-    desc.setOverlayInteractDescriptor(new TransformOverlayDescriptorOldParams);
++    NatronOFX::setOverlay(desc, new TransformOverlayDescriptorOldParams);
+ }
+ 
+ void
+@@ -521,7 +522,7 @@ DirBlurPluginFactory::describe(ImageEffectDescriptor &desc)
+ 
+     Transform3x3Describe(desc, true);
+ 
+-    desc.setOverlayInteractDescriptor(new TransformOverlayDescriptorOldParams);
++    NatronOFX::setOverlay(desc, new TransformOverlayDescriptorOldParams);
+ }
+ 
+ void

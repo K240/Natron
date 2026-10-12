@@ -32,7 +32,7 @@ CLANG_DIAG_OFF(deprecated)
 CLANG_DIAG_OFF(uninitialized)
 #include <QtGlobal> // for Q_OS_*
 #include <QDebug>
-#include <QSettings>
+#include "Global/AppSettings.h"
 #include <QPixmapCache>
 #include <QApplication>
 #include <QFontDatabase>
@@ -849,7 +849,7 @@ GuiApplicationManager::getLinkToMultCursor() const
 bool
 GuiApplicationManager::initGui(const CLArgs& args)
 {
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+    AppSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
 
     //load custom fonts
     QString fontResource = QString::fromUtf8(":/Resources/Fonts/%1.ttf");

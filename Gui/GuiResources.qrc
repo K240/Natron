@@ -14,6 +14,9 @@
         <file alias="LICENSE-FreeType.txt">../tools/license/components/LICENSE-FreeType.txt</file>
         <file alias="LICENSE-GIFLIB.txt">../tools/license/components/LICENSE-GIFLIB.txt</file>
         <file alias="LICENSE-GLAD.txt">../tools/license/components/LICENSE-GLAD.txt</file>
+        <file alias="LICENSE-Volk.txt">../tools/license/components/LICENSE-Volk.txt</file>
+        <file alias="LICENSE-OpenFXDrawSuite.txt">../tools/license/components/LICENSE-OpenFXDrawSuite.txt</file>
+        <file alias="LICENSE-VulkanMemoryAllocator.txt">../tools/license/components/LICENSE-VulkanMemoryAllocator.txt</file>
         <file alias="LICENSE-GLFW.txt">../tools/license/components/LICENSE-GLFW.txt</file>
         <file alias="LICENSE-GPL-2.0.txt">../tools/license/components/LICENSE-GPL-2.0.txt</file>
         <file alias="LICENSE-HDF5.txt">../tools/license/components/LICENSE-HDF5.txt</file>

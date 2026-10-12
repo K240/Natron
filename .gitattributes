@@ -62,5 +62,11 @@ PKGBUILD eol=lf
 *.xml -text
 *.yml -text
 *.patch -text
+# Unified patch context prefixes and blank context lines are significant bytes.
+# Check the applied sources, rather than treating patch syntax as source whitespace.
+build-configs/windows-ofx/*.patch -whitespace
+# Vendored SDK and license files retain their upstream whitespace verbatim.
+Global/OpenFX/ofxDrawSuite.h -whitespace
+tools/license/components/LICENSE-SPIRV-Headers.txt -whitespace
 *.diff -text
 *.pc -text

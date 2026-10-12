@@ -33,7 +33,7 @@
 #if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 GCC_DIAG_UNUSED_LOCAL_TYPEDEFS_OFF
 // clang-format off
-GCC_DIAG_OFF(unused-parameter)
+GCC_DIAG_OFF(unused - parameter)
 // /opt/local/include/boost/serialization/smart_cast.hpp:254:25: warning: unused parameter 'u' [-Wunused-parameter]
 #include <boost/archive/xml_iarchive.hpp>
 #include <boost/archive/xml_oarchive.hpp>
@@ -41,7 +41,7 @@ GCC_DIAG_OFF(unused-parameter)
 #include <boost/serialization/split_member.hpp>
 #include <boost/serialization/version.hpp>
 GCC_DIAG_UNUSED_LOCAL_TYPEDEFS_ON
-GCC_DIAG_ON(unused-parameter)
+GCC_DIAG_ON(unused - parameter)
 // clang-format on
 #endif
 
@@ -111,17 +111,15 @@ NATRON_NAMESPACE_ENTER
    These are names of knobs that are defined in GenericReader and that should stay on the interface
    no matter what the internal Reader is.
  */
-struct GenericKnob
-{
+struct GenericKnob {
     // The script-name of the knob.
-    const char* scriptName;
+    const char *scriptName;
 
     // Whether the value should be saved when changing filename.
     bool mustKeepValue;
 };
 
-static GenericKnob genericReaderKnobNames[] =
-{
+static GenericKnob genericReaderKnobNames[] = {
     {kParamFilename, false},
     {kParamProxy, false},
     {kParamProxyThreshold, false},
@@ -170,6 +168,7 @@ isGenericKnob(const std::string& knobName,
 
             return true;
         }
+
         ++i;
     }
 
@@ -182,18 +181,18 @@ ReadNode::isBundledReader(const std::string& pluginID,
 {
     if (wasProjectCreatedWithLowerCaseIDs) {
         // Natron 1.x has plugin ids stored in lowercase
-        return ( StrUtils::iequals(pluginID, PLUGINID_OFX_READOIIO) ||
-                 StrUtils::iequals(pluginID, PLUGINID_OFX_READFFMPEG) ||
-                 StrUtils::iequals(pluginID, PLUGINID_OFX_READPFM) ||
-                 StrUtils::iequals(pluginID, PLUGINID_OFX_READPSD) ||
-                 StrUtils::iequals(pluginID, PLUGINID_OFX_READKRITA) ||
-                 StrUtils::iequals(pluginID, PLUGINID_OFX_READSVG) ||
-                 StrUtils::iequals(pluginID, PLUGINID_OFX_READMISC) ||
-                 StrUtils::iequals(pluginID, PLUGINID_OFX_READORA) ||
-                 StrUtils::iequals(pluginID, PLUGINID_OFX_READCDR) ||
-                 StrUtils::iequals(pluginID, PLUGINID_OFX_READPNG) ||
-                 StrUtils::iequals(pluginID, PLUGINID_OFX_READPDF) ||
-                 StrUtils::iequals(pluginID, PLUGINID_OFX_READBRAW) );
+        return (StrUtils::iequals(pluginID, PLUGINID_OFX_READOIIO) ||
+                StrUtils::iequals(pluginID, PLUGINID_OFX_READFFMPEG) ||
+                StrUtils::iequals(pluginID, PLUGINID_OFX_READPFM) ||
+                StrUtils::iequals(pluginID, PLUGINID_OFX_READPSD) ||
+                StrUtils::iequals(pluginID, PLUGINID_OFX_READKRITA) ||
+                StrUtils::iequals(pluginID, PLUGINID_OFX_READSVG) ||
+                StrUtils::iequals(pluginID, PLUGINID_OFX_READMISC) ||
+                StrUtils::iequals(pluginID, PLUGINID_OFX_READORA) ||
+                StrUtils::iequals(pluginID, PLUGINID_OFX_READCDR) ||
+                StrUtils::iequals(pluginID, PLUGINID_OFX_READPNG) ||
+                StrUtils::iequals(pluginID, PLUGINID_OFX_READPDF) ||
+                StrUtils::iequals(pluginID, PLUGINID_OFX_READBRAW));
     }
 
     return (pluginID == PLUGINID_OFX_READOIIO ||
@@ -213,15 +212,14 @@ ReadNode::isBundledReader(const std::string& pluginID,
 bool
 ReadNode::isBundledReader(const std::string& pluginID)
 {
-    return isBundledReader( pluginID, getApp()->wasProjectCreatedWithLowerCaseIDs() );
+    return isBundledReader(pluginID, getApp()->wasProjectCreatedWithLowerCaseIDs());
 }
 
-struct ReadNodePrivate
-{
+struct ReadNodePrivate {
     Q_DECLARE_TR_FUNCTIONS(ReadNode)
 
 public:
-    ReadNode* _publicInterface;
+    ReadNode *_publicInterface;
     QMutex embeddedPluginMutex;
     NodePtr embeddedPlugin;
     std::list<KnobSerializationPtr> genericKnobsSerialization;
@@ -246,19 +244,19 @@ public:
 
 
     ReadNodePrivate(ReadNode* publicInterface)
-    : _publicInterface(publicInterface)
-    , embeddedPluginMutex()
-    , embeddedPlugin()
-    , genericKnobsSerialization()
-    , inputFileKnob()
-    , pluginSelectorKnob()
-    , pluginIDStringKnob()
-    , separatorKnob()
-    , fileInfosKnob()
-    , readNodeKnobs()
-    , creatingReadNode(0)
-    , lastPluginIDCreated()
-    , wasCreatedAsHiddenNode(false)
+        : _publicInterface(publicInterface)
+        , embeddedPluginMutex()
+        , embeddedPlugin()
+        , genericKnobsSerialization()
+        , inputFileKnob()
+        , pluginSelectorKnob()
+        , pluginIDStringKnob()
+        , separatorKnob()
+        , fileInfosKnob()
+        , readNodeKnobs()
+        , creatingReadNode(0)
+        , lastPluginIDCreated()
+        , wasCreatedAsHiddenNode(false)
     {
     }
 
@@ -266,7 +264,7 @@ public:
 
     void createReadNode(bool throwErrors,
                         const std::string& filename,
-                        const NodeSerializationPtr& serialization );
+                        const NodeSerializationPtr& serialization);
 
     void destroyReadNode();
 
@@ -297,7 +295,7 @@ public:
 
 class SetCreatingReaderRAIIFlag
 {
-    ReadNodePrivate* _p;
+    ReadNodePrivate *_p;
 
 public:
 
@@ -316,7 +314,7 @@ public:
 
 ReadNode::ReadNode(NodePtr n)
     : EffectInstance(n)
-    , _imp( new ReadNodePrivate(this) )
+    , _imp(new ReadNodePrivate(this))
 {
     setSupportsRenderScaleMaybe(eSupportsNo);
 }
@@ -343,27 +341,31 @@ void
 ReadNodePrivate::placeReadNodeKnobsInPage()
 {
     KnobIPtr pageKnob = _publicInterface->getKnobByName("Controls");
-    KnobPage* isPage = dynamic_cast<KnobPage*>( pageKnob.get() );
+    KnobPage* isPage = dynamic_cast<KnobPage *>(pageKnob.get());
 
     if (!isPage) {
         return;
     }
+
     for (std::list<KnobIWPtr>::iterator it = readNodeKnobs.begin(); it != readNodeKnobs.end(); ++it) {
         KnobIPtr knob = it->lock();
-        knob->setParentKnob( KnobIPtr() );
-        isPage->removeKnob( knob.get() );
+        knob->setParentKnob(KnobIPtr());
+        isPage->removeKnob(knob.get());
     }
 
     KnobsVec children = isPage->getChildren();
     int index = -1;
+
     for (std::size_t i = 0; i < children.size(); ++i) {
         if (children[i]->getName() == kParamCustomFps) {
             index = i;
             break;
         }
     }
+
     if (index != -1) {
         ++index;
+
         for (std::list<KnobIWPtr>::iterator it = readNodeKnobs.begin(); it != readNodeKnobs.end(); ++it) {
             KnobIPtr knob = it->lock();
             isPage->insertKnob(index, knob);
@@ -374,26 +376,31 @@ ReadNodePrivate::placeReadNodeKnobsInPage()
     children = isPage->getChildren();
     // Find the separatorKnob in the page and if the next parameter is also a separator, hide it
     int foundSep = -1;
+
     for (std::size_t i = 0; i < children.size(); ++i) {
-        if (children[i]== separatorKnob.lock()) {
+        if (children[i] == separatorKnob.lock()) {
             foundSep = i;
             break;
         }
     }
+
     if (foundSep != -1) {
         ++foundSep;
+
         if (foundSep < (int)children.size()) {
             bool isSecret = children[foundSep]->getIsSecret();
+
             while (isSecret && foundSep < (int)children.size()) {
                 ++foundSep;
                 isSecret = children[foundSep]->getIsSecret();
             }
+
             if (foundSep < (int)children.size()) {
                 separatorKnob.lock()->setSecret(dynamic_cast<KnobSeparator*>(children[foundSep].get()));
             } else {
                 separatorKnob.lock()->setSecret(true);
             }
-            
+
         } else {
             separatorKnob.lock()->setSecret(true);
         }
@@ -407,13 +414,16 @@ ReadNodePrivate::cloneGenericKnobs()
 
     for (std::list<KnobSerializationPtr>::iterator it = genericKnobsSerialization.begin(); it != genericKnobsSerialization.end(); ++it) {
         KnobIPtr serializedKnob = (*it)->getKnob();
+
         for (KnobsVec::const_iterator it2 = knobs.begin(); it2 != knobs.end(); ++it2) {
-            if ( (*it2)->getName() == serializedKnob->getName() ) {
-                KnobChoice* isChoice = dynamic_cast<KnobChoice*>( (*it2).get() );
-                KnobChoice* choiceSerialized = dynamic_cast<KnobChoice*>( serializedKnob.get() );;
+            if ((*it2)->getName() == serializedKnob->getName()) {
+                KnobChoice* isChoice = dynamic_cast<KnobChoice *>((*it2).get());
+                KnobChoice* choiceSerialized = dynamic_cast<KnobChoice *>(serializedKnob.get());;
+
                 if (isChoice && choiceSerialized) {
-                    const ChoiceExtraData* choiceData = dynamic_cast<const ChoiceExtraData*>( (*it)->getExtraData() );
+                    const ChoiceExtraData* choiceData = dynamic_cast<const ChoiceExtraData *>((*it)->getExtraData());
                     assert(choiceData);
+
                     if (choiceData) {
                         std::string optionID = choiceData->_choiceString;
                         // first, try to get the id the easy way ( see choiceMatch() )
@@ -427,8 +437,9 @@ ReadNodePrivate::cloneGenericKnobs()
                         isChoice->choiceRestoration(choiceSerialized, optionID, id);
                     }
                 } else {
-                    (*it2)->clone( serializedKnob.get() );
+                    (*it2)->clone(serializedKnob.get());
                 }
+
                 //(*it2)->setSecret( serializedKnob->getIsSecret() );
                 /*if ( (*it2)->getDimension() == serializedKnob->getDimension() ) {
                     for (int i = 0; i < (*it2)->getDimension(); ++i) {
@@ -445,85 +456,95 @@ ReadNodePrivate::cloneGenericKnobs()
 void
 ReadNodePrivate::destroyReadNode()
 {
-    assert( QThread::currentThread() == qApp->thread() );
+    assert(QThread::currentThread() == qApp->thread());
+
     if (!embeddedPlugin) {
         return;
     }
+
     KnobsVec knobs = _publicInterface->getKnobs();
 
     genericKnobsSerialization.clear();
 
     std::string serializationString;
+
     try {
         std::ostringstream ss;
-        {   // see http://boost.2283326.n4.nabble.com/the-boost-xml-serialization-to-a-stringstream-does-not-have-an-end-tag-td2580772.html
+        {
+            // see http://boost.2283326.n4.nabble.com/the-boost-xml-serialization-to-a-stringstream-does-not-have-an-end-tag-td2580772.html
             // xml_oarchive must be destroyed before obtaining ss.str(), or the </boost_serialization> tag is missing,
             // which throws an exception in boost 1.66.0, due to the following change:
             // https://fossies.org/diffs/boost/1_65_1_vs_1_66_0/libs/serialization/src/basic_xml_grammar.ipp-diff.html
             // see also https://svn.boost.org/trac10/ticket/13400
             // see also https://svn.boost.org/trac10/ticket/13354
-            
+
             boost::archive::xml_oarchive oArchive(ss);
             std::list<KnobSerializationPtr> serialized;
-            
-            
+
+
             for (KnobsVec::iterator it = knobs.begin(); it != knobs.end(); ++it) {
-                
+
                 // The internal node still holds a shared ptr to the knob.
                 // Since we want to keep some knobs around, ensure they do not get deleted in the destructor of the embedded node
                 embeddedPlugin->getEffectInstance()->removeKnobFromList(it->get());
-                
-                if ( !(*it)->isDeclaredByPlugin() ) {
+
+                if (!(*it)->isDeclaredByPlugin()) {
                     continue;
                 }
-                
+
                 //If it is a knob of this ReadNode, do not destroy it
                 bool isReadNodeKnob = false;
+
                 for (std::list<KnobIWPtr>::iterator it2 = readNodeKnobs.begin(); it2 != readNodeKnobs.end(); ++it2) {
                     if (it2->lock() == *it) {
                         isReadNodeKnob = true;
                         break;
                     }
                 }
+
                 if (isReadNodeKnob) {
                     continue;
                 }
-                
+
                 //Keep pages around they will be re-used
-                KnobPage* isPage = dynamic_cast<KnobPage*>( it->get() );
+                KnobPage* isPage = dynamic_cast<KnobPage *>(it->get());
+
                 if (isPage) {
                     continue;
                 }
-                
+
                 //This is a knob of the Reader plug-in
-                
+
                 //Serialize generic knobs and keep them around until we create a new Reader plug-in
                 bool mustSerializeKnob;
-                bool isGeneric = isGenericKnob( (*it)->getName(), &mustSerializeKnob );
+                bool isGeneric = isGenericKnob((*it)->getName(), &mustSerializeKnob);
+
                 if (!isGeneric || mustSerializeKnob) {
-                    
+
                     /* if (!isGeneric && !(*it)->getDefaultIsSecret()) {
                      // Don't save the secret state otherwise some knobs could be invisible when cloning the serialization even if we change format
                      (*it)->setSecret(false);
                      }*/
-                    
+
                     KnobSerializationPtr s = std::make_shared<KnobSerialization>(*it);
                     serialized.push_back(s);
                 }
+
                 if (!isGeneric) {
                     try {
                         _publicInterface->deleteKnob(it->get(), false);
                     } catch (...) {
-                        
+
                     }
                 }
             }
-            
+
             int n = (int)serialized.size();
             oArchive << boost::serialization::make_nvp("numItems", n);
-            for (std::list<KnobSerializationPtr>::const_iterator it = serialized.begin(); it!= serialized.end(); ++it) {
+
+            for (std::list<KnobSerializationPtr>::const_iterator it = serialized.begin(); it != serialized.end(); ++it) {
                 oArchive << boost::serialization::make_nvp("item", **it);
-                
+
             }
         }
         serializationString = ss.str();
@@ -536,6 +557,7 @@ ReadNodePrivate::destroyReadNode()
         boost::archive::xml_iarchive iArchive(ss);
         int n ;
         iArchive >> boost::serialization::make_nvp("numItems", n);
+
         for (int i = 0; i < n; ++i) {
             KnobSerializationPtr s = std::make_shared<KnobSerialization>();
             iArchive >> boost::serialization::make_nvp("item", *s);
@@ -549,15 +571,17 @@ ReadNodePrivate::destroyReadNode()
         assert(false);
     }
 
-    
+
     //This will remove the GUI of non generic parameters
     _publicInterface->recreateKnobs(true);
 //#pragma message WARN("TODO: if Gui, refresh pluginID, version, help tooltip in DockablePanel to reflect embedded node change")
 
     QMutexLocker k(&embeddedPluginMutex);
+
     if (embeddedPlugin) {
         embeddedPlugin->destroyNode(true, false);
     }
+
     embeddedPlugin.reset();
 
 } // ReadNodePrivate::destroyReadNode
@@ -565,7 +589,7 @@ ReadNodePrivate::destroyReadNode()
 void
 ReadNodePrivate::createDefaultReadNode()
 {
-    CreateNodeArgs args(READ_NODE_DEFAULT_READER, NodeCollectionPtr() );
+    CreateNodeArgs args(READ_NODE_DEFAULT_READER, NodeCollectionPtr());
 
     args.setProperty(kCreateNodeArgsPropNoNodeGUI, true);
     args.setProperty(kCreateNodeArgsPropSilent, true);
@@ -582,7 +606,7 @@ ReadNodePrivate::createDefaultReadNode()
 
     if (!node) {
         QString error = tr("The IO.ofx.bundle OpenFX plug-in is required to use this node, make sure it is installed.");
-        throw std::runtime_error( error.toStdString() );
+        throw std::runtime_error(error.toStdString());
     }
 
     {
@@ -607,15 +631,16 @@ ReadNodePrivate::checkDecoderCreated(double time,
 
     assert(fileKnob);
     std::string pattern = fileKnob->getFileName(std::floor(time + 0.5), view);
-    if ( pattern.empty() ) {
-        _publicInterface->setPersistentMessage( eMessageTypeError, tr("Filename empty").toStdString() );
+
+    if (pattern.empty()) {
+        _publicInterface->setPersistentMessage(eMessageTypeError, tr("Filename empty").toStdString());
 
         return false;
     }
 
     if (!_publicInterface->getEmbeddedReader()) {
-        QString s = tr("Decoder was not created for %1, check that the file exists and its format is supported.").arg( QString::fromUtf8( pattern.c_str() ) );
-        _publicInterface->setPersistentMessage( eMessageTypeError, s.toStdString() );
+        QString s = tr("Decoder was not created for %1, check that the file exists and its format is supported.").arg(QString::fromUtf8(pattern.c_str()));
+        _publicInterface->setPersistentMessage(eMessageTypeError, s.toStdString());
 
         return false;
     }
@@ -624,17 +649,19 @@ ReadNodePrivate::checkDecoderCreated(double time,
 }
 
 static std::string
-getFileNameFromSerialization(const std::list<KnobSerializationPtr>& serializations)
+getFileNameFromSerialization(const std::list<KnobSerializationPtr> &serializations)
 {
     std::string filePattern;
 
     for (std::list<KnobSerializationPtr>::const_iterator it = serializations.begin(); it != serializations.end(); ++it) {
-        if ( (*it)->getKnob()->getName() == kOfxImageEffectFileParamName ) {
-            KnobStringBase* isString = dynamic_cast<KnobStringBase*>( (*it)->getKnob().get() );
+        if ((*it)->getKnob()->getName() == kOfxImageEffectFileParamName) {
+            KnobStringBase* isString = dynamic_cast<KnobStringBase *>((*it)->getKnob().get());
             assert(isString);
+
             if (isString) {
                 filePattern = isString->getValue();
             }
+
             break;
         }
     }
@@ -652,22 +679,24 @@ ReadNodePrivate::createReadNode(bool throwErrors,
     }
 
     SetCreatingReaderRAIIFlag creatingNode__(this);
-    QString qpattern = QString::fromUtf8( filename.c_str() );
+    QString qpattern = QString::fromUtf8(filename.c_str());
     std::string ext = QtCompat::removeFileExtension(qpattern).toLower().toStdString();
     std::string readerPluginID;
     KnobStringPtr pluginIDKnob = pluginIDStringKnob.lock();
     readerPluginID = pluginIDKnob->getValue();
 
 
-    if ( readerPluginID.empty() ) {
+    if (readerPluginID.empty()) {
         KnobChoicePtr pluginChoiceKnob = pluginSelectorKnob.lock();
         int pluginChoice_i = pluginChoiceKnob->getValue();
+
         if (pluginChoice_i == 0) {
             //Use default
             readerPluginID = appPTR->getReaderPluginIDForFileType(ext);
         } else {
             std::vector<ChoiceOption> entries = pluginChoiceKnob->getEntries_mt_safe();
-            if ( (pluginChoice_i >= 0) && ( pluginChoice_i < (int)entries.size() ) ) {
+
+            if ((pluginChoice_i >= 0) && (pluginChoice_i < (int)entries.size())) {
                 readerPluginID = entries[pluginChoice_i].id;
             }
         }
@@ -677,6 +706,7 @@ ReadNodePrivate::createReadNode(bool throwErrors,
     if (embeddedPlugin && embeddedPlugin->getPluginID() == readerPluginID) {
         KnobFilePtr fileKnob = inputFileKnob.lock();
         assert(fileKnob);
+
         if (fileKnob) {
             // Make sure instance changed action is called on the decoder and not caught in our knobChanged handler.
             embeddedPlugin->getEffectInstance()->onKnobValueChanged_public(fileKnob.get(), eValueChangedReasonNatronInternalEdited, _publicInterface->getCurrentTime(), ViewSpec(0), true);
@@ -685,6 +715,7 @@ ReadNodePrivate::createReadNode(bool throwErrors,
 
         return;
     }
+
     //Destroy any previous reader
     //This will store the serialization of the generic knobs
     destroyReadNode();
@@ -694,42 +725,47 @@ ReadNodePrivate::createReadNode(bool throwErrors,
     if (readerPluginID.empty()) {
         if (throwErrors) {
             QString message = tr("Could not find a decoder to read %1 file format")
-            .arg( QString::fromUtf8( ext.c_str() ) );
-            throw std::runtime_error( message.toStdString() );
+                              .arg(QString::fromUtf8(ext.c_str()));
+            throw std::runtime_error(message.toStdString());
         }
+
         defaultFallback = true;
 
     }
 
-    if ( !defaultFallback && !ReadNode::isBundledReader(readerPluginID, _publicInterface->getApp()->wasProjectCreatedWithLowerCaseIDs()) ) {
+    if (!defaultFallback && !ReadNode::isBundledReader(readerPluginID, _publicInterface->getApp()->wasProjectCreatedWithLowerCaseIDs())) {
         if (throwErrors) {
             QString message = tr("%1 is not a bundled reader, please create it from the Image->Readers menu or with the tab menu in the Nodegraph")
-                              .arg( QString::fromUtf8( readerPluginID.c_str() ) );
-            throw std::runtime_error( message.toStdString() );
+                              .arg(QString::fromUtf8(readerPluginID.c_str()));
+            throw std::runtime_error(message.toStdString());
         }
+
         defaultFallback = true;
     }
 
 
     NodePtr node;
+
     //Find the appropriate reader
     if (readerPluginID.empty() && !serialization) {
         //Couldn't find any reader
-        if ( !ext.empty() ) {
+        if (!ext.empty()) {
             QString message = tr("No plugin capable of decoding %1 was found.")
-                              .arg( QString::fromUtf8( ext.c_str() ) );
+                              .arg(QString::fromUtf8(ext.c_str()));
+
             //Dialogs::errorDialog(tr("Read").toStdString(), message.toStdString(), false);
             if (throwErrors) {
-                throw std::runtime_error( message.toStdString() );
+                throw std::runtime_error(message.toStdString());
             }
         }
+
         defaultFallback = true;
     } else {
-        if ( readerPluginID.empty() ) {
+        if (readerPluginID.empty()) {
             readerPluginID = READ_NODE_DEFAULT_READER;
         }
 
-        CreateNodeArgs args(readerPluginID, NodeCollectionPtr() );
+        CreateNodeArgs args(readerPluginID, NodeCollectionPtr());
         args.setProperty(kCreateNodeArgsPropNoNodeGUI, true);
         args.setProperty(kCreateNodeArgsPropOutOfProject, true);
         args.setProperty<std::string>(kCreateNodeArgsPropNodeInitialName, "internalDecoderNode");
@@ -748,10 +784,12 @@ ReadNodePrivate::createReadNode(bool throwErrors,
         // Set the filename value
         if (node) {
             KnobFilePtr fileKnob = std::dynamic_pointer_cast<KnobFile>(node->getKnobByName(kOfxImageEffectFileParamName));
+
             if (fileKnob) {
                 fileKnob->setValue(filename);
             }
         }
+
         {
             QMutexLocker k(&embeddedPluginMutex);
             embeddedPlugin = node;
@@ -760,6 +798,7 @@ ReadNodePrivate::createReadNode(bool throwErrors,
         if (pluginIDKnob) {
             pluginIDKnob->setValue(readerPluginID);
         }
+
         placeReadNodeKnobsInPage();
 
         //We need to explcitly refresh the Python knobs since we attached the embedded node knobs into this node.
@@ -781,6 +820,7 @@ ReadNodePrivate::createReadNode(bool throwErrors,
     if (lastPluginIDCreated == readerPluginID) {
         cloneGenericKnobs();
     }
+
     lastPluginIDCreated = readerPluginID;
 
 
@@ -796,6 +836,7 @@ ReadNodePrivate::createReadNode(bool throwErrors,
 //#pragma message WARN("TODO: if Gui, refresh pluginID, version, help tooltip in DockablePanel to reflect embedded node change")
 
     KnobIPtr knob = node ? node->getKnobByName(kOfxImageEffectFileParamName) : _publicInterface->getKnobByName(kOfxImageEffectFileParamName);
+
     if (knob) {
         inputFileKnob = std::dynamic_pointer_cast<KnobFile>(knob);
     }
@@ -807,6 +848,7 @@ ReadNodePrivate::refreshFileInfoVisibility(const std::string& pluginID)
     KnobButtonPtr fileInfos = fileInfosKnob.lock();
     KnobIPtr hasMetadataKnob = _publicInterface->getKnobByName("showMetadata");
     bool hasFfprobe = false;
+
     if (!hasMetadataKnob) {
         QString ffprobePath = getFFProbeBinaryPath();
         hasFfprobe = QFile::exists(ffprobePath);
@@ -815,7 +857,7 @@ ReadNodePrivate::refreshFileInfoVisibility(const std::string& pluginID)
     }
 
 
-    if ( hasMetadataKnob || ( ReadNode::isVideoReader(pluginID) && hasFfprobe ) ) {
+    if (hasMetadataKnob || (ReadNode::isVideoReader(pluginID) && hasFfprobe)) {
         fileInfos->setSecret(false);
     } else {
         fileInfos->setSecret(true);
@@ -832,22 +874,23 @@ ReadNodePrivate::refreshPluginSelectorKnob()
     std::vector<ChoiceOption> entries, help;
     entries.push_back(ChoiceOption(kPluginSelectorParamEntryDefault, "", ReadNode::tr("Use the default plug-in chosen from the Preferences to read this file format").toStdString()));
 
-    QString qpattern = QString::fromUtf8( filePattern.c_str() );
+    QString qpattern = QString::fromUtf8(filePattern.c_str());
     std::string ext = QtCompat::removeFileExtension(qpattern).toLower().toStdString();
     std::string pluginID;
-    if ( !ext.empty() ) {
+
+    if (!ext.empty()) {
         pluginID = appPTR->getReaderPluginIDForFileType(ext);
         IOPluginSetForFormat readersForFormat;
         appPTR->getReadersForFormat(ext, &readersForFormat);
 
         // Reverse it so that we sort them by decreasing score order
         for (IOPluginSetForFormat::reverse_iterator it = readersForFormat.rbegin(); it != readersForFormat.rend(); ++it) {
-            Plugin* plugin = appPTR->getPluginBinary(QString::fromUtf8( it->pluginID.c_str() ), -1, -1, false);
+            Plugin* plugin = appPTR->getPluginBinary(QString::fromUtf8(it->pluginID.c_str()), -1, -1, false);
             std::stringstream ss;
             ss << "Use " << plugin->getPluginLabel().toStdString() << " version ";
             ss << plugin->getMajorVersion() << "." << plugin->getMinorVersion();
             ss << " to read this file format";
-            entries.push_back( ChoiceOption(plugin->getPluginID().toStdString(), "", ss.str()));
+            entries.push_back(ChoiceOption(plugin->getPluginID().toStdString(), "", ss.str()));
         }
     }
 
@@ -857,6 +900,7 @@ ReadNodePrivate::refreshPluginSelectorKnob()
     pluginChoice->blockValueChanges();
     pluginChoice->resetToDefaultValue(0);
     pluginChoice->unblockValueChanges();
+
     if (entries.size() <= 2) {
         pluginChoice->setSecret(true);
     } else {
@@ -890,7 +934,7 @@ ReadNode::isVideoReader() const
 {
     NodePtr p = getEmbeddedReader();
 
-    return p ? isVideoReader( p->getPluginID() ) : false;
+    return p ? isVideoReader(p->getPluginID()) : false;
 }
 
 bool
@@ -982,28 +1026,36 @@ ReadNode::getCreateChannelSelectorKnob() const
 
 bool
 ReadNode::isHostChannelSelectorSupported(bool* /*defaultR*/,
-                                         bool* /*defaultG*/,
-                                         bool* /*defaultB*/,
-                                         bool* /*defaultA*/) const
+        bool * /*defaultG*/,
+        bool * /*defaultB*/,
+        bool * /*defaultA*/) const
 {
     return false;
 }
 
 int
 ReadNode::getMajorVersion() const
-{ return 1; }
+{
+    return 1;
+}
 
 int
 ReadNode::getMinorVersion() const
-{ return 0; }
+{
+    return 0;
+}
 
 std::string
 ReadNode::getPluginID() const
-{ return PLUGINID_NATRON_READ; }
+{
+    return PLUGINID_NATRON_READ;
+}
 
 std::string
 ReadNode::getPluginLabel() const
-{ return "Read"; }
+{
+    return "Read";
+}
 
 std::string
 ReadNode::getPluginDescription() const
@@ -1013,7 +1065,7 @@ ReadNode::getPluginDescription() const
 }
 
 void
-ReadNode::getPluginGrouping(std::list<std::string>* grouping) const
+ReadNode::getPluginGrouping(std::list<std::string> *grouping) const
 {
     grouping->push_back(PLUGIN_GROUP_IMAGE);
 }
@@ -1025,7 +1077,7 @@ ReadNode::getNInputs() const
 }
 
 std::string
-ReadNode::getInputLabel (int /*inputNb*/) const
+ReadNode::getInputLabel(int /*inputNb*/) const
 {
     return NATRON_READER_INPUT_NAME;
 }
@@ -1044,20 +1096,22 @@ ReadNode::isInputMask(int /*inputNb*/) const
 
 void
 ReadNode::addAcceptedComponents(int inputNb,
-                                std::list<ImagePlaneDesc>* comps)
+                                std::list<ImagePlaneDesc> *comps)
 {
     NodePtr p = getEmbeddedReader();
+
     if (p) {
         p->getEffectInstance()->addAcceptedComponents(inputNb, comps);
     } else {
-        comps->push_back( ImagePlaneDesc::getRGBAComponents() );
+        comps->push_back(ImagePlaneDesc::getRGBAComponents());
     }
 }
 
 void
-ReadNode::addSupportedBitDepth(std::list<ImageBitDepthEnum>* depths) const
+ReadNode::addSupportedBitDepth(std::list<ImageBitDepthEnum> *depths) const
 {
     NodePtr p = getEmbeddedReader();
+
     if (p) {
         p->getEffectInstance()->addSupportedBitDepth(depths);
     } else {
@@ -1069,6 +1123,7 @@ void
 ReadNode::onInputChanged(int inputNo)
 {
     NodePtr p = getEmbeddedReader();
+
     if (p) {
         p->getEffectInstance()->onInputChanged(inputNo);
     }
@@ -1078,6 +1133,7 @@ void
 ReadNode::purgeCaches()
 {
     NodePtr p = getEmbeddedReader();
+
     if (p) {
         p->getEffectInstance()->purgeCaches();
     }
@@ -1094,6 +1150,7 @@ void
 ReadNode::onMetadataRefreshed(const NodeMetadata& metadata)
 {
     NodePtr p = getEmbeddedReader();
+
     if (p) {
         p->getEffectInstance()->setMetadataInternal(metadata);
         p->getEffectInstance()->onMetadataRefreshed(metadata);
@@ -1103,34 +1160,34 @@ ReadNode::onMetadataRefreshed(const NodeMetadata& metadata)
 void
 ReadNode::initializeKnobs()
 {
-    KnobPagePtr controlpage = AppManager::createKnob<KnobPage>( this, tr("Controls") );
-    KnobButtonPtr fileInfos = AppManager::createKnob<KnobButton>( this, tr("File Info...") );
+    KnobPagePtr controlpage = AppManager::createKnob<KnobPage>(this, tr("Controls"));
+    KnobButtonPtr fileInfos = AppManager::createKnob<KnobButton>(this, tr("File Info..."));
 
     fileInfos->setName("fileInfo");
-    fileInfos->setHintToolTip( tr("Press to display information about the file") );
+    fileInfos->setHintToolTip(tr("Press to display information about the file"));
     controlpage->addKnob(fileInfos);
     _imp->fileInfosKnob = fileInfos;
     _imp->readNodeKnobs.push_back(fileInfos);
 
-    KnobChoicePtr pluginSelector = AppManager::createKnob<KnobChoice>( this, tr("Decoder") );
+    KnobChoicePtr pluginSelector = AppManager::createKnob<KnobChoice>(this, tr("Decoder"));
     pluginSelector->setAnimationEnabled(false);
     pluginSelector->setName(kNatronReadNodeParamDecodingPluginChoice);
-    pluginSelector->setHintToolTip( tr("Select the internal decoder plug-in used for this file format. By default this uses "
-                                       "the plug-in selected for this file extension in the Preferences of Natron") );
+    pluginSelector->setHintToolTip(tr("Select the internal decoder plug-in used for this file format. By default this uses "
+                                      "the plug-in selected for this file extension in the Preferences of Natron"));
     pluginSelector->setEvaluateOnChange(false);
     _imp->pluginSelectorKnob = pluginSelector;
     controlpage->addKnob(pluginSelector);
 
     _imp->readNodeKnobs.push_back(pluginSelector);
 
-    KnobSeparatorPtr separator = AppManager::createKnob<KnobSeparator>( this, tr("Decoder Options") );
+    KnobSeparatorPtr separator = AppManager::createKnob<KnobSeparator>(this, tr("Decoder Options"));
     separator->setName("decoderOptionsSeparator");
-    separator->setHintToolTip( tr("Below can be found parameters that are specific to the Reader plug-in.") );
+    separator->setHintToolTip(tr("Below can be found parameters that are specific to the Reader plug-in."));
     controlpage->addKnob(separator);
     _imp->separatorKnob = separator;
     _imp->readNodeKnobs.push_back(separator);
 
-    KnobStringPtr pluginID = AppManager::createKnob<KnobString>( this, tr("PluginID") );
+    KnobStringPtr pluginID = AppManager::createKnob<KnobString>(this, tr("PluginID"));
     pluginID->setAnimationEnabled(false);
     pluginID->setName(kNatronReadNodeParamDecodingPluginID);
     pluginID->setSecretByDefault(true);
@@ -1145,14 +1202,17 @@ ReadNode::onEffectCreated(bool mayCreateFileDialog,
 {
     //If we already loaded the Reader, do not do anything
     NodePtr p = getEmbeddedReader();
+
     if (p) {
         // Ensure the plug-in ID knob has the same value as the created reader:
         // The reader might have been created in onKnobsAboutToBeLoaded() however the knobs
         // get loaded afterwards and the plug-in ID could not reflect the underlying plugin
         KnobStringPtr pluginIDKnob = _imp->pluginIDStringKnob.lock();
+
         if (pluginIDKnob) {
             pluginIDKnob->setValue(p->getPluginID());
         }
+
         return;
     }
 
@@ -1162,11 +1222,11 @@ ReadNode::onEffectCreated(bool mayCreateFileDialog,
     std::string pattern;
 
     if (mayCreateFileDialog) {
-        if ( !getApp()->isBackground() ) {
+        if (!getApp()->isBackground()) {
             pattern = getApp()->openImageFileDialog();
 
             // File dialog was closed, ignore
-            if ( pattern.empty() ) {
+            if (pattern.empty()) {
                 throw std::runtime_error("");
             }
         }
@@ -1176,6 +1236,7 @@ ReadNode::onEffectCreated(bool mayCreateFileDialog,
     } else {
         std::vector<std::string> defaultParamValues = args.getPropertyN<std::string>(kCreateNodeArgsPropNodeInitialParamValues);
         std::vector<std::string>::iterator foundFileName  = std::find(defaultParamValues.begin(), defaultParamValues.end(), std::string(kOfxImageEffectFileParamName));
+
         if (foundFileName != defaultParamValues.end()) {
             std::string propName(kCreateNodeArgsPropParamValue);
             propName += "_";
@@ -1183,7 +1244,8 @@ ReadNode::onEffectCreated(bool mayCreateFileDialog,
             pattern = args.getProperty<std::string>(propName);
         }
     }
-    _imp->createReadNode( throwErrors, pattern, NodeSerializationPtr() );
+
+    _imp->createReadNode(throwErrors, pattern, NodeSerializationPtr());
     _imp->refreshPluginSelectorKnob();
 }
 
@@ -1194,9 +1256,9 @@ ReadNode::onKnobsAboutToBeLoaded(const NodeSerializationPtr& serialization)
     NodePtr node = getNode();
 
     //Load the pluginID to create first.
-    node->loadKnob( _imp->pluginIDStringKnob.lock(), *serialization );
+    node->loadKnob(_imp->pluginIDStringKnob.lock(), *serialization);
 
-    std::string filename = getFileNameFromSerialization( serialization->getKnobsValues() );
+    std::string filename = getFileNameFromSerialization(serialization->getKnobsValues());
     //Create the Reader with the serialization
     _imp->createReadNode(false, filename, serialization);
     _imp->refreshPluginSelectorKnob();
@@ -1211,42 +1273,49 @@ ReadNode::knobChanged(KnobI* k,
 {
     bool ret =  true;
 
-    if ( ( k == _imp->inputFileKnob.lock().get() ) && (reason != eValueChangedReasonTimeChanged) ) {
+    if ((k == _imp->inputFileKnob.lock().get()) && (reason != eValueChangedReasonTimeChanged)) {
 
         NodePtr hasMaster = getNode()->getMasterNode();
+
         if (hasMaster) {
             // Unslave all knobs since we are going to remove some and recreate others
             unslaveAllKnobs();
         }
+
         if (_imp->creatingReadNode) {
             NodePtr p = getEmbeddedReader();
+
             if (p) {
                 p->getEffectInstance()->knobChanged(k, reason, view, time, originatedFromMainThread);
             }
 
             return false;
         }
+
         try {
             _imp->refreshPluginSelectorKnob();
         } catch (const std::exception& e) {
-            setPersistentMessage( eMessageTypeError, e.what() );
+            setPersistentMessage(eMessageTypeError, e.what());
         }
 
         KnobFilePtr fileKnob = _imp->inputFileKnob.lock();
         assert(fileKnob);
         std::string filename = fileKnob->getValue();
+
         try {
-            _imp->createReadNode( false, filename, NodeSerializationPtr() );
+            _imp->createReadNode(false, filename, NodeSerializationPtr());
         } catch (const std::exception& e) {
-            setPersistentMessage( eMessageTypeError, e.what() );
+            setPersistentMessage(eMessageTypeError, e.what());
         }
+
         if (hasMaster) {
             slaveAllKnobs(hasMaster->getEffectInstance().get(), false);
         }
-    } else if ( k == _imp->pluginSelectorKnob.lock().get() ) {
+    } else if (k == _imp->pluginSelectorKnob.lock().get()) {
         KnobStringPtr pluginIDKnob = _imp->pluginIDStringKnob.lock();
         std::string entry = _imp->pluginSelectorKnob.lock()->getActiveEntry().id;
-        if ( entry == pluginIDKnob->getValue() ) {
+
+        if (entry == pluginIDKnob->getValue()) {
             return false;
         }
 
@@ -1261,36 +1330,42 @@ ReadNode::knobChanged(KnobI* k,
         std::string filename = fileKnob->getValue();
 
         try {
-            _imp->createReadNode( false, filename, NodeSerializationPtr() );
+            _imp->createReadNode(false, filename, NodeSerializationPtr());
         } catch (const std::exception& e) {
-            setPersistentMessage( eMessageTypeError, e.what() );
+            setPersistentMessage(eMessageTypeError, e.what());
         }
+
         // Make sure instance changed action is called on the decoder and not caught in our knobChanged handler.
         if (_imp->embeddedPlugin) {
             _imp->embeddedPlugin->getEffectInstance()->onKnobValueChanged_public(fileKnob.get(), eValueChangedReasonNatronInternalEdited, getCurrentTime(), ViewSpec(0), true);
         }
-        
+
 
         _imp->refreshFileInfoVisibility(entry);
-    } else if ( k == _imp->fileInfosKnob.lock().get() ) {
+    } else if (k == _imp->fileInfosKnob.lock().get()) {
         NodePtr p = getEmbeddedReader();
+
         if (!p) {
             return false;
         }
 
 
         KnobIPtr hasMetadataKnob = p->getKnobByName("showMetadata");
+
         if (hasMetadataKnob) {
-            KnobButton* showMetasKnob = dynamic_cast<KnobButton*>( hasMetadataKnob.get() );
+            KnobButton* showMetasKnob = dynamic_cast<KnobButton *>(hasMetadataKnob.get());
+
             if (showMetasKnob) {
                 showMetasKnob->trigger();
             }
         } else {
-            if ( ReadNode::isVideoReader( p->getPluginID() ) ) {
+            if (ReadNode::isVideoReader(p->getPluginID())) {
                 QString ffprobePath = ReadNodePrivate::getFFProbeBinaryPath();
-                if( !QFile::exists(ffprobePath) ) {
-                    throw std::runtime_error( tr("Error: ffprobe binary not available").toStdString() );
+
+                if (!QFile::exists(ffprobePath)) {
+                    throw std::runtime_error(tr("Error: ffprobe binary not available").toStdString());
                 }
+
                 QProcess proc;
                 QStringList ffprobeArgs;
                 ffprobeArgs << QString::fromUtf8("-show_streams");
@@ -1298,13 +1373,13 @@ ReadNode::knobChanged(KnobI* k,
                 assert(fileKnob);
                 std::string filename = fileKnob->getValue();
                 getApp()->getProject()->canonicalizePath(filename); // substitute project variables
-                ffprobeArgs << QString::fromUtf8( filename.c_str() );
+                ffprobeArgs << QString::fromUtf8(filename.c_str());
                 proc.start(ffprobePath, ffprobeArgs);
                 proc.waitForFinished();
 
-                QString procStdError = QString::fromUtf8( proc.readAllStandardError() );
-                QString procStdOutput = QString::fromUtf8( proc.readAllStandardOutput() );
-                Dialogs::informationDialog( getNode()->getLabel(), procStdError.toStdString() + procStdOutput.toStdString() );
+                QString procStdError = QString::fromUtf8(proc.readAllStandardError());
+                QString procStdOutput = QString::fromUtf8(proc.readAllStandardOutput());
+                Dialogs::informationDialog(getNode()->getLabel(), procStdError.toStdString() + procStdOutput.toStdString());
             }
         }
     } else {
@@ -1312,6 +1387,7 @@ ReadNode::knobChanged(KnobI* k,
     }
 
     NodePtr p = getEmbeddedReader();
+
     if (!ret && p) {
         ret |= p->getEffectInstance()->knobChanged(k, reason, view, time, originatedFromMainThread);
     }
@@ -1326,10 +1402,12 @@ ReadNode::getRegionOfDefinition(U64 hash,
                                 ViewIdx view,
                                 RectD* rod)
 {
-    if ( !_imp->checkDecoderCreated(time, view) ) {
+    if (!_imp->checkDecoderCreated(time, view)) {
         return eStatusFailed;
     }
+
     NodePtr p = getEmbeddedReader();
+
     if (p) {
         return p->getEffectInstance()->getRegionOfDefinition(hash, time, scale, view, rod);
     } else {
@@ -1342,6 +1420,7 @@ ReadNode::getFrameRange(double *first,
                         double *last)
 {
     NodePtr p = getEmbeddedReader();
+
     if (p) {
         return p->getEffectInstance()->getFrameRange(first, last);
     } else {
@@ -1351,13 +1430,14 @@ ReadNode::getFrameRange(double *first,
 
 void
 ReadNode::getComponentsNeededAndProduced(double time,
-                                         ViewIdx view,
-                                         EffectInstance::ComponentsNeededMap* comps,
-                                         double* passThroughTime,
-                                         int* passThroughView,
-                                         int* passThroughInput)
+        ViewIdx view,
+        EffectInstance::ComponentsNeededMap* comps,
+        double *passThroughTime,
+        int *passThroughView,
+        int *passThroughInput)
 {
     NodePtr p = getEmbeddedReader();
+
     if (p) {
         p->getEffectInstance()->getComponentsNeededAndProduced(time, view, comps, passThroughTime, passThroughView, passThroughInput);
     }
@@ -1372,13 +1452,12 @@ ReadNode::beginSequenceRender(double first,
                               bool isSequentialRender,
                               bool isRenderResponseToUserInteraction,
                               bool draftMode,
-                              ViewIdx view,
-                              bool isOpenGLRender,
-                              const EffectInstance::OpenGLContextEffectDataPtr& glContextData)
+                              ViewIdx view)
 {
     NodePtr p = getEmbeddedReader();
+
     if (p) {
-        return p->getEffectInstance()->beginSequenceRender(first, last, step, interactive, scale, isSequentialRender, isRenderResponseToUserInteraction, draftMode, view, isOpenGLRender, glContextData);
+        return p->getEffectInstance()->beginSequenceRender(first, last, step, interactive, scale, isSequentialRender, isRenderResponseToUserInteraction, draftMode, view);
     } else {
         return eStatusFailed;
     }
@@ -1393,13 +1472,12 @@ ReadNode::endSequenceRender(double first,
                             bool isSequentialRender,
                             bool isRenderResponseToUserInteraction,
                             bool draftMode,
-                            ViewIdx view,
-                            bool isOpenGLRender,
-                            const EffectInstance::OpenGLContextEffectDataPtr& glContextData)
+                            ViewIdx view)
 {
     NodePtr p = getEmbeddedReader();
+
     if (p) {
-        return p->getEffectInstance()->endSequenceRender(first, last, step, interactive, scale, isSequentialRender, isRenderResponseToUserInteraction, draftMode, view, isOpenGLRender, glContextData);
+        return p->getEffectInstance()->endSequenceRender(first, last, step, interactive, scale, isSequentialRender, isRenderResponseToUserInteraction, draftMode, view);
     } else {
         return eStatusFailed;
     }
@@ -1408,16 +1486,24 @@ ReadNode::endSequenceRender(double first,
 StatusEnum
 ReadNode::render(const RenderActionArgs& args)
 {
-    if ( !_imp->checkDecoderCreated(args.time, args.view) ) {
+    if (!_imp->checkDecoderCreated(args.time, args.view)) {
         return eStatusFailed;
     }
 
     NodePtr p = getEmbeddedReader();
+
     if (p) {
         return p->getEffectInstance()->render(args);
     } else {
         return eStatusFailed;
     }
+}
+
+bool
+ReadNode::supportsVulkanRender() const
+{
+    const NodePtr reader = getEmbeddedReader();
+    return reader && reader->getEffectInstance()->supportsVulkanRender();
 }
 
 void
@@ -1429,6 +1515,7 @@ ReadNode::getRegionsOfInterest(double time,
                                RoIMap* ret)
 {
     NodePtr p = getEmbeddedReader();
+
     if (p) {
         p->getEffectInstance()->getRegionsOfInterest(time, scale, outputRoD, renderWindow, view, ret);
     }
@@ -1439,6 +1526,7 @@ ReadNode::getFramesNeeded(double time,
                           ViewIdx view)
 {
     NodePtr p = getEmbeddedReader();
+
     if (p) {
         return p->getEffectInstance()->getFramesNeeded(time, view);
     } else {

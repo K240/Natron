@@ -12,6 +12,26 @@ if(OFX_SET STREQUAL "misc")
     target_sources(Misc PRIVATE "${OFX_SOURCE_ROOT}/openfx-misc/Misc/randomGenerator.cpp"
         "${OFX_SOURCE_ROOT}/openfx-misc/Test/TestRender.cpp")
     set(ofx_targets Misc CImg)
+    # Public C ABI headers and the SDK adapter for native curve backgrounds.
+    get_filename_component(natron_source_root "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+    target_include_directories(Misc PRIVATE "${natron_source_root}" "${CMAKE_CURRENT_SOURCE_DIR}/native")
+    get_target_property(misc_sources Misc SOURCES)
+    list(FILTER misc_sources EXCLUDE REGEX "/(SupportExt/(glad/.*|ofxsOGL(TextRenderer|FontData|Utilities)\\.cpp)|Shadertoy/ShadertoyRender(GL|Mesa)\\.cpp|Test/TestOpenGL[^/]*\\.cpp)$")
+    set_property(TARGET Misc PROPERTY SOURCES "${misc_sources}")
+    target_sources(Misc PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/native/ShadertoyVulkan.cpp")
+    if(WIN32)
+        target_sources(Misc PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/native/MiscVulkan.def")
+    endif()
+    set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/native/ShadertoyVulkan.cpp"
+        "${OFX_SOURCE_ROOT}/openfx-misc/Shadertoy/Shadertoy.cpp"
+        TARGET_DIRECTORY Misc PROPERTIES INCLUDE_DIRECTORIES
+        "${natron_source_root};${OFX_SOURCE_ROOT}/openfx-misc/Shadertoy")
+    set_source_files_properties(
+        "${OFX_SOURCE_ROOT}/openfx-misc/ColorLookup/ColorLookup.cpp"
+        "${OFX_SOURCE_ROOT}/openfx-misc/HueCorrect/HueCorrect.cpp"
+        "${OFX_SOURCE_ROOT}/openfx-misc/HueCorrect/HueCorrect1.cpp"
+        TARGET_DIRECTORY Misc
+        PROPERTIES INCLUDE_DIRECTORIES "${natron_source_root};${CMAKE_CURRENT_SOURCE_DIR}/native")
 elseif(OFX_SET STREQUAL "arena")
     find_package(PkgConfig REQUIRED)
     set(AUDIO ON CACHE BOOL "Build AudioCurve")
@@ -21,6 +41,11 @@ elseif(OFX_SET STREQUAL "arena")
     pkg_check_modules(ARENA_EXTRA REQUIRED IMPORTED_TARGET pangoft2 poppler OpenColorIO)
     target_link_libraries(Arena PkgConfig::ARENA_EXTRA shlwapi)
     target_compile_definitions(Arena PRIVATE OFX_IO_USING_OCIO)
+    get_filename_component(natron_source_root "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+    target_include_directories(Arena PRIVATE "${natron_source_root}" "${CMAKE_CURRENT_SOURCE_DIR}/native")
+    get_target_property(arena_sources Arena SOURCES)
+    list(FILTER arena_sources EXCLUDE REGEX "(^|/)SupportExt/(glad/.*|ofxsOGL(TextRenderer|FontData|Utilities)\\.cpp)$")
+    set_property(TARGET Arena PROPERTY SOURCES "${arena_sources}")
     set(ofx_targets Arena)
 elseif(OFX_SET STREQUAL "gmic")
     set(src "${OFX_SOURCE_ROOT}/openfx-gmic")
@@ -48,6 +73,43 @@ elseif(OFX_SET STREQUAL "gmic")
         LIBRARY DESTINATION GMIC.ofx.bundle/Contents/Win64)
     install(FILES "${src}/GMIC_OFX/GMIC.png" DESTINATION GMIC.ofx.bundle/Contents/Resources)
     set(ofx_targets GMIC)
+elseif(OFX_SET STREQUAL "io")
+    find_package(OpenColorIO 2.5 CONFIG REQUIRED)
+    find_package(OpenImageIO CONFIG REQUIRED)
+    add_subdirectory("${OFX_SOURCE_ROOT}/openfx-io" io)
+    # OCIO color processing uses the native suite; retire its GL shader backend.
+    get_target_property(io_sources IO SOURCES)
+    list(FILTER io_sources EXCLUDE REGEX "/IOSupport/(GenericOCIOOpenGL|glsl)\\.cpp$")
+    list(FILTER io_sources EXCLUDE REGEX "(^|/)SupportExt/(glad/.*|ofxsOGL(TextRenderer|FontData|Utilities)\\.cpp)$")
+    set_property(TARGET IO PROPERTY SOURCES "${io_sources}")
+    target_compile_definitions(IO PRIVATE OFX_IO_NATIVE_OCIO)
+    get_filename_component(natron_source_root "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
+    target_sources(IO PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/native/OcioVulkan.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/native/OcioVulkanAdapter.cpp")
+    if(WIN32)
+        target_sources(IO PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/native/IOVulkan.def")
+    endif()
+    target_include_directories(IO PRIVATE "${natron_source_root}" "${CMAKE_CURRENT_SOURCE_DIR}/native")
+    target_link_libraries(IO PRIVATE OpenImageIO::OpenImageIO)
+    add_executable(IOOverlayDrawingTest "${CMAKE_CURRENT_SOURCE_DIR}/native/tests/OverlayDrawing.cpp")
+    target_include_directories(IOOverlayDrawingTest PRIVATE "${natron_source_root}" "${CMAKE_CURRENT_SOURCE_DIR}/native"
+        "${OFX_SOURCE_ROOT}/openfx-io/openfx/include" "${OFX_SOURCE_ROOT}/openfx-io/openfx/Support/include")
+    set_target_properties(IOOverlayDrawingTest PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+    add_executable(OcioVulkanFailureTest "${CMAKE_CURRENT_SOURCE_DIR}/native/tests/OcioFailures.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/native/OcioVulkan.cpp")
+    target_include_directories(OcioVulkanFailureTest PRIVATE "${natron_source_root}" "${CMAKE_CURRENT_SOURCE_DIR}/native"
+        "${OFX_SOURCE_ROOT}/openfx-io/openfx/include")
+    target_link_libraries(OcioVulkanFailureTest PRIVATE OpenColorIO::OpenColorIO)
+    add_library(OcioVulkanSuiteSmoke MODULE "${natron_source_root}/Tests/OcioVulkanSuitePlugin.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/native/OcioVulkan.cpp")
+    target_include_directories(OcioVulkanSuiteSmoke PRIVATE "${natron_source_root}" "${CMAKE_CURRENT_SOURCE_DIR}/native"
+        "${OFX_SOURCE_ROOT}/openfx-io/openfx/include")
+    target_link_libraries(OcioVulkanSuiteSmoke PRIVATE OpenColorIO::OpenColorIO)
+    set_target_properties(OcioVulkanSuiteSmoke PROPERTIES PREFIX "" SUFFIX ".ofx"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../../ofx-tests/OcioVulkanSuiteSmoke.ofx.bundle/Contents/Win64"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../../ofx-tests/OcioVulkanSuiteSmoke.ofx.bundle/Contents/Win64")
+    set(ofx_targets IO)
 else()
     message(FATAL_ERROR "Unknown OFX_SET: ${OFX_SET}")
 endif()
@@ -64,4 +126,7 @@ endforeach()
 # Current Poppler headers use std::span.
 if(TARGET Arena)
     set_target_properties(Arena PROPERTIES CXX_STANDARD 20)
+endif()
+if(TARGET IO)
+    set_target_properties(IO PROPERTIES CXX_STANDARD 20)
 endif()

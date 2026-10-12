@@ -46,6 +46,7 @@ include_directories(BEFORE "${CMAKE_BINARY_DIR}/generated")
 
 option(NATRON_SYSTEM_LIBS "use system versions of dependencies instead of bundled ones" OFF)
 option(NATRON_BUILD_TESTS "build the Natron test suite" ON)
+option(NATRON_BUILD_GPU_TESTS "build Vulkan tests requiring a GPU and a display" OFF)
 
 set(IS_DEBUG_BUILD OFF)
 if(CMAKE_BUILD_TYPE MATCHES "^(debug|Debug|DEBUG)$")
@@ -82,7 +83,7 @@ if(IS_DEBUG_BUILD AND WIN32)
     set(SHIBOKEN_PYTHON_LIBRARIES ${Python3_LIBRARIES})
 endif()
 
-find_package(Qt6 6.6 CONFIG REQUIRED COMPONENTS Core Gui Network Widgets Concurrent OpenGLWidgets)
+find_package(Qt6 6.6 CONFIG REQUIRED COMPONENTS Core Gui Network Widgets Concurrent)
 find_package(Shiboken6 6.6 CONFIG REQUIRED COMPONENTS libshiboken6)
 find_package(Shiboken6Tools 6.6 CONFIG REQUIRED COMPONENTS shiboken6)
 find_package(PySide6 6.6 CONFIG REQUIRED COMPONENTS pyside6)
@@ -125,12 +126,7 @@ if(NATRON_SYSTEM_LIBS)
     find_package(Ceres)
 endif()
 
-if(UNIX AND NOT APPLE)
-    find_package(ECM NO_MODULE)
-    set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH} ${CMAKE_MODULE_PATH})
-    find_package(X11 REQUIRED)
-    find_package(Wayland COMPONENTS Client Egl)
-elseif(APPLE)
+if(APPLE)
     enable_language(OBJCXX)
 elseif(WIN32)
     enable_language(RC)
@@ -154,6 +150,8 @@ set(CMAKE_AUTORCC ON)
 enable_testing()
 
 add_subdirectory(libs)
+
+add_subdirectory(Gpu)
 
 add_subdirectory(HostSupport)
 

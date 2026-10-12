@@ -19,7 +19,7 @@
 
 set(NatronRenderer_SOURCES NatronRenderer_main.cpp)
 if(WIN32)
-    list(APPEND NatronRenderer_SOURCES ../Natron.rc)
+    list(APPEND NatronRenderer_SOURCES ../Natron.rc ../Global/WindowsUtf8.manifest)
 endif()
 add_executable(NatronRenderer ${NatronRenderer_SOURCES})
 target_link_libraries(NatronRenderer

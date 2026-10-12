@@ -42,6 +42,7 @@ ImageKey::ImageKey()
     , _draftMode(false)
     , _frameVaryingOrAnimated(false)
     , _fullScaleWithDownscaleInputs(false)
+    , _inputMipmapLevel(0)
 {
 }
 
@@ -53,7 +54,8 @@ ImageKey::ImageKey(const CacheEntryHolder* holder,
                    ViewIdx view,
                    double pixelAspect,
                    bool draftMode,
-                   bool fullScaleWithDownscaleInputs)
+                   bool fullScaleWithDownscaleInputs,
+                   unsigned int inputMipmapLevel)
     : KeyHelper<U64>(holder)
     , _nodeHashKey(nodeHashKey)
     , _time(time)
@@ -62,6 +64,7 @@ ImageKey::ImageKey(const CacheEntryHolder* holder,
     , _draftMode(draftMode)
     , _frameVaryingOrAnimated(frameVaryingOrAnimated)
     , _fullScaleWithDownscaleInputs(fullScaleWithDownscaleInputs)
+    , _inputMipmapLevel(fullScaleWithDownscaleInputs ? inputMipmapLevel : 0)
 {
 }
 
@@ -69,13 +72,19 @@ void
 ImageKey::fillHash(Hash64* hash) const
 {
     hash->append(_nodeHashKey);
+
     if (_frameVaryingOrAnimated) {
         hash->append(_time);
     }
+
     hash->append(_view);
     hash->append(_pixelAspect);
     hash->append(_draftMode);
     hash->append(_fullScaleWithDownscaleInputs);
+
+    if (_fullScaleWithDownscaleInputs) {
+        hash->append(_inputMipmapLevel);
+    }
 }
 
 bool
@@ -87,13 +96,15 @@ ImageKey::operator==(const ImageKey & other) const
                _view == other._view &&
                _pixelAspect == other._pixelAspect &&
                _draftMode == other._draftMode &&
-               _fullScaleWithDownscaleInputs == other._fullScaleWithDownscaleInputs;
+               _fullScaleWithDownscaleInputs == other._fullScaleWithDownscaleInputs &&
+               (!_fullScaleWithDownscaleInputs || _inputMipmapLevel == other._inputMipmapLevel);
     } else {
         return _nodeHashKey == other._nodeHashKey &&
                _view == other._view &&
                _pixelAspect == other._pixelAspect &&
                _draftMode == other._draftMode &&
-               _fullScaleWithDownscaleInputs == other._fullScaleWithDownscaleInputs;
+               _fullScaleWithDownscaleInputs == other._fullScaleWithDownscaleInputs &&
+               (!_fullScaleWithDownscaleInputs || _inputMipmapLevel == other._inputMipmapLevel);
     }
 }
 

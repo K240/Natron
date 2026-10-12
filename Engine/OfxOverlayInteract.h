@@ -30,11 +30,11 @@
 
 // ofxhPropertySuite.h:565:37: warning: 'this' pointer cannot be null in well-defined C++ code; comparison may be assumed to always evaluate to true [-Wtautological-undefined-compare]
 // clang-format off
-CLANG_DIAG_OFF(unknown-pragmas)
-CLANG_DIAG_OFF(tautological-undefined-compare) // appeared in clang 3.5
+CLANG_DIAG_OFF(unknown - pragmas)
+CLANG_DIAG_OFF(tautological - undefined - compare) // appeared in clang 3.5
 #include <ofxhImageEffect.h>
-CLANG_DIAG_ON(tautological-undefined-compare)
-CLANG_DIAG_ON(unknown-pragmas)
+CLANG_DIAG_ON(tautological - undefined - compare)
+CLANG_DIAG_ON(unknown - pragmas)
 // clang-format on
 #include "Engine/EngineFwd.h"
 
@@ -48,8 +48,8 @@ class NatronOverlayInteractSupport
 
 protected:
 
-    OverlaySupport* _viewport;
-    
+    OverlaySupport *_viewport;
+
 
 public:
     NatronOverlayInteractSupport();
@@ -73,14 +73,14 @@ public:
         _lastColorPicker = color;
     }
 
-    const OfxRGBAColourD& getLastColorPickerColor() const
+    const OfxRGBAColourD &getLastColorPickerColor() const
     {
         return _lastColorPicker;
     }
 
     void setCallingViewport(OverlaySupport* viewport);
 
-    OverlaySupport* getLastCallingViewport() const;
+    OverlaySupport *getLastCallingViewport() const;
 
     /*Swaps the buffer of the attached viewer*/
     OfxStatus n_swapBuffers();
@@ -91,13 +91,13 @@ public:
     void n_getViewportSize(double &width, double &height) const;
 
     // hooks to live kOfxInteractPropPixelScale in the property set
-    void n_getPixelScale(double & xScale, double & yScale) const;
+    void n_getPixelScale(double &xScale, double &yScale) const;
 
 #ifdef OFX_EXTENSIONS_NATRON
     // hooks to live kOfxInteractPropScreenPixelRatio in the property set
     double n_getScreenPixelRatio() const;
 #endif
-   // hooks to kOfxInteractPropBackgroundColour in the property set
+    // hooks to kOfxInteractPropBackgroundColour in the property set
     void n_getBackgroundColour(double &r, double &g, double &b) const;
 
     // hooks to kOfxInteractPropSuggestedColour and kOfxPropOverlayColour in the property set
@@ -106,20 +106,22 @@ public:
     // an RAII class to save OpenGL context
     class OGLContextSaver
     {
-public:
+    public:
         OGLContextSaver(OverlaySupport* viewport);
 
         ~OGLContextSaver();
 
-private:
-        OverlaySupport* const _viewport;
+    private:
+        OverlaySupport *const _viewport;
     };
 };
 
 class OfxImageEffectInstance;
 class OfxOverlayInteract
-    :  public OFX::Host::ImageEffect::OverlayInteract, public NatronOverlayInteractSupport
+    : public OFX::Host::Interact::Instance, public NatronOverlayInteractSupport
 {
+    OfxImageEffectInstance &_instance;
+    bool _usesDrawSuite;
 public:
 
     OfxOverlayInteract(OfxImageEffectInstance &v,
@@ -131,10 +133,13 @@ public:
     }
 
     virtual bool isColorPickerRequired() const OVERRIDE FINAL WARN_UNUSED_RETURN;
+    bool usesDrawSuite() const
+    {
+        return _usesDrawSuite;
+    }
 
     /*Swaps the buffer of the attached viewer*/
-    virtual OfxStatus swapBuffers() OVERRIDE FINAL WARN_UNUSED_RETURN
-    {
+    virtual OfxStatus swapBuffers() OVERRIDE FINAL WARN_UNUSED_RETURN {
         return n_swapBuffers();
     }
 
@@ -150,8 +155,8 @@ public:
     }
 
     // hooks to live kOfxInteractPropPixelScale in the property set
-    virtual void getPixelScale(double & xScale,
-                               double & yScale) const OVERRIDE FINAL
+    virtual void getPixelScale(double &xScale,
+                               double &yScale) const OVERRIDE FINAL
     {
         n_getPixelScale(xScale, yScale);
     }
@@ -164,7 +169,7 @@ public:
     }
 #endif
 
-   // hooks to kOfxInteractPropBackgroundColour in the property set
+    // hooks to kOfxInteractPropBackgroundColour in the property set
     virtual void getBackgroundColour(double &r,
                                      double &g,
                                      double &b) const OVERRIDE FINAL
@@ -255,7 +260,7 @@ public:
                                     int view,
                                     const OfxRGBAColourD* pickerColour,
                                     int key,
-                                    char*   keyString) OVERRIDE FINAL;
+                                    char   *keyString) OVERRIDE FINAL;
 
     // interact action - kOfxInteractActionkeyUp
     //
@@ -270,7 +275,7 @@ public:
                                   int view,
                                   const OfxRGBAColourD* pickerColour,
                                   int key,
-                                  char*   keyString) OVERRIDE FINAL;
+                                  char   *keyString) OVERRIDE FINAL;
 
     // interact action - kOfxInteractActionkeyRepeat
     //
@@ -285,7 +290,7 @@ public:
                                       int view,
                                       const OfxRGBAColourD* pickerColour,
                                       int key,
-                                      char*   keyString) OVERRIDE FINAL;
+                                      char   *keyString) OVERRIDE FINAL;
 
     // interact action - kOfxInteractActionLoseFocus
     //
@@ -313,14 +318,19 @@ public:
 class OfxParamOverlayInteract
     : public OFX::Host::Interact::Instance, public NatronOverlayInteractSupport
 {
-
-
-
+    bool _usesDrawSuite;
 public:
 
     OfxParamOverlayInteract(KnobI* knob,
                             OFX::Host::Interact::Descriptor &desc,
-                            void *effectInstance);
+                            void *effectInstance, bool usesDrawSuite);
+
+    bool usesDrawSuite() const
+    {
+        return _usesDrawSuite;
+    }
+    virtual OfxStatus drawAction(OfxTime time, const OfxPointD &renderScale,
+                                 int view, const OfxRGBAColourD* pickerColour) OVERRIDE FINAL;
 
 
     virtual ~OfxParamOverlayInteract()
@@ -330,8 +340,7 @@ public:
     virtual bool isColorPickerRequired() const OVERRIDE FINAL WARN_UNUSED_RETURN;
 
     /*Swaps the buffer of the attached viewer*/
-    virtual OfxStatus swapBuffers() OVERRIDE FINAL
-    {
+    virtual OfxStatus swapBuffers() OVERRIDE FINAL {
         return n_swapBuffers();
     }
 
@@ -348,8 +357,8 @@ public:
     }
 
     // hooks to live kOfxInteractPropPixelScale in the property set
-    virtual void getPixelScale(double & xScale,
-                               double & yScale) const OVERRIDE FINAL
+    virtual void getPixelScale(double &xScale,
+                               double &yScale) const OVERRIDE FINAL
     {
         n_getPixelScale(xScale, yScale);
     }
@@ -378,15 +387,15 @@ public:
         return n_getSuggestedColour(r, g, b);
     }
 
-    void getMinimumSize(double & minW, double & minH) const;
+    void getMinimumSize(double &minW, double &minH) const;
 
-    void getPreferredSize(int & pW, int & pH) const;
+    void getPreferredSize(int &pW, int &pH) const;
 
     void getSize(int &w, int &h) const;
 
     void setSize(int w, int h);
 
-    void getPixelAspectRatio(double & par) const;
+    void getPixelAspectRatio(double &par) const;
 };
 
 

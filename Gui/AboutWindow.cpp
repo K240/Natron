@@ -47,8 +47,9 @@ CLANG_DIAG_ON(deprecated)
 #include "Global/GitVersion.h"
 
 #include "Engine/AppManager.h"
-#include "Engine/OSGLContext.h"
+#include "Engine/VulkanImageContextPool.h"
 #include "Engine/Utils.h" // convertFromPlainText
+#include "Gpu/VulkanDevice.h"
 
 #include "Gui/Button.h"
 #include "Gui/Gui.h"
@@ -449,6 +450,7 @@ AboutWindow::AboutWindow(QWidget* parent)
     _tabWidget->addTab( _changelogText, tr("Changelog") );
 
     _libsText = new QTextBrowser(_tabWidget);
+    _libsText->setObjectName(QString::fromUtf8("libraryVersions"));
     _libsText->setOpenExternalLinks(true);
     updateLibrariesVersions();
 
@@ -578,30 +580,36 @@ AboutWindow::updateLibrariesVersions()
                                          "<p>Hoedown %5</p>"
                                          "<p>Ceres %6</p>"
                                          "<p>OpenMVG %7</p>"
-                                         )
-                       .arg( QString::fromUtf8(PY_VERSION) )
-                       .arg( appPTR->getQtVersion() )
-                       .arg( appPTR->getBoostVersion() )
-                       .arg( appPTR->getCairoVersion() )
-                       .arg( appPTR->getHoedownVersion() )
-                       .arg( appPTR->getCeresVersion() )
-                       .arg( appPTR->getOpenMVGVersion() );
-    std::list<OpenGLRendererInfo> openGLRenderers;
-    OSGLContext::getGPUInfos(openGLRenderers);
-    if ( !openGLRenderers.empty() ) {
-        libsText += (QLatin1String("<h3>") +
-                     tr("OpenGL renderers:") +
-                     QLatin1String("</h3>"));
-        for (std::list<OpenGLRendererInfo>::iterator it = openGLRenderers.begin(); it != openGLRenderers.end(); ++it) {
-            libsText += (QLatin1String("<p>") +
-                         tr("%1 from %2").arg( QString::fromUtf8( it->rendererName.c_str() ) )
-                                        .arg( QString::fromUtf8( it->vendorName.c_str() ) ) +
-                         QLatin1String("<br />") +
-                         tr("OpenGL version %1 with GLSL version %2")
-                         .arg( QString::fromUtf8( it->glVersionString.c_str() ) )
-                         .arg( QString::fromUtf8( it->glslVersionString.c_str() ) ) +
-                         QLatin1String("</p>") );
+                                        )
+                       .arg(QString::fromUtf8(PY_VERSION))
+                       .arg(appPTR->getQtVersion())
+                       .arg(appPTR->getBoostVersion())
+                       .arg(appPTR->getCairoVersion())
+                       .arg(appPTR->getHoedownVersion())
+                       .arg(appPTR->getCeresVersion())
+                       .arg(appPTR->getOpenMVGVersion());
+
+    try {
+        if (!vulkanImageRuntimeEnabled()) {
+            throw std::runtime_error(vulkanImageRuntimeError());
         }
+
+        const std::shared_ptr<Gpu::VulkanInstance> instance = Gpu::VulkanInstance::create();
+        libsText += QLatin1String("<h3>") + tr("Vulkan renderers:") + QLatin1String("</h3>");
+
+        for (VkPhysicalDevice physicalDevice : instance->physicalDevices()) {
+            VkPhysicalDeviceProperties properties;
+            instance->functions().vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+            const QString version = QString::fromUtf8("%1.%2.%3")
+                                    .arg(VK_API_VERSION_MAJOR(properties.apiVersion))
+                                    .arg(VK_API_VERSION_MINOR(properties.apiVersion))
+                                    .arg(VK_API_VERSION_PATCH(properties.apiVersion));
+            libsText += QLatin1String("<p>") + QString::fromUtf8(properties.deviceName).toHtmlEscaped() +
+                        QLatin1String("<br />") + tr("Vulkan version %1").arg(version) + QLatin1String("</p>");
+        }
+    } catch (const std::exception& e) {
+        libsText += QLatin1String("<p>") + tr("Vulkan renderer information is unavailable: %1")
+                    .arg(QString::fromUtf8(e.what()).toHtmlEscaped()) + QLatin1String("</p>");
     }
 
     _libsText->setText(libsText);

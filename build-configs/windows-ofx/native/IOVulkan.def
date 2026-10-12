@@ -1,0 +1,11 @@
+EXPORTS
+    OfxGetNumberOfPlugins
+    OfxGetPlugin
+    OfxOCIOVulkanRenderCount
+    OfxOCIOVulkanDeviceInfo
+    OfxOCIOVulkanClipRenderCount
+    OfxOCIOVulkanDirectClipRenderCount
+    OfxOCIOVulkanMaskUploadCount
+    OfxOCIOVulkanTransferCounts
+    OfxReaderVulkanRenderCount
+    OfxWriterVulkanRenderCount

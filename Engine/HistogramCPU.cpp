@@ -40,8 +40,7 @@
 
 NATRON_NAMESPACE_ENTER
 
-struct HistogramRequest
-{
+struct HistogramRequest {
     int binsCount;
     int mode;
     ImagePtr image;
@@ -79,8 +78,7 @@ struct HistogramRequest
     }
 };
 
-struct FinishedHistogram
-{
+struct FinishedHistogram {
     std::vector<float> histogram1;
     std::vector<float> histogram2;
     std::vector<float> histogram3;
@@ -106,8 +104,7 @@ struct FinishedHistogram
 
 typedef std::shared_ptr<FinishedHistogram> FinishedHistogramPtr;
 
-struct HistogramCPUPrivate
-{
+struct HistogramCPUPrivate {
     QWaitCondition requestCond;
     QMutex requestMutex;
     std::list<HistogramRequest> requests;
@@ -132,7 +129,7 @@ struct HistogramCPUPrivate
 
 HistogramCPU::HistogramCPU()
     : QThread()
-    , _imp( new HistogramCPUPrivate() )
+    , _imp(new HistogramCPUPrivate())
 {
 }
 
@@ -154,7 +151,8 @@ HistogramCPU::computeHistogram(int mode,      //< corresponds to the enum Histog
     QMutexLocker quitLocker(&_imp->mustQuitMutex);
     QMutexLocker locker(&_imp->requestMutex);
 
-    _imp->requests.push_back( HistogramRequest(binsCount, mode, image, rect, vmin, vmax, smoothingKernelSize) );
+    _imp->requests.push_back(HistogramRequest(binsCount, mode, image, rect, vmin, vmax, smoothingKernelSize));
+
     if (!isRunning() && !_imp->mustQuit) {
         quitLocker.unlock();
         start(HighestPriority);
@@ -167,7 +165,7 @@ HistogramCPU::computeHistogram(int mode,      //< corresponds to the enum Histog
 void
 HistogramCPU::quitAnyComputation()
 {
-    if ( isRunning() ) {
+    if (isRunning()) {
         QMutexLocker l(&_imp->mustQuitMutex);
         assert(!_imp->mustQuit);
         _imp->mustQuit = true;
@@ -176,6 +174,7 @@ HistogramCPU::quitAnyComputation()
         l.unlock();
         computeHistogram(0, ImagePtr(), RectI(), 0, 0, 0, 0);
         l.relock();
+
         while (_imp->mustQuit) {
             _imp->mustQuitCond.wait(l.mutex());
         }
@@ -191,20 +190,21 @@ HistogramCPU::hasProducedHistogram() const
 }
 
 bool
-HistogramCPU::getMostRecentlyProducedHistogram(std::vector<float>* histogram1,
-                                               std::vector<float>* histogram2,
-                                               std::vector<float>* histogram3,
-                                               unsigned int* binsCount,
-                                               unsigned int* pixelsCount,
-                                               int* mode,
-                                               double* vmin,
-                                               double* vmax,
-                                               unsigned int* mipmapLevel)
+HistogramCPU::getMostRecentlyProducedHistogram(std::vector<float> *histogram1,
+        std::vector<float> *histogram2,
+        std::vector<float> *histogram3,
+        unsigned int *binsCount,
+        unsigned int *pixelsCount,
+        int *mode,
+        double *vmin,
+        double *vmax,
+        unsigned int *mipmapLevel)
 {
     assert(histogram1 && histogram2 && histogram3 && binsCount && pixelsCount && mode && vmin && vmax);
 
     QMutexLocker l(&_imp->producedMutex);
-    if ( _imp->produced.empty() ) {
+
+    if (_imp->produced.empty()) {
         return false;
     }
 
@@ -219,47 +219,43 @@ HistogramCPU::getMostRecentlyProducedHistogram(std::vector<float>* histogram1,
     *vmin = h->vmin;
     *vmax = h->vmax;
     *mipmapLevel = h->mipmapLevel;
-    _imp->produced.pop_back();
+    // Older results must not replace the newest snapshot on queued signals.
+    _imp->produced.clear();
 
     return true;
 }
 
 ///putting these in an anonymous namespace will yield this error on gcc 4.2:
 ///"function has not external linkage"
-struct pix_red
-{
+struct pix_red {
     static float val(const float *pix)
     {
         return pix[0];
     }
 };
 
-struct pix_green
-{
+struct pix_green {
     static float val(const float *pix)
     {
         return pix[1];
     }
 };
 
-struct pix_blue
-{
+struct pix_blue {
     static float val(const float *pix)
     {
         return pix[2];
     }
 };
 
-struct pix_alpha
-{
+struct pix_alpha {
     static float val(const float *pix)
     {
         return pix[3];
     }
 };
 
-struct pix_lum
-{
+struct pix_lum {
     static float val(const float *pix)
     {
         return 0.299 * pix[0] + 0.587 * pix[1] + 0.114 * pix[2];
@@ -287,9 +283,10 @@ computeHisto(const HistogramRequest & request,
         for (int x = request.rect.left(); x < request.rect.right(); ++x) {
             const float *pix = (const float*)acc.pixelAt(x, y);
             float v = pix_func(pix);
-            if ( (request.vmin <= v) && (v < request.vmax) ) {
-                int index = (int)( (v - request.vmin) / binSize );
-                assert( 0 <= index && index < (int)histo->size() );
+
+            if ((request.vmin <= v) && (v < request.vmax)) {
+                int index = (int)((v - request.vmin) / binSize);
+                assert(0 <= index && index < (int)histo->size());
                 (*histo)[index] += 1.f;
             }
         }
@@ -310,16 +307,21 @@ computeHistogramStatic(const HistogramRequest & request,
     case 1:
         histo = &ret->histogram1;
         break;
+
     case 2:
         histo = &ret->histogram2;
         break;
+
     case 3:
         histo = &ret->histogram3;
         break;
+
     default:
         break;
     }
+
     assert(histo);
+
     if (!histo) {
         return;
     }
@@ -336,19 +338,24 @@ computeHistogramStatic(const HistogramRequest & request,
     ret->pixelsCount = request.rect.area();
     // a histogram with upscale more bins
     std::vector<float> histo_upscaled;
+
     switch (mode) {
     case 1:     //< A
         computeHisto<&pix_alpha::val>(request, upscale, &histo_upscaled);
         break;
+
     case 2:     //<Y
         computeHisto<&pix_lum::val>(request, upscale, &histo_upscaled);
         break;
+
     case 3:     //< R
         computeHisto<&pix_red::val>(request, upscale, &histo_upscaled);
         break;
+
     case 4:     //< G
         computeHisto<&pix_green::val>(request, upscale, &histo_upscaled);
         break;
+
     case 5:     //< B
         computeHisto<&pix_blue::val>(request, upscale, &histo_upscaled);
         break;
@@ -357,10 +364,13 @@ computeHistogramStatic(const HistogramRequest & request,
         assert(false);
         break;
     }
+
     double sigma = upscale;
+
     if (request.smoothingKernelSize > 1) {
         sigma *= request.smoothingKernelSize;
     }
+
     // smooth the upscaled histogram
     Smooth1D::iir_gaussianFilter1D(histo_upscaled, sigma);
 
@@ -370,11 +380,13 @@ computeHistogramStatic(const HistogramRequest & request,
     std::vector<float>::const_iterator it_in = histo_upscaled.begin();
     std::advance(it_in, (upscale - 1) / 2);
     std::vector<float>::iterator it_out = histo->begin();
-    while ( it_out != histo->end() ) {
+
+    while (it_out != histo->end()) {
         *it_out = *it_in * upscale;
         ++it_out;
-        if ( it_out != histo->end() ) {
-            std::advance (it_in, upscale);
+
+        if (it_out != histo->end()) {
+            std::advance(it_in, upscale);
         }
     }
 } // computeHistogramStatic
@@ -384,14 +396,16 @@ HistogramCPU::run()
 {
 #ifdef DEBUG
     boost_adaptbx::floating_point::exception_trapping trap(boost_adaptbx::floating_point::exception_trapping::division_by_zero |
-                                                           boost_adaptbx::floating_point::exception_trapping::invalid |
-                                                           boost_adaptbx::floating_point::exception_trapping::overflow);
+            boost_adaptbx::floating_point::exception_trapping::invalid |
+            boost_adaptbx::floating_point::exception_trapping::overflow);
 #endif
-    for (;; ) {
+
+    for (;;) {
         HistogramRequest request;
         {
             QMutexLocker l(&_imp->requestMutex);
-            while ( _imp->requests.empty() ) {
+
+            while (_imp->requests.empty()) {
                 _imp->requestCond.wait(l.mutex());
             }
 
@@ -405,6 +419,7 @@ HistogramCPU::run()
 
         {
             QMutexLocker l(&_imp->mustQuitMutex);
+
             if (_imp->mustQuit) {
                 _imp->mustQuit = false;
                 _imp->mustQuitCond.wakeOne();
@@ -426,6 +441,7 @@ HistogramCPU::run()
             computeHistogramStatic(request, ret, 2);
             computeHistogramStatic(request, ret, 3);
             break;
+
         case 1:
         case 2:
         case 3:
@@ -433,6 +449,7 @@ HistogramCPU::run()
         case 5:
             computeHistogramStatic(request, ret, 1);
             break;
+
         default:
             assert(false);     //< unknown case.
             break;
@@ -443,6 +460,7 @@ HistogramCPU::run()
             QMutexLocker l(&_imp->producedMutex);
             _imp->produced.push_back(ret);
         }
+
         Q_EMIT histogramProduced();
     }
 } // run

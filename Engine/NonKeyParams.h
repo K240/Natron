@@ -29,6 +29,7 @@
 #include "Global/Macros.h"
 
 #include <cstddef>
+#include <memory>
 
 #include "Global/GlobalDefines.h"
 #include "Engine/EngineFwd.h"
@@ -37,6 +38,8 @@
 
 NATRON_NAMESPACE_ENTER
 
+class VulkanImageContext;
+
 inline int
 getSizeOfForBitDepth(ImageBitDepthEnum bitdepth)
 {
@@ -44,15 +47,19 @@ getSizeOfForBitDepth(ImageBitDepthEnum bitdepth)
     case eImageBitDepthByte: {
         return sizeof(unsigned char);
     }
+
     case eImageBitDepthShort: {
         return sizeof(unsigned short);
     }
+
     case eImageBitDepthHalf: {
         return sizeof(unsigned short);
     }
+
     case eImageBitDepthFloat: {
         return sizeof(float);
     }
+
     case eImageBitDepthNone:
         break;
     }
@@ -60,13 +67,14 @@ getSizeOfForBitDepth(ImageBitDepthEnum bitdepth)
     return 0;
 }
 
-struct CacheEntryStorageInfo
-{
+struct CacheEntryStorageInfo {
     RectI bounds;
     std::size_t dataTypeSize;
     std::size_t numComponents;
     StorageModeEnum mode;
     U32 textureTarget;
+    // Runtime-only device identity; excluded from cache/project serialization.
+    std::shared_ptr<VulkanImageContext> vulkanContext;
 
     CacheEntryStorageInfo()
         : bounds()
@@ -81,7 +89,8 @@ struct CacheEntryStorageInfo
     {
         return dataTypeSize == other.dataTypeSize &&
                mode == other.mode &&
-               textureTarget == other.textureTarget;
+               textureTarget == other.textureTarget &&
+               vulkanContext == other.vulkanContext;
     }
 };
 
@@ -99,8 +108,8 @@ public:
 
     NonKeyParams(const NonKeyParams & other);
 
-    const CacheEntryStorageInfo& getStorageInfo() const;
-    CacheEntryStorageInfo& getStorageInfo();
+    const CacheEntryStorageInfo &getStorageInfo() const;
+    CacheEntryStorageInfo &getStorageInfo();
 
     template<class Archive>
     void serialize(Archive & ar, const unsigned int /*version*/);

@@ -1,12 +1,13 @@
 """Run in NatronRenderer: exercise every rebuilt OFX set and Arena readers."""
 import json
+import os
 from pathlib import Path
 
 import NatronEngine
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtGui import QImage
 
-output_dir = Path.cwd() / "build" / "ofx-smoke"
+output_dir = Path(os.environ.get("NATRON_OFX_SMOKE_OUTPUT", Path.cwd() / "build" / "ofx-smoke"))
 output_dir.mkdir(parents=True, exist_ok=True)
 ids = list(NatronEngine.natron.getPluginIDs())
 required = ["net.sf.openfx.Invert", "net.sf.cimg.CImgBlur", "net.fxarena.openfx.Modulate",

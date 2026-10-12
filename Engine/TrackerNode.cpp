@@ -36,6 +36,7 @@
 #include "Engine/TrackerContext.h"
 #include "Engine/TrackMarker.h"
 #include "Engine/TrackerNodeInteract.h"
+#include "Engine/OverlayDrawList.h"
 #include "Engine/TrackerUndoCommand.h"
 #include "Engine/ViewerInstance.h"
 
@@ -415,7 +416,7 @@ TrackerNode::initializeKnobs()
     context->setUpdateViewer( updateViewer->getValue() );
     context->setCenterOnTrack( centerViewer->getValue() );
 
-    QObject::connect( getNode().get(), SIGNAL(s_refreshPreviewsAfterProjectLoadRequested()), _imp->ui.get(), SLOT(rebuildMarkerTextures()) );
+    QObject::connect( getNode().get(), SIGNAL(s_refreshPreviewsAfterProjectLoadRequested()), _imp->ui.get(), SLOT(rebuildMarkerPreviews()) );
     QObject::connect( context.get(), SIGNAL(selectionChanged(int)), _imp->ui.get(), SLOT(onContextSelectionChanged(int)) );
     QObject::connect( context.get(), SIGNAL(keyframeSetOnTrack(TrackMarkerPtr,int)), _imp->ui.get(), SLOT(onKeyframeSetOnTrack(TrackMarkerPtr,int)) );
     QObject::connect( context.get(), SIGNAL(keyframeRemovedOnTrack(TrackMarkerPtr,int)), _imp->ui.get(), SLOT(onKeyframeRemovedOnTrack(TrackMarkerPtr,int)) );
@@ -663,6 +664,9 @@ TrackerNode::knobChanged(KnobI* k,
         _imp->ui->onResetTrackButtonClicked();
     } else if ( k == _imp->ui->addTrackButton.lock().get() ) {
         _imp->ui->clickToAddTrackEnabled = _imp->ui->addTrackButton.lock()->getValue();
+        if (reason == eValueChangedReasonUserEdited) {
+            _imp->ui->modifierAddTrackActive = false;
+        }
     } else {
         ret = false;
     }
@@ -691,7 +695,7 @@ void
 TrackerNode::evaluate(bool isSignificant, bool refreshMetadata)
 {
     NodeGroup::evaluate(isSignificant, refreshMetadata);
-    _imp->ui->refreshSelectedMarkerTexture();
+    _imp->ui->refreshSelectedMarkerPreview();
 }
 
 void
@@ -701,7 +705,7 @@ TrackerNode::onInputChanged(int inputNb)
 
     ctx->inputChanged(inputNb);
 
-    _imp->ui->refreshSelectedMarkerTexture();
+    _imp->ui->refreshSelectedMarkerPreview();
 }
 
 struct CenterPointDisplayInfo
@@ -729,18 +733,24 @@ TrackerNode::drawOverlay(double time,
                          ViewIdx /*view*/)
 {
     double pixelScaleX, pixelScaleY;
-    OverlaySupport* overlay = getCurrentViewportForOverlays();
+    OverlaySupport* viewport = getCurrentViewportForOverlays();
 
-    assert(overlay);
-    overlay->getPixelScale(pixelScaleX, pixelScaleY);
-    double viewportSize[2];
-    overlay->getViewportSize(viewportSize[0], viewportSize[1]);
-    double screenPixelRatio = overlay->getScreenPixelRatio();
+    assert(viewport);
+    auto* commands = viewport->overlayDrawList();
+
+    if (!commands) {
+        return;
+    }
+
+    OverlayDrawList& overlay = *commands;
+    viewport->getPixelScale(pixelScaleX, pixelScaleY);
+
 
     {
-        GLProtectAttrib a(GL_CURRENT_BIT | GL_COLOR_BUFFER_BIT | GL_LINE_BIT | GL_POINT_BIT | GL_ENABLE_BIT | GL_HINT_BIT | GL_TRANSFORM_BIT);
+        OverlayDrawScope a(overlay);
         double markerColor[3];
-        if ( !getNode()->getOverlayColor(&markerColor[0], &markerColor[1], &markerColor[2]) ) {
+
+        if (!getNode()->getOverlayColor(&markerColor[0], &markerColor[1], &markerColor[2])) {
             markerColor[0] = markerColor[1] = markerColor[2] = 0.8;
         }
 
@@ -767,6 +777,7 @@ TrackerNode::drawOverlay(double time,
             bool isEnabled = (*it)->isEnabled(time);
 
             double thisMarkerColor[3];
+
             if (!isEnabled) {
                 for (int i = 0; i < 3; ++i) {
                     thisMarkerColor[i] = markerColor[i] / 2.;
@@ -795,64 +806,59 @@ TrackerNode::drawOverlay(double time,
             // When the tracking page is secret, still show markers, but as if deselected
             if (!isSelected || trackingPageSecret) {
                 ///Draw a custom interact, indicating the track isn't selected
-                glEnable(GL_LINE_SMOOTH);
-                glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE);
+
 
                 for (int l = 0; l < 2; ++l) {
-                    // shadow (uses GL_PROJECTION)
-                    glMatrixMode(GL_PROJECTION);
+
+
                     int direction = (l == 0) ? 1 : -1;
                     // translate (1,-1) pixels
-                    glTranslated(direction * pixelScaleX / 256, -direction * pixelScaleY / 256, 0);
-                    glMatrixMode(GL_MODELVIEW);
+                    overlay.translateOutput(direction * pixelScaleX, -direction * pixelScaleY);
+
 
                     if (l == 0) {
-                        glColor4d(0., 0., 0., 1.);
+                        overlay.color(0., 0., 0., 1.);
                     } else {
-                        glColor4f(thisMarkerColor[0], thisMarkerColor[1], thisMarkerColor[2], 1.);
+                        overlay.color(thisMarkerColor[0], thisMarkerColor[1], thisMarkerColor[2], 1.);
                     }
 
 
                     double x = centerKnob->getValueAtTime(time, 0);
                     double y = centerKnob->getValueAtTime(time, 1);
 
-                    glPointSize(POINT_SIZE * screenPixelRatio);
-                    glBegin(GL_POINTS);
-                    glVertex2d(x, y);
-                    glEnd();
+                    overlay.pointSize(POINT_SIZE);
+                    overlay.begin(OverlayPrimitive::Points);
+                    overlay.vertex(x, y);
+                    overlay.end();
 
-                    glLineWidth(1.5f * screenPixelRatio);
-                    glBegin(GL_LINES);
-                    glVertex2d(x - CROSS_SIZE * pixelScaleX, y);
-                    glVertex2d(x + CROSS_SIZE * pixelScaleX, y);
+                    overlay.lineWidth(1.5f);
+                    overlay.begin(OverlayPrimitive::Lines);
+                    overlay.vertex(x - CROSS_SIZE * pixelScaleX, y);
+                    overlay.vertex(x + CROSS_SIZE * pixelScaleX, y);
 
 
-                    glVertex2d(x, y - CROSS_SIZE * pixelScaleY);
-                    glVertex2d(x, y + CROSS_SIZE * pixelScaleY);
-                    glEnd();
+                    overlay.vertex(x, y - CROSS_SIZE * pixelScaleY);
+                    overlay.vertex(x, y + CROSS_SIZE * pixelScaleY);
+                    overlay.end();
                 }
-                glPointSize(1. * screenPixelRatio);
-            } else { // if (isSelected) {
-                glEnable(GL_LINE_SMOOTH);
-                glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE);
-                GLdouble projection[16];
-                glGetDoublev( GL_PROJECTION_MATRIX, projection);
-                OfxPointD shadow; // how much to translate GL_PROJECTION to get exactly one pixel on screen
-                shadow.x = 2. / (projection[0] * viewportSize[0]);
-                shadow.y = 2. / (projection[5] * viewportSize[1]);
 
-                const QPointF center( centerKnob->getValueAtTime(time, 0),
-                                      centerKnob->getValueAtTime(time, 1) );
-                const QPointF offset( offsetKnob->getValueAtTime(time, 0),
-                                      offsetKnob->getValueAtTime(time, 1) );
-                const QPointF topLeft( ptnTopLeft->getValueAtTime(time, 0) + offset.x() + center.x(),
-                                       ptnTopLeft->getValueAtTime(time, 1) + offset.y() + center.y() );
-                const QPointF topRight( ptnTopRight->getValueAtTime(time, 0) + offset.x() + center.x(),
-                                        ptnTopRight->getValueAtTime(time, 1) + offset.y() + center.y() );
-                const QPointF btmRight( ptnBtmRight->getValueAtTime(time, 0) + offset.x() + center.x(),
-                                        ptnBtmRight->getValueAtTime(time, 1) + offset.y() + center.y() );
-                const QPointF btmLeft( ptnBtmLeft->getValueAtTime(time, 0) + offset.x() + center.x(),
-                                       ptnBtmLeft->getValueAtTime(time, 1) + offset.y() + center.y() );
+                overlay.pointSize(1.);
+            } else { // if (isSelected) {
+
+                const OfxPointD shadow = {pixelScaleX, pixelScaleY};
+
+                const QPointF center(centerKnob->getValueAtTime(time, 0),
+                                     centerKnob->getValueAtTime(time, 1));
+                const QPointF offset(offsetKnob->getValueAtTime(time, 0),
+                                     offsetKnob->getValueAtTime(time, 1));
+                const QPointF topLeft(ptnTopLeft->getValueAtTime(time, 0) + offset.x() + center.x(),
+                                      ptnTopLeft->getValueAtTime(time, 1) + offset.y() + center.y());
+                const QPointF topRight(ptnTopRight->getValueAtTime(time, 0) + offset.x() + center.x(),
+                                       ptnTopRight->getValueAtTime(time, 1) + offset.y() + center.y());
+                const QPointF btmRight(ptnBtmRight->getValueAtTime(time, 0) + offset.x() + center.x(),
+                                       ptnBtmRight->getValueAtTime(time, 1) + offset.y() + center.y());
+                const QPointF btmLeft(ptnBtmLeft->getValueAtTime(time, 0) + offset.x() + center.x(),
+                                      ptnBtmLeft->getValueAtTime(time, 1) + offset.y() + center.y());
                 const double searchLeft   = searchWndBtmLeft->getValueAtTime(time, 0)  + offset.x() + center.x();
                 const double searchBottom = searchWndBtmLeft->getValueAtTime(time, 1)  + offset.y() + center.y();
                 const double searchRight  = searchWndTopRight->getValueAtTime(time, 0) + offset.x() + center.x();
@@ -881,15 +887,15 @@ TrackerNode::drawOverlay(double time,
                     selectedFound = true;
                 }
 
-                const QPointF innerMidLeft( (btmLeft + topLeft) / 2 );
-                const QPointF innerMidTop( (topLeft + topRight) / 2 );
-                const QPointF innerMidRight( (btmRight + topRight) / 2 );
-                const QPointF innerMidBtm( (btmLeft + btmRight) / 2 );
+                const QPointF innerMidLeft((btmLeft + topLeft) / 2);
+                const QPointF innerMidTop((topLeft + topRight) / 2);
+                const QPointF innerMidRight((btmRight + topRight) / 2);
+                const QPointF innerMidBtm((btmLeft + btmRight) / 2);
                 const QPointF outterMidLeft(searchLeft, searchMidY);
                 const QPointF outterMidTop(searchMidX, searchTop);
                 const QPointF outterMidRight(searchRight, searchMidY);
                 const QPointF outterMidBtm(searchMidX, searchBottom);
-                const QPointF handleSize( HANDLE_SIZE * pixelScaleX, HANDLE_SIZE * pixelScaleY );
+                const QPointF handleSize(HANDLE_SIZE * pixelScaleX, HANDLE_SIZE * pixelScaleY);
                 const QPointF innerMidLeftExt = TrackerNodeInteract::computeMidPointExtent(topLeft, btmLeft, innerMidLeft, handleSize);
                 const QPointF innerMidRightExt = TrackerNodeInteract::computeMidPointExtent(btmRight, topRight, innerMidRight, handleSize);
                 const QPointF innerMidTopExt = TrackerNodeInteract::computeMidPointExtent(topRight, topLeft, innerMidTop, handleSize);
@@ -907,10 +913,12 @@ TrackerNode::drawOverlay(double time,
                 const QPointF outterMidTopExt   = TrackerNodeInteract::computeMidPointExtent(searchTopRight, searchTopLeft,  outterMidTop,   handleSize);
                 const QPointF outterMidBtmExt   = TrackerNodeInteract::computeMidPointExtent(searchBtmLeft,  searchBtmRight, outterMidBtm,   handleSize);
                 std::string name = (*it)->getLabel();
+
                 if (!isEnabled) {
                     name += ' ';
                     name += tr("(disabled)").toStdString();
                 }
+
                 CenterPointsMap centerPoints;
                 CurvePtr xCurve = centerKnob->getCurve(ViewSpec::current(), 0);
                 CurvePtr yCurve = centerKnob->getCurve(ViewSpec::current(), 1);
@@ -920,42 +928,51 @@ TrackerNode::drawOverlay(double time,
                     KeyFrameSet xKeyframes = xCurve->getKeyFrames_mt_safe();
                     KeyFrameSet yKeyframes = yCurve->getKeyFrames_mt_safe();
                     KeyFrameSet errKeyframes;
+
                     if (showErrorColor) {
                         errKeyframes = errorCurve->getKeyFrames_mt_safe();
                     }
 
                     // Try first to do an optimized case in O(N) where we assume that all 3 curves have the same keyframes
                     // at the same time
-                    KeyFrameSet remainingXKeys,remainingYKeys, remainingErrKeys;
+                    KeyFrameSet remainingXKeys, remainingYKeys, remainingErrKeys;
+
                     if (xKeyframes.size() == yKeyframes.size() && (!showErrorColor || xKeyframes.size() == errKeyframes.size())) {
                         KeyFrameSet::iterator errIt = errKeyframes.begin();
                         KeyFrameSet::iterator xIt = xKeyframes.begin();
                         KeyFrameSet::iterator yIt = yKeyframes.begin();
 
                         bool setsHaveDifferentKeyTimes = false;
-                        while (xIt!=xKeyframes.end()) {
+
+                        while (xIt != xKeyframes.end()) {
                             if (xIt->getTime() != yIt->getTime() || (showErrorColor && xIt->getTime() != errIt->getTime())) {
                                 setsHaveDifferentKeyTimes = true;
                                 break;
                             }
+
                             CenterPointDisplayInfo& p = centerPoints[xIt->getTime()];
                             p.x = xIt->getValue();
                             p.y = yIt->getValue();
-                            if ( showErrorColor ) {
+
+                            if (showErrorColor) {
                                 p.err = errIt->getValue();
                             }
+
                             p.isValid = true;
 
                             ++xIt;
                             ++yIt;
+
                             if (showErrorColor) {
                                 ++errIt;
                             }
 
                         }
+
                         if (setsHaveDifferentKeyTimes) {
                             remainingXKeys.insert(xIt, xKeyframes.end());
                             remainingYKeys.insert(yIt, yKeyframes.end());
+
                             if (showErrorColor) {
                                 remainingErrKeys.insert(errIt, errKeyframes.end());
                             }
@@ -963,30 +980,39 @@ TrackerNode::drawOverlay(double time,
                     } else {
                         remainingXKeys = xKeyframes;
                         remainingYKeys = yKeyframes;
+
                         if (showErrorColor) {
                             remainingErrKeys = errKeyframes;
                         }
                     }
+
                     for (KeyFrameSet::iterator xIt = remainingXKeys.begin(); xIt != remainingXKeys.end(); ++xIt) {
                         CenterPointDisplayInfo& p = centerPoints[xIt->getTime()];
                         p.x = xIt->getValue();
                         p.isValid = false;
                     }
+
                     for (KeyFrameSet::iterator yIt = remainingYKeys.begin(); yIt != remainingYKeys.end(); ++yIt) {
                         CenterPointsMap::iterator foundPoint = centerPoints.find(yIt->getTime());
+
                         if (foundPoint == centerPoints.end()) {
                             continue;
                         }
+
                         foundPoint->second.y = yIt->getValue();
+
                         if (!showErrorColor) {
                             foundPoint->second.isValid = true;
                         }
                     }
+
                     for (KeyFrameSet::iterator errIt = remainingErrKeys.begin(); errIt != remainingErrKeys.end(); ++errIt) {
                         CenterPointsMap::iterator foundPoint = centerPoints.find(errIt->getTime());
+
                         if (foundPoint == centerPoints.end()) {
                             continue;
                         }
+
                         foundPoint->second.err = errIt->getValue();
                         foundPoint->second.isValid = true;
                     }
@@ -996,38 +1022,41 @@ TrackerNode::drawOverlay(double time,
 
 
                 for (int l = 0; l < 2; ++l) {
-                    // shadow (uses GL_PROJECTION)
-                    glMatrixMode(GL_PROJECTION);
+
+
                     int direction = (l == 0) ? 1 : -1;
                     // translate (1,-1) pixels
-                    glTranslated(direction * shadow.x, -direction * shadow.y, 0);
-                    glMatrixMode(GL_MODELVIEW);
+                    overlay.translateOutput(direction * shadow.x, -direction * shadow.y);
+
 
                     ///Draw center position
-                    glEnable(GL_LINE_SMOOTH);
-                    glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE);
-                    glLineWidth(1.5 * screenPixelRatio);
-                    glBegin(GL_LINE_STRIP);
-                    glColor3f(0.5 * l, 0.5 * l, 0.5 * l);
+
+                    overlay.lineWidth(1.5);
+                    overlay.begin(OverlayPrimitive::LineStrip);
+                    overlay.color(0.5 * l, 0.5 * l, 0.5 * l);
+
                     for (CenterPointsMap::iterator it = centerPoints.begin(); it != centerPoints.end(); ++it) {
                         if (it->second.isValid) {
-                            glVertex2d(it->second.x, it->second.y);
+                            overlay.vertex(it->second.x, it->second.y);
                         }
                     }
-                    glEnd();
-                    glDisable(GL_LINE_SMOOTH);
 
-                    glEnable(GL_POINT_SMOOTH);
-                    glPointSize(POINT_SIZE * screenPixelRatio);
-                    glBegin(GL_POINTS);
+                    overlay.end();
+
+
+                    overlay.roundPoints(true);
+                    overlay.pointSize(POINT_SIZE);
+                    overlay.begin(OverlayPrimitive::Points);
+
                     if (!showErrorColor) {
-                        glColor3f(0.5 * l, 0.5 * l, 0.5 * l);
+                        overlay.color(0.5 * l, 0.5 * l, 0.5 * l);
                     }
 
                     for (CenterPointsMap::iterator it2 = centerPoints.begin(); it2 != centerPoints.end(); ++it2) {
                         if (!it2->second.isValid) {
                             continue;
                         }
+
                         if (showErrorColor) {
                             if (l != 0) {
                                 /*
@@ -1040,261 +1069,282 @@ TrackerNode::drawOverlay(double time,
                                 double mappedError = 0.33 - 0.33 * error / CORRELATION_ERROR_MAX_DISPLAY;
                                 float r, g, b;
                                 Color::hsv_to_rgb(mappedError, 1, 1, &r, &g, &b);
-                                glColor3f(r, g, b);
+                                overlay.color(r, g, b);
                             } else {
-                                glColor3f(0., 0., 0.);
+                                overlay.color(0., 0., 0.);
                             }
                         }
-                        glVertex2d(it2->second.x, it2->second.y);
+
+                        overlay.vertex(it2->second.x, it2->second.y);
                     }
-                    glEnd();
-                    glDisable(GL_POINT_SMOOTH);
+
+                    overlay.end();
+                    overlay.roundPoints(false);
 
 
-                    glColor3f( (float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l );
-                    glLineWidth(1.5 * screenPixelRatio);
-                    glBegin(GL_LINE_LOOP);
-                    glVertex2d( topLeft.x(), topLeft.y() );
-                    glVertex2d( topRight.x(), topRight.y() );
-                    glVertex2d( btmRight.x(), btmRight.y() );
-                    glVertex2d( btmLeft.x(), btmLeft.y() );
-                    glEnd();
+                    overlay.color((float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l);
+                    overlay.lineWidth(1.5);
+                    overlay.begin(OverlayPrimitive::LineLoop);
+                    overlay.vertex(topLeft.x(), topLeft.y());
+                    overlay.vertex(topRight.x(), topRight.y());
+                    overlay.vertex(btmRight.x(), btmRight.y());
+                    overlay.vertex(btmLeft.x(), btmLeft.y());
+                    overlay.end();
 
-                    glLineWidth(1.5f * screenPixelRatio);
-                    glBegin(GL_LINE_LOOP);
-                    glVertex2d( searchTopLeft.x(), searchTopLeft.y() );
-                    glVertex2d( searchTopRight.x(), searchTopRight.y() );
-                    glVertex2d( searchBtmRight.x(), searchBtmRight.y() );
-                    glVertex2d( searchBtmLeft.x(), searchBtmRight.y() );
-                    glEnd();
+                    overlay.lineWidth(1.5f);
+                    overlay.begin(OverlayPrimitive::LineLoop);
+                    overlay.vertex(searchTopLeft.x(), searchTopLeft.y());
+                    overlay.vertex(searchTopRight.x(), searchTopRight.y());
+                    overlay.vertex(searchBtmRight.x(), searchBtmRight.y());
+                    overlay.vertex(searchBtmLeft.x(), searchBtmRight.y());
+                    overlay.end();
 
-                    glPointSize(POINT_SIZE * screenPixelRatio);
-                    glBegin(GL_POINTS);
+                    overlay.pointSize(POINT_SIZE);
+                    overlay.begin(OverlayPrimitive::Points);
 
                     ///draw center
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringCenter) || (_imp->ui->eventState == eMouseStateDraggingCenter) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringCenter) || (_imp->ui->eventState == eMouseStateDraggingCenter))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
                     } else {
-                        glColor3f( (float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l );
+                        overlay.color((float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l);
                     }
-                    glVertex2d( center.x(), center.y() );
 
-                    if ( (offset.x() != 0) || (offset.y() != 0) ) {
-                        glVertex2d( center.x() + offset.x(), center.y() + offset.y() );
+                    overlay.vertex(center.x(), center.y());
+
+                    if ((offset.x() != 0) || (offset.y() != 0)) {
+                        overlay.vertex(center.x() + offset.x(), center.y() + offset.y());
                     }
 
                     //////DRAWING INNER POINTS
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringInnerBtmLeft) || (_imp->ui->eventState == eMouseStateDraggingInnerBtmLeft) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
-                        glVertex2d( btmLeft.x(), btmLeft.y() );
-                    }
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringInnerBtmMid) || (_imp->ui->eventState == eMouseStateDraggingInnerBtmMid) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
-                        glVertex2d( innerMidBtm.x(), innerMidBtm.y() );
-                    }
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringInnerBtmRight) || (_imp->ui->eventState == eMouseStateDraggingInnerBtmRight) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
-                        glVertex2d( btmRight.x(), btmRight.y() );
-                    }
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringInnerMidLeft) || (_imp->ui->eventState == eMouseStateDraggingInnerMidLeft) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
-                        glVertex2d( innerMidLeft.x(), innerMidLeft.y() );
-                    }
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringInnerMidRight) || (_imp->ui->eventState == eMouseStateDraggingInnerMidRight) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
-                        glVertex2d( innerMidRight.x(), innerMidRight.y() );
-                    }
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringInnerTopLeft) || (_imp->ui->eventState == eMouseStateDraggingInnerTopLeft) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
-                        glVertex2d( topLeft.x(), topLeft.y() );
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringInnerBtmLeft) || (_imp->ui->eventState == eMouseStateDraggingInnerBtmLeft))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
+                        overlay.vertex(btmLeft.x(), btmLeft.y());
                     }
 
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringInnerTopMid) || (_imp->ui->eventState == eMouseStateDraggingInnerTopMid) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
-                        glVertex2d( innerMidTop.x(), innerMidTop.y() );
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringInnerBtmMid) || (_imp->ui->eventState == eMouseStateDraggingInnerBtmMid))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
+                        overlay.vertex(innerMidBtm.x(), innerMidBtm.y());
                     }
 
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringInnerTopRight) || (_imp->ui->eventState == eMouseStateDraggingInnerTopRight) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
-                        glVertex2d( topRight.x(), topRight.y() );
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringInnerBtmRight) || (_imp->ui->eventState == eMouseStateDraggingInnerBtmRight))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
+                        overlay.vertex(btmRight.x(), btmRight.y());
+                    }
+
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringInnerMidLeft) || (_imp->ui->eventState == eMouseStateDraggingInnerMidLeft))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
+                        overlay.vertex(innerMidLeft.x(), innerMidLeft.y());
+                    }
+
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringInnerMidRight) || (_imp->ui->eventState == eMouseStateDraggingInnerMidRight))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
+                        overlay.vertex(innerMidRight.x(), innerMidRight.y());
+                    }
+
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringInnerTopLeft) || (_imp->ui->eventState == eMouseStateDraggingInnerTopLeft))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
+                        overlay.vertex(topLeft.x(), topLeft.y());
+                    }
+
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringInnerTopMid) || (_imp->ui->eventState == eMouseStateDraggingInnerTopMid))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
+                        overlay.vertex(innerMidTop.x(), innerMidTop.y());
+                    }
+
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringInnerTopRight) || (_imp->ui->eventState == eMouseStateDraggingInnerTopRight))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
+                        overlay.vertex(topRight.x(), topRight.y());
                     }
 
 
                     //////DRAWING OUTER POINTS
 
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringOuterBtmLeft) || (_imp->ui->eventState == eMouseStateDraggingOuterBtmLeft) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
-                        glVertex2d( searchBtmLeft.x(), searchBtmLeft.y() );
-                    }
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringOuterBtmMid) || (_imp->ui->eventState == eMouseStateDraggingOuterBtmMid) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
-                        glVertex2d( outterMidBtm.x(), outterMidBtm.y() );
-                    }
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringOuterBtmRight) || (_imp->ui->eventState == eMouseStateDraggingOuterBtmRight) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
-                        glVertex2d( searchBtmRight.x(), searchBtmRight.y() );
-                    }
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringOuterMidLeft) || (_imp->ui->eventState == eMouseStateDraggingOuterMidLeft) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
-                        glVertex2d( outterMidLeft.x(), outterMidLeft.y() );
-                    }
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringOuterMidRight) || (_imp->ui->eventState == eMouseStateDraggingOuterMidRight) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
-                        glVertex2d( outterMidRight.x(), outterMidRight.y() );
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringOuterBtmLeft) || (_imp->ui->eventState == eMouseStateDraggingOuterBtmLeft))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
+                        overlay.vertex(searchBtmLeft.x(), searchBtmLeft.y());
                     }
 
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringOuterTopLeft) || (_imp->ui->eventState == eMouseStateDraggingOuterTopLeft) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
-                        glVertex2d( searchTopLeft.x(), searchTopLeft.y() );
-                    }
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringOuterTopMid) || (_imp->ui->eventState == eMouseStateDraggingOuterTopMid) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
-                        glVertex2d( outterMidTop.x(), outterMidTop.y() );
-                    }
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringOuterTopRight) || (_imp->ui->eventState == eMouseStateDraggingOuterTopRight) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
-                        glVertex2d( searchTopRight.x(), searchTopRight.y() );
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringOuterBtmMid) || (_imp->ui->eventState == eMouseStateDraggingOuterBtmMid))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
+                        overlay.vertex(outterMidBtm.x(), outterMidBtm.y());
                     }
 
-                    glEnd();
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringOuterBtmRight) || (_imp->ui->eventState == eMouseStateDraggingOuterBtmRight))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
+                        overlay.vertex(searchBtmRight.x(), searchBtmRight.y());
+                    }
 
-                    if ( (offset.x() != 0) || (offset.y() != 0) ) {
-                        glLineWidth(1.5f * screenPixelRatio);
-                        glBegin(GL_LINES);
-                        glColor3f( (float)thisMarkerColor[0] * l * 0.5, (float)thisMarkerColor[1] * l * 0.5, (float)thisMarkerColor[2] * l * 0.5 );
-                        glVertex2d( center.x(), center.y() );
-                        glVertex2d( center.x() + offset.x(), center.y() + offset.y() );
-                        glEnd();
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringOuterMidLeft) || (_imp->ui->eventState == eMouseStateDraggingOuterMidLeft))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
+                        overlay.vertex(outterMidLeft.x(), outterMidLeft.y());
+                    }
+
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringOuterMidRight) || (_imp->ui->eventState == eMouseStateDraggingOuterMidRight))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
+                        overlay.vertex(outterMidRight.x(), outterMidRight.y());
+                    }
+
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringOuterTopLeft) || (_imp->ui->eventState == eMouseStateDraggingOuterTopLeft))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
+                        overlay.vertex(searchTopLeft.x(), searchTopLeft.y());
+                    }
+
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringOuterTopMid) || (_imp->ui->eventState == eMouseStateDraggingOuterTopMid))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
+                        overlay.vertex(outterMidTop.x(), outterMidTop.y());
+                    }
+
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringOuterTopRight) || (_imp->ui->eventState == eMouseStateDraggingOuterTopRight))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
+                        overlay.vertex(searchTopRight.x(), searchTopRight.y());
+                    }
+
+                    overlay.end();
+
+                    if ((offset.x() != 0) || (offset.y() != 0)) {
+                        overlay.lineWidth(1.5f);
+                        overlay.begin(OverlayPrimitive::Lines);
+                        overlay.color((float)thisMarkerColor[0] * l * 0.5, (float)thisMarkerColor[1] * l * 0.5, (float)thisMarkerColor[2] * l * 0.5);
+                        overlay.vertex(center.x(), center.y());
+                        overlay.vertex(center.x() + offset.x(), center.y() + offset.y());
+                        overlay.end();
                     }
 
                     ///now show small lines at handle positions
-                    glLineWidth(1.5f * screenPixelRatio);
-                    glBegin(GL_LINES);
+                    overlay.lineWidth(1.5f);
+                    overlay.begin(OverlayPrimitive::Lines);
 
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringInnerMidLeft) || (_imp->ui->eventState == eMouseStateDraggingInnerMidLeft) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringInnerMidLeft) || (_imp->ui->eventState == eMouseStateDraggingInnerMidLeft))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
                     } else {
-                        glColor3f( (float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l );
+                        overlay.color((float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l);
                     }
-                    glVertex2d( innerMidLeft.x(), innerMidLeft.y() );
-                    glVertex2d( innerMidLeftExt.x(), innerMidLeftExt.y() );
 
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringInnerTopMid) || (_imp->ui->eventState == eMouseStateDraggingInnerTopMid) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
-                    } else {
-                        glColor3f( (float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l );
-                    }
-                    glVertex2d( innerMidTop.x(), innerMidTop.y() );
-                    glVertex2d( innerMidTopExt.x(), innerMidTopExt.y() );
+                    overlay.vertex(innerMidLeft.x(), innerMidLeft.y());
+                    overlay.vertex(innerMidLeftExt.x(), innerMidLeftExt.y());
 
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringInnerMidRight) || (_imp->ui->eventState == eMouseStateDraggingInnerMidRight) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringInnerTopMid) || (_imp->ui->eventState == eMouseStateDraggingInnerTopMid))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
                     } else {
-                        glColor3f( (float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l );
+                        overlay.color((float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l);
                     }
-                    glVertex2d( innerMidRight.x(), innerMidRight.y() );
-                    glVertex2d( innerMidRightExt.x(), innerMidRightExt.y() );
 
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringInnerBtmMid) || (_imp->ui->eventState == eMouseStateDraggingInnerBtmMid) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
+                    overlay.vertex(innerMidTop.x(), innerMidTop.y());
+                    overlay.vertex(innerMidTopExt.x(), innerMidTopExt.y());
+
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringInnerMidRight) || (_imp->ui->eventState == eMouseStateDraggingInnerMidRight))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
                     } else {
-                        glColor3f( (float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l );
+                        overlay.color((float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l);
                     }
-                    glVertex2d( innerMidBtm.x(), innerMidBtm.y() );
-                    glVertex2d( innerMidBtmExt.x(), innerMidBtmExt.y() );
+
+                    overlay.vertex(innerMidRight.x(), innerMidRight.y());
+                    overlay.vertex(innerMidRightExt.x(), innerMidRightExt.y());
+
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringInnerBtmMid) || (_imp->ui->eventState == eMouseStateDraggingInnerBtmMid))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
+                    } else {
+                        overlay.color((float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l);
+                    }
+
+                    overlay.vertex(innerMidBtm.x(), innerMidBtm.y());
+                    overlay.vertex(innerMidBtmExt.x(), innerMidBtmExt.y());
 
                     //////DRAWING OUTER HANDLES
 
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringOuterMidLeft) || (_imp->ui->eventState == eMouseStateDraggingOuterMidLeft) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringOuterMidLeft) || (_imp->ui->eventState == eMouseStateDraggingOuterMidLeft))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
                     } else {
-                        glColor3f( (float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l );
+                        overlay.color((float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l);
                     }
-                    glVertex2d( outterMidLeft.x(), outterMidLeft.y() );
-                    glVertex2d( outterMidLeftExt.x(), outterMidLeftExt.y() );
 
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringOuterTopMid) || (_imp->ui->eventState == eMouseStateDraggingOuterTopMid) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
+                    overlay.vertex(outterMidLeft.x(), outterMidLeft.y());
+                    overlay.vertex(outterMidLeftExt.x(), outterMidLeftExt.y());
+
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringOuterTopMid) || (_imp->ui->eventState == eMouseStateDraggingOuterTopMid))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
                     } else {
-                        glColor3f( (float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l );
+                        overlay.color((float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l);
                     }
-                    glVertex2d( outterMidTop.x(), outterMidTop.y() );
-                    glVertex2d( outterMidTopExt.x(), outterMidTopExt.y() );
 
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringOuterMidRight) || (_imp->ui->eventState == eMouseStateDraggingOuterMidRight) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
+                    overlay.vertex(outterMidTop.x(), outterMidTop.y());
+                    overlay.vertex(outterMidTopExt.x(), outterMidTopExt.y());
+
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringOuterMidRight) || (_imp->ui->eventState == eMouseStateDraggingOuterMidRight))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
                     } else {
-                        glColor3f( (float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l );
+                        overlay.color((float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l);
                     }
-                    glVertex2d( outterMidRight.x(), outterMidRight.y() );
-                    glVertex2d( outterMidRightExt.x(), outterMidRightExt.y() );
 
-                    if ( isHoverOrDraggedMarker && ( (_imp->ui->hoverState == eDrawStateHoveringOuterBtmMid) || (_imp->ui->eventState == eMouseStateDraggingOuterBtmMid) ) ) {
-                        glColor3f(0.f * l, 1.f * l, 0.f * l);
+                    overlay.vertex(outterMidRight.x(), outterMidRight.y());
+                    overlay.vertex(outterMidRightExt.x(), outterMidRightExt.y());
+
+                    if (isHoverOrDraggedMarker && ((_imp->ui->hoverState == eDrawStateHoveringOuterBtmMid) || (_imp->ui->eventState == eMouseStateDraggingOuterBtmMid))) {
+                        overlay.color(0.f * l, 1.f * l, 0.f * l);
                     } else {
-                        glColor3f( (float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l );
+                        overlay.color((float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l);
                     }
-                    glVertex2d( outterMidBtm.x(), outterMidBtm.y() );
-                    glVertex2d( outterMidBtmExt.x(), outterMidBtmExt.y() );
-                    glEnd();
 
-                    glColor3f( (float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l );
+                    overlay.vertex(outterMidBtm.x(), outterMidBtm.y());
+                    overlay.vertex(outterMidBtmExt.x(), outterMidBtmExt.y());
+                    overlay.end();
 
-                    overlay->renderText( center.x(), center.y(), name, markerColor[0], markerColor[1], markerColor[2]);
+                    overlay.color((float)thisMarkerColor[0] * l, (float)thisMarkerColor[1] * l, (float)thisMarkerColor[2] * l);
+
+                    viewport->renderText(center.x(), center.y(), name, markerColor[0], markerColor[1], markerColor[2]);
                 } // for (int l = 0; l < 2; ++l) {
             } // if (!isSelected) {
         } // for (std::vector<TrackMarkerPtr>::iterator it = allMarkers.begin(); it!=allMarkers.end(); ++it) {
 
-        if (_imp->ui->showMarkerTexture && selectedFound) {
-            _imp->ui->drawSelectedMarkerTexture(std::make_pair(pixelScaleX, pixelScaleY), _imp->ui->selectedMarkerTextureTime, selectedCenter, selectedOffset, selectedPtnTopLeft, selectedPtnTopRight, selectedPtnBtmRight, selectedPtnBtmLeft, selectedSearchBtmLeft, selectedSearchTopRight);
+        if (_imp->ui->showMarkerPreview && selectedFound) {
+            _imp->ui->drawSelectedMarkerPreview(std::make_pair(pixelScaleX, pixelScaleY), _imp->ui->selectedMarkerPreviewTime, selectedCenter, selectedOffset, selectedPtnTopLeft, selectedPtnTopRight, selectedPtnBtmRight, selectedPtnBtmLeft, selectedSearchBtmLeft, selectedSearchTopRight);
         }
+
         // context->drawInternalNodesOverlay( time, renderScale, view, overlay);
 
 
         if (_imp->ui->clickToAddTrackEnabled) {
             ///draw a square of 20px around the mouse cursor
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            glEnable(GL_LINE_SMOOTH);
-            glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE);
-            glLineWidth(1.5 * screenPixelRatio);
-            //GLProtectMatrix p(GL_PROJECTION); // useless (we do two glTranslate in opposite directions)
+
+
+            overlay.lineWidth(1.5);
+
 
             const double addTrackSize = TO_DPIX(ADDTRACK_SIZE);
 
             for (int l = 0; l < 2; ++l) {
-                // shadow (uses GL_PROJECTION)
-                glMatrixMode(GL_PROJECTION);
+
+
                 int direction = (l == 0) ? 1 : -1;
                 // translate (1,-1) pixels
-                glTranslated(direction * pixelScaleX / 256, -direction * pixelScaleY / 256, 0);
-                glMatrixMode(GL_MODELVIEW);
+                overlay.translateOutput(direction * pixelScaleX, -direction * pixelScaleY);
+
 
                 if (l == 0) {
-                    glColor4d(0., 0., 0., 0.8);
+                    overlay.color(0., 0., 0., 0.8);
                 } else {
-                    glColor4d(0., 1., 0., 0.8);
+                    overlay.color(0., 1., 0., 0.8);
                 }
 
-                glLineWidth(1.5 * screenPixelRatio);
-                glBegin(GL_LINE_LOOP);
-                glVertex2d(_imp->ui->lastMousePos.x() - addTrackSize * 2 * pixelScaleX, _imp->ui->lastMousePos.y() - addTrackSize * 2 * pixelScaleY);
-                glVertex2d(_imp->ui->lastMousePos.x() - addTrackSize * 2 * pixelScaleX, _imp->ui->lastMousePos.y() + addTrackSize * 2 * pixelScaleY);
-                glVertex2d(_imp->ui->lastMousePos.x() + addTrackSize * 2 * pixelScaleX, _imp->ui->lastMousePos.y() + addTrackSize * 2 * pixelScaleY);
-                glVertex2d(_imp->ui->lastMousePos.x() + addTrackSize * 2 * pixelScaleX, _imp->ui->lastMousePos.y() - addTrackSize * 2 * pixelScaleY);
-                glEnd();
+                overlay.lineWidth(1.5);
+                overlay.begin(OverlayPrimitive::LineLoop);
+                overlay.vertex(_imp->ui->lastMousePos.x() - addTrackSize * 2 * pixelScaleX, _imp->ui->lastMousePos.y() - addTrackSize * 2 * pixelScaleY);
+                overlay.vertex(_imp->ui->lastMousePos.x() - addTrackSize * 2 * pixelScaleX, _imp->ui->lastMousePos.y() + addTrackSize * 2 * pixelScaleY);
+                overlay.vertex(_imp->ui->lastMousePos.x() + addTrackSize * 2 * pixelScaleX, _imp->ui->lastMousePos.y() + addTrackSize * 2 * pixelScaleY);
+                overlay.vertex(_imp->ui->lastMousePos.x() + addTrackSize * 2 * pixelScaleX, _imp->ui->lastMousePos.y() - addTrackSize * 2 * pixelScaleY);
+                overlay.end();
 
                 ///draw a cross at the cursor position
-                glLineWidth(1.5f * screenPixelRatio);
-                glBegin(GL_LINES);
-                glVertex2d( _imp->ui->lastMousePos.x() - addTrackSize * pixelScaleX, _imp->ui->lastMousePos.y() );
-                glVertex2d( _imp->ui->lastMousePos.x() + addTrackSize * pixelScaleX, _imp->ui->lastMousePos.y() );
-                glVertex2d(_imp->ui->lastMousePos.x(), _imp->ui->lastMousePos.y() - addTrackSize * pixelScaleY);
-                glVertex2d(_imp->ui->lastMousePos.x(), _imp->ui->lastMousePos.y() + addTrackSize * pixelScaleY);
-                glEnd();
+                overlay.lineWidth(1.5f);
+                overlay.begin(OverlayPrimitive::Lines);
+                overlay.vertex(_imp->ui->lastMousePos.x() - addTrackSize * pixelScaleX, _imp->ui->lastMousePos.y());
+                overlay.vertex(_imp->ui->lastMousePos.x() + addTrackSize * pixelScaleX, _imp->ui->lastMousePos.y());
+                overlay.vertex(_imp->ui->lastMousePos.x(), _imp->ui->lastMousePos.y() - addTrackSize * pixelScaleY);
+                overlay.vertex(_imp->ui->lastMousePos.x(), _imp->ui->lastMousePos.y() + addTrackSize * pixelScaleY);
+                overlay.end();
             }
         }
-    } // GLProtectAttrib a(GL_CURRENT_BIT | GL_COLOR_BUFFER_BIT | GL_LINE_BIT | GL_ENABLE_BIT | GL_HINT_BIT);
+    } // OverlayDrawScope a(overlay);
 } // drawOverlay
 
 bool
@@ -1496,16 +1546,16 @@ TrackerNode::onOverlayPenDown(double time,
             marker->setUserKeyframe(time);
         }
         pushUndoCommand( new AddTrackCommand(marker, context) );
-        _imp->ui->refreshSelectedMarkerTexture();
+        _imp->ui->refreshSelectedMarkerPreview();
         didSomething = true;
     }
 
-    if ( !didSomething && _imp->ui->showMarkerTexture && _imp->ui->selectedMarkerTexture && _imp->ui->isNearbySelectedMarkerTextureResizeAnchor(pos) ) {
+    if ( !didSomething && _imp->ui->showMarkerPreview && _imp->ui->selectedMarkerPreview && _imp->ui->isNearbySelectedMarkerPreviewResizeAnchor(pos) ) {
         _imp->ui->eventState = eMouseStateDraggingSelectedMarkerResizeAnchor;
         didSomething = true;
     }
 
-    if ( !didSomething && _imp->ui->showMarkerTexture && _imp->ui->selectedMarkerTexture  && _imp->ui->isInsideSelectedMarkerTexture(pos) ) {
+    if ( !didSomething && _imp->ui->showMarkerPreview && _imp->ui->selectedMarkerPreview  && _imp->ui->isInsideSelectedMarkerPreview(pos) ) {
         if (_imp->ui->shiftDown) {
             _imp->ui->eventState = eMouseStateScalingSelectedMarker;
         } else {
@@ -1516,7 +1566,7 @@ TrackerNode::onOverlayPenDown(double time,
     }
 
     if (!didSomething) {
-        int keyTime = _imp->ui->isInsideKeyFrameTexture(time, pos, viewportPos);
+        int keyTime = _imp->ui->isInsideKeyFramePreview(time, pos, viewportPos);
         if (keyTime != std::numeric_limits<int>::max()) {
             ViewerInstance* viewer = overlay->getInternalViewerNode();
             if (viewer) {
@@ -1724,20 +1774,20 @@ TrackerNode::onOverlayPenMotion(double time,
         }
     } // for (std::vector<TrackMarkerPtr>::iterator it = allMarkers.begin(); it!=allMarkers.end(); ++it) {
 
-    if ( _imp->ui->showMarkerTexture && _imp->ui->selectedMarkerTexture && _imp->ui->isNearbySelectedMarkerTextureResizeAnchor(pos) ) {
+    if ( _imp->ui->showMarkerPreview && _imp->ui->selectedMarkerPreview && _imp->ui->isNearbySelectedMarkerPreviewResizeAnchor(pos) ) {
         setCurrentCursor(eCursorFDiag);
         hoverProcess = true;
-    } else if ( _imp->ui->showMarkerTexture && _imp->ui->selectedMarkerTexture && _imp->ui->isInsideSelectedMarkerTexture(pos) ) {
+    } else if ( _imp->ui->showMarkerPreview && _imp->ui->selectedMarkerPreview && _imp->ui->isInsideSelectedMarkerPreview(pos) ) {
         setCurrentCursor(eCursorSizeAll);
         hoverProcess = true;
-    } else if ( _imp->ui->showMarkerTexture && (_imp->ui->isInsideKeyFrameTexture(time, pos, viewportPos) != std::numeric_limits<int>::max()) ) {
+    } else if ( _imp->ui->showMarkerPreview && (_imp->ui->isInsideKeyFramePreview(time, pos, viewportPos) != std::numeric_limits<int>::max()) ) {
         setCurrentCursor(eCursorPointingHand);
         hoverProcess = true;
     } else {
         setCurrentCursor(eCursorDefault);
     }
 
-    if ( _imp->ui->showMarkerTexture && _imp->ui->selectedMarkerTexture && _imp->ui->shiftDown && _imp->ui->isInsideSelectedMarkerTexture(pos) ) {
+    if ( _imp->ui->showMarkerPreview && _imp->ui->selectedMarkerPreview && _imp->ui->shiftDown && _imp->ui->isInsideSelectedMarkerPreview(pos) ) {
         _imp->ui->hoverState = eDrawStateShowScalingHint;
         hoverProcess = true;
     }
@@ -1798,7 +1848,7 @@ TrackerNode::onOverlayPenMotion(double time,
                     }
                 }
             }
-            _imp->ui->refreshSelectedMarkerTexture();
+            _imp->ui->refreshSelectedMarkerPreview();
             if ( _imp->ui->createKeyOnMoveButton.lock()->getValue() ) {
                 _imp->ui->interactMarker->setUserKeyframe(time);
             }
@@ -1960,7 +2010,7 @@ TrackerNode::onOverlayPenMotion(double time,
                 searchWndBtmLeft->setValues(p.x, p.y, view, eValueChangedReasonNatronInternalEdited);
             }
 
-            _imp->ui->refreshSelectedMarkerTexture();
+            _imp->ui->refreshSelectedMarkerPreview();
             didSomething = true;
             break;
         }
@@ -2026,7 +2076,7 @@ TrackerNode::onOverlayPenMotion(double time,
                 searchWndTopRight->setValue(p.x, view, 0);
             }
 
-            _imp->ui->refreshSelectedMarkerTexture();
+            _imp->ui->refreshSelectedMarkerPreview();
             didSomething = true;
             break;
         }
@@ -2089,7 +2139,7 @@ TrackerNode::onOverlayPenMotion(double time,
                 searchWndTopRight->setValues(p.x, p.y, view, eValueChangedReasonNatronInternalEdited);
             }
 
-            _imp->ui->refreshSelectedMarkerTexture();
+            _imp->ui->refreshSelectedMarkerPreview();
             didSomething = true;
             break;
         }
@@ -2155,7 +2205,7 @@ TrackerNode::onOverlayPenMotion(double time,
                 searchWndTopRight->setValue(p.y, view, 1);
             }
 
-            _imp->ui->refreshSelectedMarkerTexture();
+            _imp->ui->refreshSelectedMarkerPreview();
             didSomething = true;
             break;
         }
@@ -2247,7 +2297,7 @@ TrackerNode::onOverlayPenMotion(double time,
             if ( _imp->ui->createKeyOnMoveButton.lock()->getValue() ) {
                 _imp->ui->interactMarker->setUserKeyframe(time);
             }
-            _imp->ui->refreshSelectedMarkerTexture();
+            _imp->ui->refreshSelectedMarkerPreview();
             didSomething = true;
             break;
         }
@@ -2310,26 +2360,18 @@ TrackerNode::onOverlayKeyDown(double /*time*/,
                               KeyboardModifiers /*modifiers*/)
 {
     bool didSomething = false;
-    bool isCtrl = false;
-    bool isAlt = false;
-
     if ( (key == Key_Shift_L) || (key == Key_Shift_R) ) {
         ++_imp->ui->shiftDown;
     } else if ( (key == Key_Control_L) || (key == Key_Control_R) ) {
         ++_imp->ui->controlDown;
-        isCtrl = true;
     } else if ( (key == Key_Alt_L) || (key == Key_Alt_R) ) {
         ++_imp->ui->altDown;
-        isAlt = true;
     }
 
     bool trackingPageSecret = getNode()->getTrackerContext()->getTrackingPageKnob()->getIsSecret();
 
-    if ( !trackingPageSecret && _imp->ui->controlDown && _imp->ui->altDown && !_imp->ui->shiftDown && (isCtrl || isAlt) ) {
-        _imp->ui->clickToAddTrackEnabled = true;
-        _imp->ui->addTrackButton.lock()->setValue(true);
-        didSomething = true;
-    }
+    didSomething |= _imp->ui->updateModifierAddTrackMode(!trackingPageSecret && _imp->ui->controlDown &&
+                                                       _imp->ui->altDown && !_imp->ui->shiftDown);
 
 
     return didSomething;
@@ -2343,9 +2385,6 @@ TrackerNode::onOverlayKeyUp(double /*time*/,
                             KeyboardModifiers /*modifiers*/)
 {
     bool didSomething = false;
-    bool isAlt = false;
-    bool isControl = false;
-
     if ( (key == Key_Shift_L) || (key == Key_Shift_R) ) {
         if (_imp->ui->shiftDown) {
             --_imp->ui->shiftDown;
@@ -2358,20 +2397,16 @@ TrackerNode::onOverlayKeyUp(double /*time*/,
         if (_imp->ui->controlDown) {
             --_imp->ui->controlDown;
         }
-        isControl = true;
     } else if ( (key == Key_Alt_L) || (key == Key_Alt_R) ) {
         if (_imp->ui->altDown) {
             --_imp->ui->altDown;
         }
-        isAlt = true;
     }
 
 
-    if ( _imp->ui->clickToAddTrackEnabled && (isControl || isAlt) ) {
-        _imp->ui->clickToAddTrackEnabled = false;
-        _imp->ui->addTrackButton.lock()->setValue(false);
-        didSomething = true;
-    }
+    const bool trackingPageSecret = getNode()->getTrackerContext()->getTrackingPageKnob()->getIsSecret();
+    didSomething |= _imp->ui->updateModifierAddTrackMode(!trackingPageSecret && _imp->ui->controlDown &&
+                                                       _imp->ui->altDown && !_imp->ui->shiftDown);
 
 
     return didSomething;
@@ -2403,8 +2438,9 @@ TrackerNode::onOverlayFocusLost(double /*time*/,
     _imp->ui->altDown = 0;
     _imp->ui->controlDown = 0;
     _imp->ui->shiftDown = 0;
-
-
+    _imp->ui->updateModifierAddTrackMode(false);
+    _imp->ui->eventState = eMouseStateIdle;
+    _imp->ui->interactMarker.reset();
     return true;
 } // loseFocus
 
@@ -2461,8 +2497,8 @@ void
 TrackerNode::refreshExtraStateAfterTimeChanged(bool isPlayback,
                                                double /*time*/)
 {
-    if (_imp->ui->showMarkerTexture && !isPlayback && !getApp()->isDraftRenderEnabled()) {
-        _imp->ui->refreshSelectedMarkerTexture();
+    if (_imp->ui->showMarkerPreview && !isPlayback && !getApp()->isDraftRenderEnabled()) {
+        _imp->ui->refreshSelectedMarkerPreview();
     }
 }
 

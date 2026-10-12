@@ -5,12 +5,11 @@ from pathlib import Path
 
 import NatronEngine
 import PySide6
-import qtpy
 from PySide6.QtGui import QImage
 from PySide6.QtCore import QCoreApplication
 
 output_dir = Path.cwd() / 'build' / 'qt6-smoke'
-assert qtpy.API_NAME == 'PySide6', 'QtPy selected the wrong Qt binding'
+assert QtCore.__name__ == 'PySide6.QtCore', 'Natron did not initialize native Qt 6 scripting'
 output_dir.mkdir(parents=True, exist_ok=True)
 source = output_dir / '入力.ppm'
 destination = output_dir / '出力.png'
@@ -44,7 +43,7 @@ assert loaded.getNode('Read1') is not None and loaded.getNode('Write1') is not N
 report = {
     'python': sys.version.split()[0],
     'pyside': PySide6.__version__,
-    'qtpy': qtpy.API_NAME,
+    'scripting_core_module': QtCore.__name__,
     'prefix': sys.prefix,
     'unicode_io': True,
     'project_roundtrip': True,

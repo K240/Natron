@@ -466,7 +466,8 @@ enum StorageModeEnum
     eStorageModeNone = 0, //< no memory will be allocated
     eStorageModeRAM, //< will be allocated in RAM using malloc or a malloc based implementation (such as std::vector)
     eStorageModeDisk, //< will be allocated on virtual memory using mmap(). Fall-back on disk is assured by the operating system
-    eStorageModeGLTex //< will be allocated as an OpenGL texture
+    // Value 3 was used by the retired graphics storage. Keep persistent IDs stable.
+    eStorageModeVulkan = 4 //< runtime Vulkan allocation; never serialized to disk
 };
 
 enum OrientationEnum

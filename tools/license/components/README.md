@@ -2,15 +2,17 @@ Natron binaries include components from the following libraries:
 
 # Main components
 
-* Python (Modified BSD) https://www.python.org/download/releases/2.7/license/
-* PySide (LGPL 2.1) https://wiki.qt.io/About_PySide
-* libshiboken (LGPL 2.1) https://github.com/qtproject/pyside-shiboken
-* Qt (LGPL 2.1 with Qt LGPL Exception) http://doc.qt.io/qt-4.8/lgpl.html
+* Python 3.14 (PSF license), bundled runtime `LICENSE.txt`.
+* PySide6 / Shiboken6 6.11.2 (LGPL 3.0 or alternative Qt license), bundled package notices and `LICENSE-LGPL-3.0.txt` / `LICENSE-GPL-3.0.txt`.
+* Qt 6.11.2 (LGPL 3.0 for the deployed modules or alternative Qt license), https://doc.qt.io/qt-6/licensing.html. The older `LICENSE-Qt-LGPL.txt` is a historical Qt 4/5 notice.
 * Boost (Boost Software License) http://www.boost.org/users/license.html
 * Cairo (LGPL 2.1) http://cairographics.org/
-* GLAD (MIT) http://glad.dav1d.de/
-* GLFW (libpng/zlib license) http://www.glfw.org/
+* Volk, SDK header version 363 (MIT) https://github.com/zeux/volk
+* Vulkan Memory Allocator 3.4.0 (MIT) https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator
+* shaderc (Apache 2.0), linked from Vulkan SDK 1.4.363.0 for runtime GLSL compilation: https://github.com/google/shaderc
+* glslang, SPIRV-Tools and SPIRV-Headers, included by shaderc_combined; their complete license texts are `LICENSE-glslang.txt`, `LICENSE-SPIRV-Tools.txt` and `LICENSE-SPIRV-Headers.txt` in this directory.
 * openfx (Modified BSD) https://github.com/ofxa/openfx
+* OpenFX DrawSuite header (BSD-3-Clause), commit adb790bf0043714cae6091d58791e8cdabdd9e12 https://github.com/AcademySoftwareFoundation/openfx
 * openfx-io (GPLv2) https://github.com/NatronGitHub/openfx-io
 * openfx-misc (GPLv2) https://github.com/NatronGitHub/openfx-misc
 * openfx-arena (GPLv2) https://github.com/NatronGitHub/openfx-arena

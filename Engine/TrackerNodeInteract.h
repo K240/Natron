@@ -38,7 +38,7 @@
 #include "Engine/EngineFwd.h"
 #include "Engine/KnobTypes.h"
 #include "Engine/RectI.h"
-#include "Engine/Texture.h"
+#include "Engine/OverlayDrawList.h"
 #include "Engine/TrackerUndoCommand.h"
 
 
@@ -192,8 +192,7 @@
 NATRON_NAMESPACE_ENTER
 
 
-enum TrackerMouseStateEnum
-{
+enum TrackerMouseStateEnum {
     eMouseStateIdle = 0,
     eMouseStateDraggingCenter,
     eMouseStateDraggingOffset,
@@ -221,8 +220,7 @@ enum TrackerMouseStateEnum
     eMouseStateDraggingSelectedMarker,
 };
 
-enum TrackerDrawStateEnum
-{
+enum TrackerDrawStateEnum {
     eDrawStateInactive = 0,
     eDrawStateHoveringCenter,
 
@@ -250,15 +248,13 @@ enum TrackerDrawStateEnum
 typedef QFutureWatcher<std::pair<ImagePtr, RectI> > TrackWatcher;
 typedef std::shared_ptr<TrackWatcher> TrackWatcherPtr;
 
-struct TrackRequestKey
-{
+struct TrackRequestKey {
     int time;
     TrackMarkerWPtr track;
     RectI roi;
 };
 
-struct TrackRequestKey_compareLess
-{
+struct TrackRequestKey_compareLess {
     bool operator()(const TrackRequestKey& lhs,
                     const TrackRequestKey& rhs) const
     {
@@ -269,13 +265,15 @@ struct TrackRequestKey_compareLess
         } else {
             TrackMarkerPtr lptr = lhs.track.lock();
             TrackMarkerPtr rptr = rhs.track.lock();
-            if ( lptr.get() < rptr.get() ) {
+
+            if (lptr.get() < rptr.get()) {
                 return true;
-            } else if ( lptr.get() > rptr.get() ) {
+            } else if (lptr.get() > rptr.get()) {
                 return false;
             } else {
                 double la = lhs.roi.area();
                 double ra = rhs.roi.area();
+
                 if (la < ra) {
                     return true;
                 } else if (la > ra) {
@@ -292,9 +290,8 @@ typedef std::map<TrackRequestKey, TrackWatcherPtr, TrackRequestKey_compareLess> 
 
 class TrackerNode;
 class TrackerNodeInteract;
-struct TrackerNodePrivate
-{
-    TrackerNode* publicInterface;
+struct TrackerNodePrivate {
+    TrackerNode *publicInterface;
     TrackerNodeInteractPtr ui;
 
     TrackerNodePrivate(TrackerNode* publicInterface);
@@ -305,13 +302,13 @@ struct TrackerNodePrivate
 class TrackerNodeInteract
     : public QObject
 {
-GCC_DIAG_SUGGEST_OVERRIDE_OFF
+    GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
-GCC_DIAG_SUGGEST_OVERRIDE_ON
+    GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
 
-    TrackerNodePrivate* _p;
+    TrackerNodePrivate *_p;
 
     KnobButtonWPtr addTrackButton;
     KnobButtonWPtr trackRangeButton;
@@ -354,6 +351,8 @@ public:
     KnobButtonWPtr nudgeTracksOnTopMenuAction;
     KnobButtonWPtr nudgeTracksOnBottomMenuAction;
     bool clickToAddTrackEnabled;
+    bool modifierAddTrackActive;
+    bool updateModifierAddTrackMode(bool enabled);
     QPointF lastMousePos;
     QRectF selectionRectangle;
     int controlDown;
@@ -363,18 +362,31 @@ public:
     TrackerDrawStateEnum hoverState;
     TrackMarkerPtr interactMarker, hoverMarker;
 
-    typedef std::map<int, GLTexturePtr> KeyFrameTexIDs;
-    typedef std::map<TrackMarkerWPtr, KeyFrameTexIDs, std::owner_less<TrackMarkerWPtr>> TrackKeysMap;
-    TrackKeysMap trackTextures;
+    struct MarkerPreview {
+        RectI bounds;
+        double par = 1;
+        std::shared_ptr<const OverlayImage> pixels;
+        int w() const
+        {
+            return bounds.width();
+        }
+        int h() const
+        {
+            return bounds.height();
+        }
+    };
+    typedef std::shared_ptr<const MarkerPreview> MarkerPreviewPtr;
+    typedef std::map<int, MarkerPreviewPtr> KeyFrameImages;
+    typedef std::map<TrackMarkerWPtr, KeyFrameImages, std::owner_less<TrackMarkerWPtr>> TrackKeysMap;
+    TrackKeysMap trackPreviews;
     TrackKeyframeRequests trackRequestsMap;
-    GLTexturePtr selectedMarkerTexture;
-    int selectedMarkerTextureTime;
-    RectI selectedMarkerTextureRoI;
+    MarkerPreviewPtr selectedMarkerPreview;
+    int selectedMarkerPreviewTime;
+    RectI selectedMarkerPreviewRoI;
     //If there's a single selection, this points to it
     TrackMarkerWPtr selectedMarker;
-    GLuint pboID;
     TrackWatcherPtr imageGetterWatcher;
-    bool showMarkerTexture;
+    bool showMarkerPreview;
     double selectedMarkerScale;
     ImageWPtr selectedMarkerImg;
     bool isTracking;
@@ -432,13 +444,13 @@ public:
 
     void transformPattern(double time, TrackerMouseStateEnum state, const Point& delta);
 
-    void refreshSelectedMarkerTexture();
+    void refreshSelectedMarkerPreview();
 
-    void convertImageTosRGBOpenGLTexture(const ImagePtr& image, const TexturePtr& tex, const RectI& renderWindow);
+    static MarkerPreviewPtr makeMarkerPreview(const ImagePtr& image, const RectI& renderWindow);
 
-    void makeMarkerKeyTexture(int time, const TrackMarkerPtr& track);
+    void makeMarkerKeyPreview(int time, const TrackMarkerPtr& track);
 
-    void drawSelectedMarkerTexture(const std::pair<double, double>& pixelScale,
+    void drawSelectedMarkerPreview(const std::pair<double, double> &pixelScale,
                                    int currentTime,
                                    const Point& selectedCenter,
                                    const Point& offset,
@@ -449,18 +461,18 @@ public:
                                    const Point& selectedSearchWndBtmLeft,
                                    const Point& selectedSearchWndTopRight);
 
-    void drawSelectedMarkerKeyframes(const std::pair<double, double>& pixelScale, int currentTime);
+    void drawSelectedMarkerKeyframes(const std::pair<double, double> &pixelScale, int currentTime);
 
     ///Filter allkeys so only that only the MAX_TRACK_KEYS_TO_DISPLAY surrounding are displayed
-    static KeyFrameTexIDs getKeysToRenderForMarker(double currentTime, const KeyFrameTexIDs& allKeys);
+    static KeyFrameImages getKeysToRenderForMarker(double currentTime, const KeyFrameImages& allKeys);
 
-    void computeTextureCanonicalRect(const Texture& tex, int xOffset, int texWidthPx, RectD* rect) const;
+    void computePreviewCanonicalRect(const MarkerPreview& tex, int xOffset, int texWidthPx, RectD* rect) const;
     void computeSelectedMarkerCanonicalRect(RectD* rect) const;
-    bool isNearbySelectedMarkerTextureResizeAnchor(const QPointF& pos) const;
-    bool isInsideSelectedMarkerTexture(const QPointF& pos) const;
+    bool isNearbySelectedMarkerPreviewResizeAnchor(const QPointF& pos) const;
+    bool isInsideSelectedMarkerPreview(const QPointF& pos) const;
 
     ///Returns the keyframe time if the mouse is inside a keyframe texture
-    int isInsideKeyFrameTexture(double currentTime, const QPointF& pos, const QPointF& viewportPos) const;
+    int isInsideKeyFramePreview(double currentTime, const QPointF& pos, const QPointF& viewportPos) const;
 
     static Point toMagWindowPoint(const Point& ptnPoint,
                                   const RectD& canonicalSearchWindow,
@@ -481,7 +493,7 @@ public:
                        double yWidget,
                        double toleranceWidget);
 
-    static void drawEllipse(double x,
+    static void drawEllipse(OverlayDrawList& overlay, double x,
                             double y,
                             double radiusX,
                             double radiusY,
@@ -507,7 +519,7 @@ public Q_SLOTS:
     void onKeyframeRemovedOnTrack(const TrackMarkerPtr &marker, int key);
     void onAllKeyframesRemovedOnTrack(const TrackMarkerPtr& marker);
 
-    void rebuildMarkerTextures();
+    void rebuildMarkerPreviews();
     void onTrackImageRenderingFinished();
     void onKeyFrameImageRenderingFinished();
 };

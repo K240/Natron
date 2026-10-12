@@ -933,9 +933,9 @@ Project::initializeKnobs()
         _imp->gpuSupport->populateChoices(entries);
     }
     _imp->gpuSupport->setAnimationEnabled(false);
-    _imp->gpuSupport->setHintToolTip( tr("Select when to activate GPU rendering for plug-ins. Note that if the OpenGL Rendering parameter in the Preferences/GPU Rendering is set to disabled then GPU rendering will not be activated regardless of that value.") );
+    _imp->gpuSupport->setSecret(true);
     _imp->gpuSupport->setEvaluateOnChange(false);
-    _imp->gpuSupport->setAllDimensionsEnabled(appPTR->getCurrentSettings()->isOpenGLRenderingEnabled());
+    _imp->gpuSupport->setAllDimensionsEnabled(false);
     page->addKnob(_imp->gpuSupport);
 
     KnobPagePtr viewsPage = AppManager::createKnob<KnobPage>( this, tr("Views") );

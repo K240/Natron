@@ -99,8 +99,6 @@ class QWheelEvent;
 class QWidget;
 typedef std::shared_ptr<QUndoStack> QUndoStackPtr;
 
-class QOpenGLShaderProgram;
-
 // Natron Gui
 NATRON_NAMESPACE_ENTER
 class AboutWindow;

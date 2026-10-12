@@ -35,5 +35,6 @@ introduced where needed.
     subsystems
     contributing
     qt6-migration
+    vulkan-migration
     todo
     issue-triage

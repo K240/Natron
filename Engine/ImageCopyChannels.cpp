@@ -30,15 +30,12 @@
 
 #include <QDebug>
 
-#include "Engine/OSGLContext.h"
-#include "Engine/GLShader.h"
-
 
 // disable some warnings due to unused parameters
 // clang-format off
-GCC_DIAG_OFF(unused-parameter)
+GCC_DIAG_OFF(unused - parameter)
 # if ( ( __GNUC__ * 100) + __GNUC_MINOR__) >= 406
-GCC_DIAG_OFF(unused-but-set-variable) // only on gcc >= 4.6
+GCC_DIAG_OFF(unused - but - set - variable) // only on gcc >= 4.6
 #endif
 // clang-format on
 
@@ -53,28 +50,29 @@ NATRON_NAMESPACE_ENTER
 template <typename PIX, int maxValue, int srcNComps, int dstNComps, bool doR, bool doG, bool doB, bool doA, bool premult, bool originalPremult, bool ignorePremult>
 void
 Image::copyUnProcessedChannelsForPremult(const std::bitset<4> processChannels,
-                                         const RectI& roi,
-                                         const ImagePtr& originalImage)
+        const RectI& roi,
+        const ImagePtr& originalImage)
 {
     Q_UNUSED(processChannels); // silence warnings in release version
-    assert( ( (doR == !processChannels[0]) || !(dstNComps >= 2) ) &&
-            ( (doG == !processChannels[1]) || !(dstNComps >= 2) ) &&
-            ( (doB == !processChannels[2]) || !(dstNComps >= 3) ) &&
-            ( (doA == !processChannels[3]) || !(dstNComps == 1 || dstNComps == 4) ) );
-    ReadAccess acc( originalImage.get() );
+    assert(((doR == !processChannels[0]) || !(dstNComps >= 2)) &&
+           ((doG == !processChannels[1]) || !(dstNComps >= 2)) &&
+           ((doB == !processChannels[2]) || !(dstNComps >= 3)) &&
+           ((doA == !processChannels[3]) || !(dstNComps == 1 || dstNComps == 4)));
+    ReadAccess acc(originalImage.get());
     int dstRowElements = dstNComps * _bounds.width();
     PIX* dst_pixels = (PIX*)pixelAt(roi.x1, roi.y1);
     assert(dst_pixels);
     assert(srcNComps == 1 || srcNComps == 4 || !originalPremult); // only A or RGBA can be premult
     assert(dstNComps == 1 || dstNComps == 4 || !premult); // only A or RGBA can be premult
 
-    for ( int y = roi.y1; y < roi.y2; ++y, dst_pixels += (dstRowElements - (roi.x2 - roi.x1) * dstNComps) ) {
+    for (int y = roi.y1; y < roi.y2; ++y, dst_pixels += (dstRowElements - (roi.x2 - roi.x1) * dstNComps)) {
         for (int x = roi.x1; x < roi.x2; ++x, dst_pixels += dstNComps) {
             const PIX* src_pixels = originalImage ? (const PIX*)acc.pixelAt(x, y) : 0;
             PIX srcA = src_pixels ? maxValue : 0; /* be opaque for anything that doesn't contain alpha */
-            if ( ( (srcNComps == 1) || (srcNComps == 4) ) && src_pixels ) {
+
+            if (((srcNComps == 1) || (srcNComps == 4)) && src_pixels) {
 #             ifdef DEBUG_NAN
-                assert( !std::isnan(src_pixels[srcNComps - 1]) ); // check for NaN
+                assert(!std::isnan(src_pixels[srcNComps - 1]));   // check for NaN
 #             endif
                 srcA = src_pixels[srcNComps - 1];
             }
@@ -119,80 +117,89 @@ Image::copyUnProcessedChannelsForPremult(const std::bitset<4> processChannels,
 
             PIX dstAorig = maxValue;
 #         else // !NATRON_COPY_CHANNELS_UNPREMULT
-               // Just copy the channels, after all if the user unchecked a channel,
-               // we do not want to change the values behind his back.
-               // Rather we display a warning in  the GUI.
+            // Just copy the channels, after all if the user unchecked a channel,
+            // we do not want to change the values behind his back.
+            // Rather we display a warning in  the GUI.
 #           define DOCHANNEL(c) dst_pixels[c] = (!src_pixels || c >= srcNComps) ? 0 : src_pixels[c];
 #         endif // !NATRON_COPY_CHANNELS_UNPREMULT
 
-            if ( (dstNComps == 1) || (dstNComps == 4) ) {
+            if ((dstNComps == 1) || (dstNComps == 4)) {
 #             ifdef DEBUG_NAN
-                assert(  !std::isnan(dst_pixels[dstNComps - 1]) ); // check for NaN
+                assert(!std::isnan(dst_pixels[dstNComps - 1]));    // check for NaN
 #             endif
 #             ifdef NATRON_COPY_CHANNELS_UNPREMULT
                 dstAorig = dst_pixels[dstNComps - 1];
 #             endif // NATRON_COPY_CHANNELS_UNPREMULT
             }
+
             if (doR) {
 #             ifdef DEBUG_NAN
-                assert(!src_pixels ||  !std::isnan(src_pixels[0]) ); // check for NaN
-                assert(  !std::isnan(dst_pixels[0]) ); // check for NaN
+                assert(!src_pixels ||  !std::isnan(src_pixels[0]));  // check for NaN
+                assert(!std::isnan(dst_pixels[0]));    // check for NaN
 #             endif
                 DOCHANNEL(0);
 #             ifdef DEBUG_NAN
-                assert(  !std::isnan(dst_pixels[0]) ); // check for NaN
+                assert(!std::isnan(dst_pixels[0]));    // check for NaN
 #             endif
             }
+
             if (doG) {
 #             ifdef DEBUG_NAN
-                assert(!src_pixels ||  !std::isnan(src_pixels[1]) ); // check for NaN
-                assert( !std::isnan(dst_pixels[1]) ); // check for NaN
+                assert(!src_pixels ||  !std::isnan(src_pixels[1]));  // check for NaN
+                assert(!std::isnan(dst_pixels[1]));   // check for NaN
 #             endif
                 DOCHANNEL(1);
 #             ifdef DEBUG_NAN
-                assert( !std::isnan(dst_pixels[1]) ); // check for NaN
+                assert(!std::isnan(dst_pixels[1]));   // check for NaN
 #             endif
             }
+
             if (doB) {
 #             ifdef DEBUG_NAN
-                assert(!src_pixels ||  !std::isnan(src_pixels[2]) ); // check for NaN
-                assert( !std::isnan(dst_pixels[2]) ); // check for NaN
+                assert(!src_pixels ||  !std::isnan(src_pixels[2]));  // check for NaN
+                assert(!std::isnan(dst_pixels[2]));   // check for NaN
 #             endif
                 DOCHANNEL(2);
 #             ifdef DEBUG_NAN
-                assert( !std::isnan(dst_pixels[2]) ); // check for NaN
+                assert(!std::isnan(dst_pixels[2]));   // check for NaN
 #             endif
             }
+
             if (doA) {
 #             ifdef NATRON_COPY_CHANNELS_UNPREMULT
+
                 if (premult) {
                     if (dstAorig != 0) {
                         // unpremult, then premult
-                        if ( (dstNComps >= 2) && !doR ) {
+                        if ((dstNComps >= 2) && !doR) {
                             dst_pixels[0] = (dst_pixels[0] / (float)dstAorig) * srcA;
 #                         ifdef DEBUG_NAN
-                            assert( !std::isnan(dst_pixels[0]) ); // check for NaN
+                            assert(!std::isnan(dst_pixels[0]));   // check for NaN
 #                         endif
                         }
-                        if ( (dstNComps >= 2) && !doG ) {
+
+                        if ((dstNComps >= 2) && !doG) {
                             dst_pixels[1] = (dst_pixels[1] / (float)dstAorig) * srcA;
 #                         ifdef DEBUG_NAN
-                            assert( !std::isnan(dst_pixels[1]) ); // check for NaN
+                            assert(!std::isnan(dst_pixels[1]));   // check for NaN
 #                         endif
                         }
-                        if ( (dstNComps >= 2) && !doB ) {
+
+                        if ((dstNComps >= 2) && !doB) {
                             dst_pixels[2] = (dst_pixels[2] / (float)dstAorig) * srcA;
 #                         ifdef DEBUG_NAN
-                            assert( !std::isnan(dst_pixels[2]) ); // check for NaN
+                            assert(!std::isnan(dst_pixels[2]));   // check for NaN
 #                         endif
                         }
                     }
                 }
+
 #             endif // NATRON_COPY_CHANNELS_UNPREMULT
-                if ( (dstNComps == 1) || (dstNComps == 4) ) {
+
+                if ((dstNComps == 1) || (dstNComps == 4)) {
                     dst_pixels[dstNComps - 1] = srcA;
 #                 ifdef DEBUG_NAN
-                    assert( !std::isnan(dst_pixels[dstNComps - 1]) ); // check for NaN
+                    assert(!std::isnan(dst_pixels[dstNComps - 1]));   // check for NaN
 #                 endif
                 }
             }
@@ -203,12 +210,12 @@ Image::copyUnProcessedChannelsForPremult(const std::bitset<4> processChannels,
 template <typename PIX, int maxValue, int srcNComps, int dstNComps, bool ignorePremult>
 void
 Image::copyUnProcessedChannelsForPremult(const bool premult,
-                                         const bool originalPremult,
-                                         const std::bitset<4> processChannels,
-                                         const RectI& roi,
-                                         const ImagePtr& originalImage)
+        const bool originalPremult,
+        const std::bitset<4> processChannels,
+        const RectI& roi,
+        const ImagePtr& originalImage)
 {
-    ReadAccess acc( originalImage.get() );
+    ReadAccess acc(originalImage.get());
     int dstRowElements = dstNComps * _bounds.width();
     PIX* dst_pixels = (PIX*)pixelAt(roi.x1, roi.y1);
 
@@ -222,87 +229,98 @@ Image::copyUnProcessedChannelsForPremult(const bool premult,
     Q_UNUSED(premult);
     Q_UNUSED(originalPremult);
 
-    for ( int y = roi.y1; y < roi.y2; ++y, dst_pixels += (dstRowElements - (roi.x2 - roi.x1) * dstNComps) ) {
+    for (int y = roi.y1; y < roi.y2; ++y, dst_pixels += (dstRowElements - (roi.x2 - roi.x1) * dstNComps)) {
         for (int x = roi.x1; x < roi.x2; ++x, dst_pixels += dstNComps) {
             const PIX* src_pixels = originalImage ? (const PIX*)acc.pixelAt(x, y) : 0;
             PIX srcA = src_pixels ? maxValue : 0; /* be opaque for anything that doesn't contain alpha */
-            if ( ( (srcNComps == 1) || (srcNComps == 4) ) && src_pixels ) {
+
+            if (((srcNComps == 1) || (srcNComps == 4)) && src_pixels) {
 #             ifdef DEBUG_NAN
-                assert( !std::isnan(src_pixels[srcNComps - 1]) ); // check for NaN
+                assert(!std::isnan(src_pixels[srcNComps - 1]));   // check for NaN
 #             endif
                 srcA = src_pixels[srcNComps - 1];
             }
+
 #         ifdef NATRON_COPY_CHANNELS_UNPREMULT
             PIX dstAorig = maxValue;
 #         endif
-            if ( (dstNComps == 1) || (dstNComps == 4) ) {
+
+            if ((dstNComps == 1) || (dstNComps == 4)) {
 #             ifdef DEBUG_NAN
-                assert( !std::isnan(dst_pixels[dstNComps - 1]) ); // check for NaN
+                assert(!std::isnan(dst_pixels[dstNComps - 1]));   // check for NaN
 #             endif
 #             ifdef NATRON_COPY_CHANNELS_UNPREMULT
                 dstAorig = dst_pixels[dstNComps - 1];
 #             endif
             }
+
             if (doR) {
 #             ifdef DEBUG_NAN
-                assert(!src_pixels || !std::isnan(src_pixels[0]) ); // check for NaN
-                assert( !std::isnan(dst_pixels[0]) ); // check for NaN
+                assert(!src_pixels || !std::isnan(src_pixels[0]));  // check for NaN
+                assert(!std::isnan(dst_pixels[0]));   // check for NaN
 #             endif
                 DOCHANNEL(0);
 #             ifdef DEBUG_NAN
-                assert( !std::isnan(dst_pixels[0]) ); // check for NaN
+                assert(!std::isnan(dst_pixels[0]));   // check for NaN
 #             endif
             }
+
             if (doG) {
 #             ifdef DEBUG_NAN
-                assert(!src_pixels || !std::isnan(src_pixels[1]) ); // check for NaN
-                assert( !std::isnan(dst_pixels[1]) ); // check for NaN
+                assert(!src_pixels || !std::isnan(src_pixels[1]));  // check for NaN
+                assert(!std::isnan(dst_pixels[1]));   // check for NaN
 #             endif
                 DOCHANNEL(1);
 #             ifdef DEBUG_NAN
-                assert( !std::isnan(dst_pixels[1]) ); // check for NaN
+                assert(!std::isnan(dst_pixels[1]));   // check for NaN
 #             endif
             }
+
             if (doB) {
 #             ifdef DEBUG_NAN
-                assert(!src_pixels || !std::isnan(src_pixels[2]) ); // check for NaN
-                assert( !std::isnan(dst_pixels[2]) ); // check for NaN
+                assert(!src_pixels || !std::isnan(src_pixels[2]));  // check for NaN
+                assert(!std::isnan(dst_pixels[2]));   // check for NaN
 #             endif
                 DOCHANNEL(2);
 #             ifdef DEBUG_NAN
-                assert( !std::isnan(dst_pixels[2]) ); // check for NaN
+                assert(!std::isnan(dst_pixels[2]));   // check for NaN
 #             endif
             }
+
             if (doA) {
 #             ifdef NATRON_COPY_CHANNELS_UNPREMULT
+
                 if (premult) {
                     if (dstAorig != 0) {
                         // unpremult, then premult
-                        if ( (dstNComps >= 2) && !doR ) {
+                        if ((dstNComps >= 2) && !doR) {
                             dst_pixels[0] = (dst_pixels[0] / (float)dstAorig) * srcA;
 #                         ifdef DEBUG_NAN
-                            assert( !std::isnan(dst_pixels[0]) ); // check for NaN
+                            assert(!std::isnan(dst_pixels[0]));   // check for NaN
 #                         endif
                         }
-                        if ( (dstNComps >= 2) && !doG ) {
+
+                        if ((dstNComps >= 2) && !doG) {
                             dst_pixels[1] = (dst_pixels[1] / (float)dstAorig) * srcA;
 #                         ifdef DEBUG_NAN
-                            assert( !std::isnan(dst_pixels[1]) ); // check for NaN
+                            assert(!std::isnan(dst_pixels[1]));   // check for NaN
 #                         endif
                         }
-                        if ( (dstNComps >= 2) && !doB ) {
+
+                        if ((dstNComps >= 2) && !doB) {
                             dst_pixels[2] = (dst_pixels[2] / (float)dstAorig) * srcA;
 #                         ifdef DEBUG_NAN
-                            assert( !std::isnan(dst_pixels[2]) ); // check for NaN
+                            assert(!std::isnan(dst_pixels[2]));   // check for NaN
 #                         endif
                         }
                     }
                 }
+
 #              endif // NATRON_COPY_CHANNELS_UNPREMULT
                 // coverity[dead_error_line]
                 dst_pixels[dstNComps - 1] = srcA;
 #              ifdef DEBUG_NAN
-                assert( !std::isnan(dst_pixels[dstNComps - 1]) ); // check for NaN
+                assert(!std::isnan(dst_pixels[dstNComps - 1]));   // check for NaN
 #              endif
             }
         }
@@ -312,16 +330,17 @@ Image::copyUnProcessedChannelsForPremult(const bool premult,
 template <typename PIX, int maxValue, int srcNComps, int dstNComps, bool doR, bool doG, bool doB, bool doA>
 void
 Image::copyUnProcessedChannelsForChannels(const std::bitset<4> processChannels,
-                                          const bool premult,
-                                          const RectI& roi,
-                                          const ImagePtr& originalImage,
-                                          const bool originalPremult,
-                                          const bool ignorePremult)
+        const bool premult,
+        const RectI& roi,
+        const ImagePtr& originalImage,
+        const bool originalPremult,
+        const bool ignorePremult)
 {
-    assert( ( (doR == !processChannels[0]) || !(dstNComps >= 2) ) &&
-            ( (doG == !processChannels[1]) || !(dstNComps >= 2) ) &&
-            ( (doB == !processChannels[2]) || !(dstNComps >= 3) ) &&
-            ( (doA == !processChannels[3]) || !(dstNComps == 1 || dstNComps == 4) ) );
+    assert(((doR == !processChannels[0]) || !(dstNComps >= 2)) &&
+           ((doG == !processChannels[1]) || !(dstNComps >= 2)) &&
+           ((doB == !processChannels[2]) || !(dstNComps >= 3)) &&
+           ((doA == !processChannels[3]) || !(dstNComps == 1 || dstNComps == 4)));
+
     if (premult) {
         if (originalPremult) {
             if (ignorePremult) {
@@ -356,11 +375,11 @@ Image::copyUnProcessedChannelsForChannels(const std::bitset<4> processChannels,
 template <typename PIX, int maxValue, int srcNComps, int dstNComps>
 void
 Image::copyUnProcessedChannelsForChannels(const std::bitset<4> processChannels,
-                                          const bool premult,
-                                          const RectI& roi,
-                                          const ImagePtr& originalImage,
-                                          const bool originalPremult,
-                                          const bool ignorePremult)
+        const bool premult,
+        const RectI& roi,
+        const ImagePtr& originalImage,
+        const bool originalPremult,
+        const bool ignorePremult)
 {
     if (ignorePremult) {
         copyUnProcessedChannelsForPremult<PIX, maxValue, srcNComps, dstNComps, true>(premult, originalPremult, processChannels, roi, originalImage);
@@ -372,11 +391,11 @@ Image::copyUnProcessedChannelsForChannels(const std::bitset<4> processChannels,
 template <typename PIX, int maxValue, int srcNComps, int dstNComps>
 void
 Image::copyUnProcessedChannelsForComponents(const bool premult,
-                                            const RectI& roi,
-                                            const std::bitset<4> processChannels,
-                                            const ImagePtr& originalImage,
-                                            const bool originalPremult,
-                                            const bool ignorePremult)
+        const RectI& roi,
+        const std::bitset<4> processChannels,
+        const ImagePtr& originalImage,
+        const bool originalPremult,
+        const bool ignorePremult)
 {
     const bool doR = !processChannels[0] && (dstNComps >= 2);
     const bool doG = !processChannels[1] && (dstNComps >= 2);
@@ -391,24 +410,25 @@ Image::copyUnProcessedChannelsForComponents(const bool premult,
         }
     } else {
         assert(2 <= dstNComps && dstNComps <= 4);
+
         if (doR) {
             if (doG) {
-                if ( (dstNComps >= 3) && doB ) {
-                    if ( (dstNComps >= 4) && doA ) {
+                if ((dstNComps >= 3) && doB) {
+                    if ((dstNComps >= 4) && doA) {
                         copyUnProcessedChannelsForChannels<PIX, maxValue, srcNComps, dstNComps, true, true, true, true>(processChannels, premult, roi, originalImage, originalPremult, ignorePremult); // none were processed, only do premult
                     } else {
                         copyUnProcessedChannelsForChannels<PIX, maxValue, srcNComps, dstNComps, true, true, true, false>(processChannels, premult, roi, originalImage, originalPremult, ignorePremult); // A was processed
                     }
                 } else {
-                    if ( (dstNComps >= 4) && doA ) {
+                    if ((dstNComps >= 4) && doA) {
                         copyUnProcessedChannelsForChannels<PIX, maxValue, srcNComps, dstNComps, true, true, false, true>(processChannels, premult, roi, originalImage, originalPremult, ignorePremult); // B was processed
                     } else {
                         copyUnProcessedChannelsForChannels<PIX, maxValue, srcNComps, dstNComps>(/*true, true, false, false, */ processChannels, premult, roi, originalImage, originalPremult, ignorePremult); // BA were processed (rare)
                     }
                 }
             } else {
-                if ( (dstNComps >= 3) && doB ) {
-                    if ( (dstNComps >= 4) && doA ) {
+                if ((dstNComps >= 3) && doB) {
+                    if ((dstNComps >= 4) && doA) {
                         copyUnProcessedChannelsForChannels<PIX, maxValue, srcNComps, dstNComps, true, false, true, true>(processChannels, premult, roi, originalImage, originalPremult, ignorePremult); // G was processed
                     } else {
                         copyUnProcessedChannelsForChannels<PIX, maxValue, srcNComps, dstNComps>(/*true, false, true, false, */ processChannels, premult, roi, originalImage, originalPremult, ignorePremult); // GA were processed (rare)
@@ -423,8 +443,8 @@ Image::copyUnProcessedChannelsForComponents(const bool premult,
             }
         } else {
             if (doG) {
-                if ( (dstNComps >= 3) && doB ) {
-                    if ( (dstNComps >= 4) && doA ) {
+                if ((dstNComps >= 3) && doB) {
+                    if ((dstNComps >= 4) && doA) {
                         copyUnProcessedChannelsForChannels<PIX, maxValue, srcNComps, dstNComps, false, true, true, true>(processChannels, premult, roi, originalImage, originalPremult, ignorePremult); // R was processed
                     } else {
                         copyUnProcessedChannelsForChannels<PIX, maxValue, srcNComps, dstNComps>(/*false, true, true, false, */ processChannels, premult, roi, originalImage, originalPremult, ignorePremult); // RA were processed (rare)
@@ -437,14 +457,14 @@ Image::copyUnProcessedChannelsForComponents(const bool premult,
                     //}
                 }
             } else {
-                if ( (dstNComps >= 3) && doB ) {
+                if ((dstNComps >= 3) && doB) {
                     //if (dstNComps >= 4 && doA) {
                     copyUnProcessedChannelsForChannels<PIX, maxValue, srcNComps, dstNComps>(/*false, false, true, true, */ processChannels, premult, roi, originalImage, originalPremult, ignorePremult);    // RG were processed (rare)
                     //} else {
                     //    copyUnProcessedChannelsForChannels<PIX, maxValue, srcNComps, dstNComps>(/*false, false, true, false, */processChannels, premult, roi, originalImage, originalPremult, ignorePremult); // RGA were processed (rare)
                     //}
                 } else {
-                    if ( (dstNComps >= 4) && doA ) {
+                    if ((dstNComps >= 4) && doA) {
                         copyUnProcessedChannelsForChannels<PIX, maxValue, srcNComps, dstNComps, false, false, false, true>(processChannels, premult, roi, originalImage, originalPremult, ignorePremult); // RGB were processed
                     } else {
                         copyUnProcessedChannelsForChannels<PIX, maxValue, srcNComps, dstNComps, false, false, false, false>(processChannels, premult, roi, originalImage, originalPremult, ignorePremult); // RGBA were processed
@@ -473,88 +493,115 @@ Image::copyUnProcessedChannelsForDepth(const bool premult,
         case 0:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 0, 1>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         case 1:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 1, 1>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         case 2:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 2, 1>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         case 3:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 3, 1>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         case 4:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 4, 1>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         default:
             assert(false);
             break;
         }
+
         break;
+
     case 2:
         switch (srcNComps) {
         case 0:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 0, 2>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         case 1:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 1, 2>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         case 2:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 2, 2>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         case 3:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 3, 2>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         case 4:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 4, 2>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         default:
             assert(false);
             break;
         }
+
         break;
+
     case 3:
         switch (srcNComps) {
         case 0:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 0, 3>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         case 1:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 1, 3>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         case 2:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 2, 3>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         case 3:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 3, 3>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         case 4:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 4, 3>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         default:
             assert(false);
             break;
         }
+
         break;
+
     case 4:
         switch (srcNComps) {
         case 0:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 0, 4>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         case 1:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 1, 4>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         case 2:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 2, 4>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         case 3:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 3, 4>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         case 4:
             copyUnProcessedChannelsForComponents<PIX, maxValue, 4, 4>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
             break;
+
         default:
             assert(false);
             break;
         }
+
         break;
 
     default:
@@ -571,13 +618,14 @@ Image::canCallCopyUnProcessedChannels(const std::bitset<4> processChannels) cons
     if (numComp == 0) {
         return false;
     }
-    if ( (numComp == 1) && processChannels[3] ) { // 1 component is alpha
+
+    if ((numComp == 1) && processChannels[3]) {   // 1 component is alpha
         return false;
-    } else if ( (numComp == 2) && processChannels[0] && processChannels[1] ) {
+    } else if ((numComp == 2) && processChannels[0] && processChannels[1]) {
         return false;
-    } else if ( (numComp == 3) && processChannels[0] && processChannels[1] && processChannels[2] ) {
+    } else if ((numComp == 3) && processChannels[0] && processChannels[1] && processChannels[2]) {
         return false;
-    } else if ( (numComp == 4) && processChannels[0] && processChannels[1] && processChannels[2] && processChannels[3] ) {
+    } else if ((numComp == 4) && processChannels[0] && processChannels[1] && processChannels[2] && processChannels[3]) {
         return false;
     }
 
@@ -590,104 +638,59 @@ Image::copyUnProcessedChannels(const RectI& roi,
                                const ImagePremultiplicationEnum originalImagePremult,
                                const std::bitset<4> processChannels,
                                const ImagePtr& originalImage,
-                               bool ignorePremult,
-                               const OSGLContextPtr& glContext)
+                               bool ignorePremult)
 {
+    if (getStorageMode() == eStorageModeVulkan) {
+        restoreChannelsVulkan(roi, originalImage.get(), static_cast<uint32_t>((~processChannels).to_ulong()) & 15);
+        return;
+    }
+
     int numComp = getComponents().getNumComponents();
 
     if (numComp == 0) {
         return;
     }
-    if ( (numComp == 1) && processChannels[3] ) { // 1 component is alpha
+
+    if ((numComp == 1) && processChannels[3]) {   // 1 component is alpha
         return;
-    } else if ( (numComp == 2) && processChannels[0] && processChannels[1] ) {
+    } else if ((numComp == 2) && processChannels[0] && processChannels[1]) {
         return;
-    } else if ( (numComp == 3) && processChannels[0] && processChannels[1] && processChannels[2] ) {
+    } else if ((numComp == 3) && processChannels[0] && processChannels[1] && processChannels[2]) {
         return;
-    } else if ( (numComp == 4) && processChannels[0] && processChannels[1] && processChannels[2] && processChannels[3] ) {
+    } else if ((numComp == 4) && processChannels[0] && processChannels[1] && processChannels[2] && processChannels[3]) {
         return;
     }
 
 
-    if ( originalImage && ( getMipmapLevel() != originalImage->getMipmapLevel() ) ) {
+    if (originalImage && (getMipmapLevel() != originalImage->getMipmapLevel())) {
         qDebug() << "WARNING: attempting to call copyUnProcessedChannels on images with different mipmapLevel";
 
         return;
     }
 
     QWriteLocker k(&_entryLock);
-    assert( !originalImage || getBitDepth() == originalImage->getBitDepth() );
+    assert(!originalImage || getBitDepth() == originalImage->getBitDepth());
 
 
     const RectI srcRoi = roi.intersect(_bounds);
 
-    if (getStorageMode() == eStorageModeGLTex) {
-        assert(glContext);
-        assert(originalImage->getStorageMode() == eStorageModeGLTex);
-        GLShaderPtr shader = glContext->getOrCreateCopyUnprocessedChannelsShader(processChannels[0], processChannels[1], processChannels[2], processChannels[3]);
-        assert(shader);
-        GLuint fboID = glContext->getFBOId();
-
-        glBindFramebuffer(GL_FRAMEBUFFER, fboID);
-        int target = getGLTextureTarget();
-        glEnable(target);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture( target, getGLTextureID() );
-
-        glTexParameteri (target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri (target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-        glTexParameteri (target, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri (target, GL_TEXTURE_WRAP_T, GL_REPEAT);
-
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, target, getGLTextureID(), 0 /*LoD*/);
-        glCheckFramebufferError();
-        glCheckError();
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture( target, originalImage->getGLTextureID() );
-
-        glTexParameteri (target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri (target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-        glTexParameteri (target, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri (target, GL_TEXTURE_WRAP_T, GL_REPEAT);
-
-
-        shader->bind();
-        shader->setUniform("originalImageTex", 1);
-        shader->setUniform("outputImageTex", 0);
-        OfxRGBAColourF procChannelsV = {
-            processChannels[0] ? 1.f : 0.f,
-            processChannels[1] ? 1.f : 0.f,
-            processChannels[2] ? 1.f : 0.f,
-            processChannels[3] ? 1.f : 0.f
-        };
-        shader->setUniform("processChannels", procChannelsV);
-        applyTextureMapping(_bounds, srcRoi);
-        shader->unbind();
-
-        glCheckError();
-        glBindTexture(target, 0);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(target, 0);
-        glCheckError();
-
-        return;
-    }
-
 
     bool premult = (outputPremult == eImagePremultiplicationPremultiplied);
     bool originalPremult = (originalImagePremult == eImagePremultiplicationPremultiplied);
-    switch ( getBitDepth() ) {
+
+    switch (getBitDepth()) {
     case eImageBitDepthByte:
         copyUnProcessedChannelsForDepth<unsigned char, 255>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
         break;
+
     case eImageBitDepthShort:
         copyUnProcessedChannelsForDepth<unsigned short, 65535>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
         break;
+
     case eImageBitDepthFloat:
         copyUnProcessedChannelsForDepth<float, 1>(premult, roi, processChannels, originalImage, originalPremult, ignorePremult);
         break;
+
     default:
 
         return;

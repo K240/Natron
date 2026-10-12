@@ -66,6 +66,10 @@ public:
 
     virtual ~OfxImageEffectInstance();
 
+    bool usesDrawSuiteOverlay() const;
+    OfxPluginEntryPoint* getOverlayInteractMainEntry() const;
+    OFX::Host::Interact::Descriptor& getSelectedOverlayDescriptor(int bitDepthPerComponent, bool hasAlpha);
+
     void setOfxEffectInstance(const OfxEffectInstancePtr& node)
     {
         _ofxEffectInstance = node;
@@ -266,6 +270,8 @@ class OfxImageEffectDescriptor
 {
 public:
 
+    OFX::Host::Interact::Descriptor& getDrawSuiteOverlayDescriptor(int bitDepthPerComponent, bool hasAlpha);
+
     OfxImageEffectDescriptor(OFX::Host::Plugin *plug);
 
     OfxImageEffectDescriptor(const std::string &bundlePath,
@@ -276,6 +282,8 @@ public:
 
     virtual OFX::Host::Param::Descriptor * paramDefine(const char *paramType,
                                                        const char *name) OVERRIDE FINAL;
+private:
+    OFX::Host::Interact::Descriptor _drawSuiteOverlayDescriptor;
 };
 
 NATRON_NAMESPACE_EXIT

@@ -48,13 +48,13 @@ struct ReadNodePrivate;
 class ReadNode
     : public EffectInstance
 {
-GCC_DIAG_SUGGEST_OVERRIDE_OFF
+    GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
-GCC_DIAG_SUGGEST_OVERRIDE_ON
+    GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
 
-    static EffectInstance* BuildEffect(NodePtr n)
+    static EffectInstance *BuildEffect(NodePtr n)
     {
         return new ReadNode(n);
     }
@@ -83,6 +83,7 @@ public:
     virtual bool isViewAware() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual bool supportsTiles() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual bool supportsMultiResolution() const OVERRIDE FINAL WARN_UNUSED_RETURN;
+    virtual bool supportsVulkanRender() const OVERRIDE FINAL;
     virtual bool supportsMultipleClipDepths() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual RenderSafetyEnum renderThreadSafety() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual bool getCanTransform() const OVERRIDE FINAL WARN_UNUSED_RETURN;
@@ -96,13 +97,13 @@ public:
     virtual std::string getPluginID() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual std::string getPluginLabel() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual std::string getPluginDescription() const OVERRIDE FINAL WARN_UNUSED_RETURN;
-    virtual void getPluginGrouping(std::list<std::string>* grouping) const OVERRIDE FINAL;
+    virtual void getPluginGrouping(std::list<std::string> *grouping) const OVERRIDE FINAL;
     virtual int getNInputs() const OVERRIDE FINAL WARN_UNUSED_RETURN;
-    virtual std::string getInputLabel (int inputNb) const OVERRIDE FINAL WARN_UNUSED_RETURN;
+    virtual std::string getInputLabel(int inputNb) const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual bool isInputOptional(int inputNb) const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual bool isInputMask(int inputNb) const OVERRIDE FINAL WARN_UNUSED_RETURN;
-    virtual void addAcceptedComponents(int inputNb, std::list<ImagePlaneDesc>* comps) OVERRIDE FINAL;
-    virtual void addSupportedBitDepth(std::list<ImageBitDepthEnum>* depths) const OVERRIDE FINAL;
+    virtual void addAcceptedComponents(int inputNb, std::list<ImagePlaneDesc> *comps) OVERRIDE FINAL;
+    virtual void addSupportedBitDepth(std::list<ImageBitDepthEnum> *depths) const OVERRIDE FINAL;
     virtual void onInputChanged(int inputNo) OVERRIDE FINAL;
     virtual void purgeCaches() OVERRIDE FINAL;
     virtual void onEffectCreated(bool mayCreateFileDialog,
@@ -122,10 +123,10 @@ private:
     virtual StatusEnum getRegionOfDefinition(U64 hash, double time, const RenderScale & scale, ViewIdx view, RectD* rod) OVERRIDE WARN_UNUSED_RETURN;
     virtual void getFrameRange(double *first, double *last) OVERRIDE FINAL;
     virtual void getComponentsNeededAndProduced(double time, ViewIdx view,
-                                                EffectInstance::ComponentsNeededMap* comps,
-                                                double* passThroughTime,
-                                                int* passThroughView,
-                                                int* passThroughInput) OVERRIDE;
+            EffectInstance::ComponentsNeededMap* comps,
+            double *passThroughTime,
+            int *passThroughView,
+            int *passThroughInput) OVERRIDE;
     virtual StatusEnum beginSequenceRender(double first,
                                            double last,
                                            double step,
@@ -134,9 +135,7 @@ private:
                                            bool isSequentialRender,
                                            bool isRenderResponseToUserInteraction,
                                            bool draftMode,
-                                           ViewIdx view,
-                                           bool isOpenGLRender,
-                                           const EffectInstance::OpenGLContextEffectDataPtr& glContextData) OVERRIDE FINAL WARN_UNUSED_RETURN;
+                                           ViewIdx view) OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual StatusEnum endSequenceRender(double first,
                                          double last,
                                          double step,
@@ -145,9 +144,7 @@ private:
                                          bool isSequentialRender,
                                          bool isRenderResponseToUserInteraction,
                                          bool draftMode,
-                                         ViewIdx view,
-                                         bool isOpenGLRender,
-                                         const EffectInstance::OpenGLContextEffectDataPtr& glContextData) OVERRIDE FINAL WARN_UNUSED_RETURN;
+                                         ViewIdx view) OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual StatusEnum render(const RenderActionArgs& args) OVERRIDE WARN_UNUSED_RETURN;
     virtual void getRegionsOfInterest(double time,
                                       const RenderScale & scale,

@@ -34,7 +34,7 @@
 #include <stdexcept>
 
 #include <QTextStream>
-#include <QSettings>
+#include "Global/AppSettings.h"
 #include <QFile>
 #include <QFileInfo>
 
@@ -1091,7 +1091,7 @@ Gui::openProjectInternal(const std::string & absoluteFileName,
         }
     }
 
-    QSettings settings;
+    AppSettings settings;
     QStringList recentFiles = settings.value( QString::fromUtf8("recentFileList") ).toStringList();
     recentFiles.removeAll( QString::fromUtf8( absoluteFileName.c_str() ) );
     recentFiles.prepend( QString::fromUtf8( absoluteFileName.c_str() ) );
@@ -1108,7 +1108,7 @@ Gui::openProjectInternal(const std::string & absoluteFileName,
 static void
 updateRecentFiles(const QString & filename)
 {
-    QSettings settings;
+    AppSettings settings;
     QStringList recentFiles = settings.value( QString::fromUtf8("recentFileList") ).toStringList();
 
     recentFiles.removeAll(filename);

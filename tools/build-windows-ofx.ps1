@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$MsysRoot,
-    [ValidateSet('misc', 'arena', 'gmic')]
-    [string[]]$PluginSets = @('misc', 'arena', 'gmic'),
+    [ValidateSet('misc', 'arena', 'gmic', 'io')]
+    [string[]]$PluginSets = @('misc', 'arena', 'gmic', 'io'),
     [int]$Jobs = 16,
     [switch]$SkipDependencies
 )
@@ -48,7 +48,8 @@ if (-not $SkipDependencies) {
     Invoke-Checked -Command $bash -Arguments @('-lc', 'pacman --noconfirm -Syuu')
     $packages = @('gcc', 'cmake', 'ninja', 'pkgconf', 'imagemagick', 'lcms2', 'fontconfig',
         'pango', 'libxml2', 'libzip', 'librsvg', 'poppler', 'libcdr', 'librevenge', 'sox',
-        'fftw', 'curl', 'libpng', 'zlib', 'graphviz', 'openexr', 'libjxl', 'libultrahdr', 'opencolorio')
+        'fftw', 'curl', 'libpng', 'zlib', 'graphviz', 'openexr', 'libjxl', 'libultrahdr', 'opencolorio',
+        'openimageio', 'ffmpeg', 'seexpr')
     $packageNames = ($packages | ForEach-Object { "mingw-w64-ucrt-x86_64-$_" }) -join ' '
     Invoke-Checked -Command $bash -Arguments @('-lc', "pacman --noconfirm -S --needed $packageNames")
 }
@@ -56,6 +57,8 @@ $ucrtBin = Join-Path $MsysRoot 'ucrt64\bin'
 $env:PATH = "$ucrtBin;$env:PATH"
 $env:PKG_CONFIG_PATH = Join-Path $MsysRoot 'ucrt64\lib\pkgconfig'
 $cmake = Join-Path $ucrtBin 'cmake.exe'
+& (Join-Path $PSScriptRoot 'build-windows-ofx-codecs.ps1') -MsysRoot $MsysRoot -Jobs $Jobs
+if ($LASTEXITCODE -ne 0) { throw 'Could not build the codec runtime without OpenGL.' }
 
 foreach ($set in $PluginSets) {
     $name = "openfx-$set"
@@ -75,7 +78,12 @@ foreach ($set in $PluginSets) {
     $patch = Join-Path $configRoot "$name.patch"
     if (Test-Path -LiteralPath $patch) { Apply-SourcePatch -Directory $directory -Patch $patch }
 
+    if ($set -eq 'io') {
+        Apply-SourcePatch -Directory (Join-Path $directory 'SupportExt') -Patch (Join-Path $configRoot 'openfx-io-supportext-vulkan.patch')
+    }
+
     if ($set -eq 'misc') {
+        Apply-SourcePatch -Directory (Join-Path $directory 'SupportExt') -Patch (Join-Path $configRoot 'openfx-misc-supportext-vulkan.patch')
         $cimgHeader = Join-Path $directory 'CImg\CImg.h'
         $inpaintHeader = Join-Path $directory 'CImg\Inpaint\inpaint.h'
         $cimgUrl = "https://raw.githubusercontent.com/dtschump/CImg/$($sources.cimgCommit)"
@@ -83,6 +91,9 @@ foreach ($set in $PluginSets) {
         if (-not (Test-Path -LiteralPath $inpaintHeader)) { Invoke-WebRequest -Uri "$cimgUrl/plugins/inpaint.h" -OutFile $inpaintHeader }
         # Preserve host cancellation in the downloaded Inpaint implementation.
         Apply-SourcePatch -Directory $directory -Patch (Join-Path $configRoot 'cimg-inpaint.patch')
+    } elseif ($set -eq 'arena') {
+        Apply-SourcePatch -Directory (Join-Path $directory 'SupportExt') -Patch (Join-Path $configRoot 'openfx-arena-supportext-vulkan.patch')
+        Apply-SourcePatch -Directory (Join-Path $directory 'OpenFX-IO') -Patch (Join-Path $configRoot 'openfx-arena-io-unicode.patch')
     } elseif ($set -eq 'gmic') {
         if (-not (Test-Path -LiteralPath (Join-Path $directory 'gmic.cpp'))) {
             $gmicArchive = Join-Path $buildRoot "gmic_$($sources.gmicVersion).tar.gz"
@@ -105,6 +116,25 @@ foreach ($set in $PluginSets) {
         "-DCMAKE_INSTALL_PREFIX=$buildRoot\Plugins")
     Invoke-Checked -Command $cmake -Arguments @('--build', $binaryDirectory, '--parallel', "$Jobs")
     Invoke-Checked -Command $cmake -Arguments @('--install', $binaryDirectory)
+    if ($set -eq 'io') {
+        # Old downloaded IO bundles carry DLLs beside IO.ofx. They take priority
+        # over the shared current runtime and must leave the loader search path.
+        $ioBin = [IO.Path]::GetFullPath((Join-Path $buildRoot 'Plugins\IO.ofx.bundle\Contents\Win64'))
+        $installedFiles = @(Get-Content -LiteralPath (Join-Path $binaryDirectory 'install_manifest.txt') |
+            ForEach-Object { [IO.Path]::GetFullPath($_) })
+        $legacyBackup = Join-Path $buildRoot 'ofx-legacy-runtime-backup\IO'
+        foreach ($file in Get-ChildItem -LiteralPath $ioBin -File -Filter '*.dll') {
+            $resolvedFile = [IO.Path]::GetFullPath($file.FullName)
+            if (-not $resolvedFile.StartsWith($ioBin + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Unexpected IO runtime path: $resolvedFile"
+            }
+            if ($installedFiles -contains $resolvedFile) { continue }
+            New-Item -ItemType Directory -Path $legacyBackup -Force | Out-Null
+            $backupFile = Join-Path $legacyBackup $file.Name
+            if (-not (Test-Path -LiteralPath $backupFile)) { Copy-Item -LiteralPath $resolvedFile -Destination $backupFile }
+            Remove-Item -LiteralPath $resolvedFile
+        }
+    }
 }
 & (Join-Path $PSScriptRoot 'install-ofx-runtime.ps1') -MsysRoot $MsysRoot -PluginDirectory (Join-Path $buildRoot 'Plugins') -RuntimeDirectory (Join-Path $buildRoot 'ofx-runtime')
 & $bash -lc 'pacman -Q' | Set-Content -Encoding utf8 (Join-Path $buildRoot 'ofx-package-versions.txt')

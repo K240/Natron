@@ -32,14 +32,14 @@
 
 #if !defined(Q_MOC_RUN) && !defined(SBK_RUN)
 // clang-format off
-GCC_DIAG_OFF(unused-parameter)
+GCC_DIAG_OFF(unused - parameter)
 GCC_DIAG_UNUSED_LOCAL_TYPEDEFS_OFF
 // /opt/local/include/boost/serialization/smart_cast.hpp:254:25: warning: unused parameter 'u' [-Wunused-parameter]
 #include <boost/archive/binary_iarchive.hpp>
 #include <boost/archive/binary_oarchive.hpp>
 #include <boost/serialization/string.hpp>
 #include <boost/serialization/version.hpp>
-GCC_DIAG_ON(unused-parameter)
+GCC_DIAG_ON(unused - parameter)
 // clang-format on
 GCC_DIAG_UNUSED_LOCAL_TYPEDEFS_ON
 #endif
@@ -48,7 +48,8 @@ GCC_DIAG_UNUSED_LOCAL_TYPEDEFS_ON
 
 // Note: these classes are used for cache serialization and do not have to maintain backward compatibility
 #define IMAGE_KEY_SERIALIZATION_INTRODUCES_CACHE_HOLDER_ID 2
-#define IMAGE_KEY_SERIALIZATION_VERSION IMAGE_KEY_SERIALIZATION_INTRODUCES_CACHE_HOLDER_ID
+#define IMAGE_KEY_SERIALIZATION_INPUT_QUALITY 3
+#define IMAGE_KEY_SERIALIZATION_VERSION IMAGE_KEY_SERIALIZATION_INPUT_QUALITY
 
 NATRON_NAMESPACE_ENTER
 
@@ -60,12 +61,23 @@ ImageKey::serialize(Archive & ar,
     if (version >= IMAGE_KEY_SERIALIZATION_INTRODUCES_CACHE_HOLDER_ID) {
         ar & ::boost::serialization::make_nvp("HolderID", _holderID);
     }
+
     ar & ::boost::serialization::make_nvp("NodeHashKey", _nodeHashKey);
     ar & ::boost::serialization::make_nvp("FrameVarying", _frameVaryingOrAnimated);
     ar & ::boost::serialization::make_nvp("Time", _time);
     ar & ::boost::serialization::make_nvp("View", _view);
     ar & ::boost::serialization::make_nvp("PixelAspect", _pixelAspect);
     ar & ::boost::serialization::make_nvp("Draft", _draftMode);
+
+    if (version >= IMAGE_KEY_SERIALIZATION_INPUT_QUALITY) {
+        ar & ::boost::serialization::make_nvp("FullScaleWithDownscaleInputs", _fullScaleWithDownscaleInputs);
+        ar & ::boost::serialization::make_nvp("InputMipmapLevel", _inputMipmapLevel);
+    } else {
+        // Older cache archives omitted input quality entirely. Keep their
+        // entries unreachable rather than treating proxy inputs as full quality.
+        _fullScaleWithDownscaleInputs = true;
+        _inputMipmapLevel = static_cast<unsigned int>(-1);
+    }
 }
 
 NATRON_NAMESPACE_EXIT

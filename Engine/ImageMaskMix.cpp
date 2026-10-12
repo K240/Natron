@@ -27,8 +27,6 @@
 
 #include <cassert>
 #include <stdexcept>
-#include "Engine/GLShader.h"
-#include "Engine/OSGLContext.h"
 
 NATRON_NAMESPACE_ENTER
 
@@ -42,15 +40,17 @@ Image::applyMaskMixForMaskInvert(const RectI& roi,
     PIX* dst_pixels = (PIX*)pixelAt(roi.x1, roi.y1);
     unsigned int dstRowElements = _bounds.width() * getComponentsCount();
 
-    for ( int y = roi.y1; y < roi.y2; ++y,
-          dst_pixels += (dstRowElements - (roi.x2 - roi.x1) * dstNComps) ) { // 1 row stride minus what was done at previous iteration
+    for (int y = roi.y1; y < roi.y2; ++y,
+         dst_pixels += (dstRowElements - (roi.x2 - roi.x1) * dstNComps)) {  // 1 row stride minus what was done at previous iteration
         for (int x = roi.x1; x < roi.x2; ++x,
              dst_pixels += dstNComps) {
             const PIX* src_pixels = originalImg ? (const PIX*)originalImg->pixelAt(x, y) : 0;
             float maskScale = 1.f;
+
             if (!masked) {
                 // just mix
                 float alpha = mix;
+
                 if (src_pixels) {
                     for (int c = 0; c < dstNComps; ++c) {
                         if (c < srcNComps) {
@@ -66,16 +66,20 @@ Image::applyMaskMixForMaskInvert(const RectI& roi,
                 }
             } else {
                 const PIX* maskPixels = maskImg ? (const PIX*)maskImg->pixelAt(x, y) : 0;
+
                 // figure the scale factor from that pixel
                 if (maskPixels == 0) {
                     maskScale = maskInvert ? 1.f : 0.f;
                 } else {
                     maskScale = *maskPixels * (1.f / maxValue);
+
                     if (maskInvert) {
                         maskScale = 1.f - maskScale;
                     }
                 }
+
                 float alpha = mix * maskScale;
+
                 if (src_pixels) {
                     for (int c = 0; c < dstNComps; ++c) {
                         if (c < srcNComps) {
@@ -140,12 +144,15 @@ Image::applyMaskMixForDstComponents(const RectI& roi,
     case eImageBitDepthByte:
         applyMaskMixForDepth<srcNComps, dstNComps, unsigned char, 255>(roi, maskImg, originalImg, masked, maskInvert, mix);
         break;
+
     case eImageBitDepthShort:
         applyMaskMixForDepth<srcNComps, dstNComps, unsigned short, 65535>(roi, maskImg, originalImg, masked, maskInvert, mix);
         break;
+
     case eImageBitDepthFloat:
         applyMaskMixForDepth<srcNComps, dstNComps, float, 1>(roi, maskImg, originalImg, masked, maskInvert, mix);
         break;
+
     default:
         assert(false);
         break;
@@ -164,6 +171,7 @@ Image::applyMaskMixForSrcComponents(const RectI& roi,
     int dstNComps = getComponentsCount();
 
     assert(0 < dstNComps && dstNComps <= 4);
+
     switch (dstNComps) {
     //case 0:
     //    applyMaskMixForDstComponents<srcNComps,0>(roi, maskImg, originalImg, masked, maskInvert, mix);
@@ -171,15 +179,19 @@ Image::applyMaskMixForSrcComponents(const RectI& roi,
     case 1:
         applyMaskMixForDstComponents<srcNComps, 1>(roi, maskImg, originalImg, masked, maskInvert, mix);
         break;
+
     case 2:
         applyMaskMixForDstComponents<srcNComps, 2>(roi, maskImg, originalImg, masked, maskInvert, mix);
         break;
+
     case 3:
         applyMaskMixForDstComponents<srcNComps, 3>(roi, maskImg, originalImg, masked, maskInvert, mix);
         break;
+
     case 4:
         applyMaskMixForDstComponents<srcNComps, 4>(roi, maskImg, originalImg, masked, maskInvert, mix);
         break;
+
     default:
         break;
     }
@@ -191,107 +203,60 @@ Image::applyMaskMix(const RectI& roi,
                     const Image* originalImg,
                     bool masked,
                     bool maskInvert,
-                    float mix,
-                    const OSGLContextPtr& glContext)
+                    float mix)
 {
+    if (getStorageMode() == eStorageModeVulkan) {
+        maskMixVulkan(roi, maskImg, originalImg, masked, maskInvert, mix);
+        return;
+    }
+
     ///!masked && mix == 1 has nothing to do
-    if ( !masked && (mix == 1) ) {
+    if (!masked && (mix == 1)) {
         return;
     }
 
     QWriteLocker k(&_entryLock);
     std::unique_ptr<QReadLocker> originalLock;
     std::unique_ptr<QReadLocker> maskLock;
+
     if (originalImg) {
-        originalLock.reset( new QReadLocker(&originalImg->_entryLock) );
+        originalLock.reset(new QReadLocker(&originalImg->_entryLock));
     }
+
     if (maskImg) {
-        maskLock.reset( new QReadLocker(&maskImg->_entryLock) );
+        maskLock.reset(new QReadLocker(&maskImg->_entryLock));
     }
+
     const RectI realRoI = roi.intersect(_bounds);
 
-    assert( !originalImg || getBitDepth() == originalImg->getBitDepth() );
-    assert( !masked || !maskImg || maskImg->getComponents() == ImagePlaneDesc::getAlphaComponents() );
+    assert(!originalImg || getBitDepth() == originalImg->getBitDepth());
+    assert(!masked || !maskImg || maskImg->getComponents() == ImagePlaneDesc::getAlphaComponents());
 
-    if (getStorageMode() == eStorageModeGLTex) {
-        assert(glContext);
-        assert(!originalImg || originalImg->getStorageMode() == eStorageModeGLTex);
-        GLShaderPtr shader = glContext->getOrCreateMaskMixShader(maskImg != 0);
-        assert(shader);
-        GLuint fboID = glContext->getFBOId();
-
-        glBindFramebuffer(GL_FRAMEBUFFER, fboID);
-        int target = getGLTextureTarget();
-        glEnable(target);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture( target, getGLTextureID() );
-
-        glTexParameteri (target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri (target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-        glTexParameteri (target, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri (target, GL_TEXTURE_WRAP_T, GL_REPEAT);
-
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, target, getGLTextureID(), 0 /*LoD*/);
-        glCheckFramebufferError();
-
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(target, originalImg ? originalImg->getGLTextureID() : 0);
-
-        glTexParameteri (target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri (target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-        glTexParameteri (target, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri (target, GL_TEXTURE_WRAP_T, GL_REPEAT);
-
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(target, maskImg ? maskImg->getGLTextureID() : 0);
-
-        glTexParameteri (target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri (target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-        glTexParameteri (target, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri (target, GL_TEXTURE_WRAP_T, GL_REPEAT);
-
-
-        shader->bind();
-        shader->setUniform("originalImageTex", 1);
-        shader->setUniform("maskImageTex", 2);
-        shader->setUniform("outputImageTex", 0);
-        shader->setUniform("mixValue", mix);
-        shader->setUniform("maskEnabled", maskImg ? 1 : 0);
-        applyTextureMapping(_bounds, realRoI);
-        shader->unbind();
-
-
-        glBindTexture(target, 0);
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(target, 0);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(target, 0);
-        glCheckError();
-
-        return;
-    }
 
     int srcNComps = originalImg ? (int)originalImg->getComponentsCount() : 0;
+
     //assert(0 < srcNComps && srcNComps <= 4);
     switch (srcNComps) {
-    //case 0:
-    //    applyMaskMixForSrcComponents<0>(realRoI, maskImg, originalImg, masked, maskInvert, mix);
-    //    break;
+    case 0:
+        applyMaskMixForSrcComponents<0>(realRoI, maskImg, originalImg, masked, maskInvert, mix);
+        break;
+
     case 1:
         applyMaskMixForSrcComponents<1>(realRoI, maskImg, originalImg, masked, maskInvert, mix);
         break;
+
     case 2:
         applyMaskMixForSrcComponents<2>(realRoI, maskImg, originalImg, masked, maskInvert, mix);
         break;
+
     case 3:
         applyMaskMixForSrcComponents<3>(realRoI, maskImg, originalImg, masked, maskInvert, mix);
         break;
+
     case 4:
         applyMaskMixForSrcComponents<4>(realRoI, maskImg, originalImg, masked, maskInvert, mix);
         break;
+
     default:
         break;
     }

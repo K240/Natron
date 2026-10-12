@@ -78,13 +78,16 @@ qSystemDirectory()
 {
     QVarLengthArray<wchar_t, MAX_PATH> fullPath;
     UINT retLen = ::GetSystemDirectoryW(fullPath.data(), MAX_PATH);
+
     if (retLen > MAX_PATH) {
         fullPath.resize(retLen);
         retLen = ::GetSystemDirectoryW(fullPath.data(), retLen);
     }
+
     if (!fullPath.constData()) {
         return QString();
     }
+
     std::wstring ws(fullPath.constData(), retLen);
     return QString::fromStdWString(ws);
 }
@@ -96,14 +99,16 @@ load(const wchar_t *libraryName,
     QStringList searchOrder;
 
 #if !defined(QT_BOOTSTRAPPED)
+
     if (!onlySystemDirectory) {
-        searchOrder << QFileInfo( QCoreApplication::applicationFilePath() ).path();
+        searchOrder << QFileInfo(QCoreApplication::applicationFilePath()).path();
     }
+
 #endif
     searchOrder << qSystemDirectory();
 
     if (!onlySystemDirectory) {
-        const QString PATH( QLatin1String( qgetenv("PATH").constData() ) );
+        const QString PATH(QLatin1String(qgetenv("PATH").constData()));
 #     ifdef __NATRON_WIN32__
         const QChar pathSep = QChar::fromLatin1(';');
 #     else
@@ -112,20 +117,22 @@ load(const wchar_t *libraryName,
 #     endif
         searchOrder << PATH.split(pathSep, Qt::SkipEmptyParts);
     }
+
     QString fileName = QString::fromWCharArray(libraryName);
-    fileName.append( QLatin1String(".dll") );
+    fileName.append(QLatin1String(".dll"));
 
     // Start looking in the order specified
-    Q_FOREACH(const QString &path, searchOrder) {
+    Q_FOREACH (const QString &path, searchOrder) {
         QString fullPathAttempt = path;
 
-        if ( !fullPathAttempt.endsWith( QLatin1Char('\\') ) ) {
-            fullPathAttempt.append( QLatin1Char('\\') );
+        if (!fullPathAttempt.endsWith(QLatin1Char('\\'))) {
+            fullPathAttempt.append(QLatin1Char('\\'));
         }
+
         fullPathAttempt.append(fileName);
 
         std::wstring ws = fullPathAttempt.toStdWString();
-        HINSTANCE inst = ::LoadLibraryW( ws.c_str() );
+        HINSTANCE inst = ::LoadLibraryW(ws.c_str());
 
         if (inst != 0) {
             return inst;
@@ -147,7 +154,8 @@ resolveGetSpecialFolderPath()
 #else
         QString lib = QString::fromUtf8("coredll");
 #endif // Q_OS_WINCE
-        HINSTANCE libHandle = load( (const wchar_t*)lib.utf16() );
+        HINSTANCE libHandle = load((const wchar_t*)lib.utf16());
+
         if (libHandle) {
             gsfp = (GetSpecialFolderPath)(void*)GetProcAddress(libHandle, "SHGetSpecialFolderPathW");
         }
@@ -159,7 +167,7 @@ resolveGetSpecialFolderPath()
 static QString
 convertCharArray(const wchar_t *path)
 {
-    return QDir::fromNativeSeparators( QString::fromWCharArray(path) );
+    return QDir::fromNativeSeparators(QString::fromWCharArray(path));
 }
 
 #elif defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
@@ -169,9 +177,11 @@ resolveUserName(uint userId)
 {
 #if !defined(QT_NO_THREAD) && defined(_POSIX_THREAD_SAFE_FUNCTIONS) && !defined(Q_OS_OPENBSD)
     int size_max = sysconf(_SC_GETPW_R_SIZE_MAX);
+
     if (size_max == -1) {
         size_max = 1024;
     }
+
     QVarLengthArray<char, 1024> buf(size_max);
 #endif
 
@@ -184,8 +194,9 @@ resolveUserName(uint userId)
     pw = getpwuid(userId);
 #endif
 #endif
+
     if (pw) {
-        return QFile::decodeName( QByteArray(pw->pw_name) );
+        return QFile::decodeName(QByteArray(pw->pw_name));
     }
 
     return QString();
@@ -201,49 +212,61 @@ OSType
 translateLocation(NATRON_NAMESPACE::StandardPaths::StandardLocationEnum type)
 {
     switch (type) {
-        case NATRON_NAMESPACE::StandardPaths::eStandardLocationConfig:
+    case NATRON_NAMESPACE::StandardPaths::eStandardLocationConfig:
 
-            return kPreferencesFolderType;
-        case NATRON_NAMESPACE::StandardPaths::eStandardLocationDesktop:
+        return kPreferencesFolderType;
 
-            return kDesktopFolderType;
-        case NATRON_NAMESPACE::StandardPaths::eStandardLocationDownload: // needs NSSearchPathForDirectoriesInDomains with NSDownloadsDirectory
-            // which needs an objective-C *.mm file...
-        case NATRON_NAMESPACE::StandardPaths::eStandardLocationDocuments:
+    case NATRON_NAMESPACE::StandardPaths::eStandardLocationDesktop:
 
-            return kDocumentsFolderType;
-        case NATRON_NAMESPACE::StandardPaths::eStandardLocationFonts:
-            // There are at least two different font directories on the mac: /Library/Fonts and ~/Library/Fonts.
+        return kDesktopFolderType;
 
-            // To select a specific one we have to specify a different first parameter when calling FSFindFolder.
-            return kFontsFolderType;
-        case NATRON_NAMESPACE::StandardPaths::eStandardLocationApplications:
+    case NATRON_NAMESPACE::StandardPaths::eStandardLocationDownload: // needs NSSearchPathForDirectoriesInDomains with NSDownloadsDirectory
 
-            return kApplicationsFolderType;
-        case NATRON_NAMESPACE::StandardPaths::eStandardLocationMusic:
+    // which needs an objective-C *.mm file...
+    case NATRON_NAMESPACE::StandardPaths::eStandardLocationDocuments:
 
-            return kMusicDocumentsFolderType;
-        case NATRON_NAMESPACE::StandardPaths::eStandardLocationMovies:
+        return kDocumentsFolderType;
 
-            return kMovieDocumentsFolderType;
-        case NATRON_NAMESPACE::StandardPaths::eStandardLocationPictures:
+    case NATRON_NAMESPACE::StandardPaths::eStandardLocationFonts:
+        // There are at least two different font directories on the mac: /Library/Fonts and ~/Library/Fonts.
 
-            return kPictureDocumentsFolderType;
-        case NATRON_NAMESPACE::StandardPaths::eStandardLocationTemp:
+        // To select a specific one we have to specify a different first parameter when calling FSFindFolder.
+        return kFontsFolderType;
 
-            return kTemporaryFolderType;
-        case NATRON_NAMESPACE::StandardPaths::eStandardLocationGenericData:
-        case NATRON_NAMESPACE::StandardPaths::eStandardLocationRuntime:
-        case NATRON_NAMESPACE::StandardPaths::eStandardLocationData:
+    case NATRON_NAMESPACE::StandardPaths::eStandardLocationApplications:
 
-            return kApplicationSupportFolderType;
-        case NATRON_NAMESPACE::StandardPaths::eStandardLocationGenericCache:
-        case NATRON_NAMESPACE::StandardPaths::eStandardLocationCache:
-            
-            return kCachedDataFolderType;
-        default:
-            
-            return kDesktopFolderType;
+        return kApplicationsFolderType;
+
+    case NATRON_NAMESPACE::StandardPaths::eStandardLocationMusic:
+
+        return kMusicDocumentsFolderType;
+
+    case NATRON_NAMESPACE::StandardPaths::eStandardLocationMovies:
+
+        return kMovieDocumentsFolderType;
+
+    case NATRON_NAMESPACE::StandardPaths::eStandardLocationPictures:
+
+        return kPictureDocumentsFolderType;
+
+    case NATRON_NAMESPACE::StandardPaths::eStandardLocationTemp:
+
+        return kTemporaryFolderType;
+
+    case NATRON_NAMESPACE::StandardPaths::eStandardLocationGenericData:
+    case NATRON_NAMESPACE::StandardPaths::eStandardLocationRuntime:
+    case NATRON_NAMESPACE::StandardPaths::eStandardLocationData:
+
+        return kApplicationSupportFolderType;
+
+    case NATRON_NAMESPACE::StandardPaths::eStandardLocationGenericCache:
+    case NATRON_NAMESPACE::StandardPaths::eStandardLocationCache:
+
+        return kCachedDataFolderType;
+
+    default:
+
+        return kDesktopFolderType;
     }
 }
 
@@ -256,8 +279,8 @@ getFullPath(const FSRef &ref)
 {
     QByteArray ba(2048, 0);
 
-    if (FSRefMakePath( &ref, reinterpret_cast<UInt8 *>( ba.data() ), ba.size() ) == noErr) {
-        return QString::fromUtf8( ba.constData() ).normalized(QString::NormalizationForm_C);
+    if (FSRefMakePath(&ref, reinterpret_cast<UInt8 *>(ba.data()), ba.size()) == noErr) {
+        return QString::fromUtf8(ba.constData()).normalized(QString::NormalizationForm_C);
     }
 
     return QString();
@@ -287,41 +310,75 @@ NATRON_NAMESPACE_ANONYMOUS_EXIT
 QString
 StandardPaths::writableLocation(StandardLocationEnum type)
 {
+    const QString testProfile = qEnvironmentVariable("NATRON_TEST_PROFILE");
+
+    if (!testProfile.isEmpty()) {
+        if (!QDir::isAbsolutePath(testProfile)) {
+            throw std::runtime_error("NATRON_TEST_PROFILE must be an absolute directory.");
+        }
+
+        switch (type) {
+        case eStandardLocationData:
+            return testProfile + QString::fromUtf8("/data");
+
+        case eStandardLocationCache:
+            return testProfile + QString::fromUtf8("/cache");
+
+        case eStandardLocationTemp:
+            return testProfile + QString::fromUtf8("/temp");
+
+        default:
+            break;
+        }
+    }
+
     QStandardPaths::StandardLocation path;
+
     switch (type) {
     case StandardPaths::eStandardLocationDesktop:
         path = QStandardPaths::DesktopLocation;
         break;
+
     case StandardPaths::eStandardLocationDocuments:
         path = QStandardPaths::DocumentsLocation;
         break;
+
     case StandardPaths::eStandardLocationFonts:
         path = QStandardPaths::FontsLocation;
         break;
+
     case StandardPaths::eStandardLocationApplications:
         path = QStandardPaths::ApplicationsLocation;
         break;
+
     case StandardPaths::eStandardLocationMusic:
         path = QStandardPaths::MusicLocation;
         break;
+
     case StandardPaths::eStandardLocationMovies:
         path = QStandardPaths::MoviesLocation;
         break;
+
     case StandardPaths::eStandardLocationPictures:
         path = QStandardPaths::PicturesLocation;
         break;
+
     case StandardPaths::eStandardLocationTemp:
         path = QStandardPaths::TempLocation;
         break;
+
     case StandardPaths::eStandardLocationHome:
         path = QStandardPaths::HomeLocation;
         break;
+
     case StandardPaths::eStandardLocationData:
         path = QStandardPaths::AppLocalDataLocation;
         break;
+
     case StandardPaths::eStandardLocationCache:
         path = QStandardPaths::CacheLocation;
         break;
+
     default:
         break;
     }

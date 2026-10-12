@@ -373,13 +373,9 @@ public:
 
     bool isAutoScrollEnabled() const;
 
-    GLRendererID getActiveOpenGLRendererID() const;
-
-    void populateOpenGLRenderers(const std::list<OpenGLRendererInfo>& renderers);
 
     bool isOpenGLRenderingEnabled() const;
 
-    int getMaxOpenGLContexts() const;
 
     bool isDriveLetterToUNCPathConversionEnabled() const;
 
@@ -459,7 +455,6 @@ private:
     KnobChoicePtr _availableOpenGLRenderers;
     KnobIntPtr _nOpenGLContexts;
     KnobChoicePtr _enableOpenGL;
-
 
 
     // General/Projects setup

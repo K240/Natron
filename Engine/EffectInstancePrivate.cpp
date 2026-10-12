@@ -184,7 +184,7 @@ ActionsCache::getComponentsNeededResults(U64 hash, double time, ViewIdx view, Ef
             return false;
         }
     }
-    
+
     return false;
 }
 
@@ -357,7 +357,6 @@ EffectInstance::RenderArgs::RenderArgs()
     , firstFrame(0)
     , lastFrame(0)
     , transformRedirections()
-    , isDoingOpenGLRender(false)
 {
 }
 
@@ -377,7 +376,6 @@ EffectInstance::RenderArgs::RenderArgs(const RenderArgs & o)
     , firstFrame(o.firstFrame)
     , lastFrame(o.lastFrame)
     , transformRedirections(o.transformRedirections)
-    , isDoingOpenGLRender(o.isDoingOpenGLRender)
 {
 }
 
@@ -400,7 +398,6 @@ EffectInstance::RenderArgs::operator=(const RenderArgs & o)
     firstFrame = o.firstFrame;
     lastFrame = o.lastFrame;
     transformRedirections = o.transformRedirections;
-    isDoingOpenGLRender = o.isDoingOpenGLRender;
     //}
     return *this;
 }
@@ -423,8 +420,6 @@ EffectInstance::Implementation::Implementation(EffectInstance* publicInterface)
     , metadata()
     , runningClipPreferences(false)
     , overlaysViewport(0)
-    , attachedContextsMutex()
-    , attachedContexts()
     , mainInstance(0)
     , isDoingInstanceSafeRender(false)
     , renderClonesMutex()
@@ -448,17 +443,15 @@ EffectInstance::Implementation::Implementation(const Implementation& other)
 , imagesBeingRenderedMutex()
 , imagesBeingRendered()
 #endif
-, overlaySlaves(other.overlaySlaves)
-, metadataMutex()
-, metadata(other.metadata)
-, runningClipPreferences(other.runningClipPreferences)
-, overlaysViewport(other.overlaysViewport)
-, attachedContextsMutex()
-, attachedContexts()
-, mainInstance(other._publicInterface)
-, isDoingInstanceSafeRender(false)
-, renderClonesMutex()
-, renderClonesPool()
+    , overlaySlaves(other.overlaySlaves)
+    , metadataMutex()
+    , metadata(other.metadata)
+    , runningClipPreferences(other.runningClipPreferences)
+    , overlaysViewport(other.overlaysViewport)
+    , mainInstance(other._publicInterface)
+    , isDoingInstanceSafeRender(false)
+    , renderClonesMutex()
+    , renderClonesPool()
 {
 
 }
@@ -533,8 +526,8 @@ EffectInstance::Implementation::runChangedParamCallback(KnobI* k,
 
     {
         PythonGILLocker pgl;
-        
-        if (!PyObject_HasAttrString( nodeObj, k->getName().c_str() ) ) {
+
+        if (!PyObject_HasAttrString(nodeObj, k->getName().c_str())) {
             return;
         }
     }
@@ -685,19 +678,18 @@ EffectInstance::Implementation::unmarkImageAsBeingRendered(const ImagePtr & img,
 
 
 EffectInstance::Implementation::ScopedRenderArgs::ScopedRenderArgs(const EffectTLSDataPtr& tlsData,
-                                                                   const RectD & rod,
-                                                                   const RectI & renderWindow,
-                                                                   double time,
-                                                                   ViewIdx view,
-                                                                   bool isIdentity,
-                                                                   double identityTime,
-                                                                   const EffectInstancePtr& identityInput,
-                                                                   const ComponentsNeededMapPtr& compsNeeded,
-                                                                   const EffectInstance::InputImagesMap& inputImages,
-                                                                   const RoIMap & roiMap,
-                                                                   int firstFrame,
-                                                                   int lastFrame,
-                                                                   bool isDoingOpenGLRender)
+        const RectD & rod,
+        const RectI & renderWindow,
+        double time,
+        ViewIdx view,
+        bool isIdentity,
+        double identityTime,
+        const EffectInstancePtr& identityInput,
+        const ComponentsNeededMapPtr& compsNeeded,
+        const EffectInstance::InputImagesMap& inputImages,
+        const RoIMap & roiMap,
+        int firstFrame,
+        int lastFrame)
     : tlsData(tlsData)
 {
     tlsData->currentRenderArgs.rod = rod;
@@ -712,7 +704,6 @@ EffectInstance::Implementation::ScopedRenderArgs::ScopedRenderArgs(const EffectT
     tlsData->currentRenderArgs.regionOfInterestResults = roiMap;
     tlsData->currentRenderArgs.firstFrame = firstFrame;
     tlsData->currentRenderArgs.lastFrame = lastFrame;
-    tlsData->currentRenderArgs.isDoingOpenGLRender = isDoingOpenGLRender;
 
     tlsData->currentRenderArgs.validArgs = true;
 }

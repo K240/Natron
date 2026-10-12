@@ -45,9 +45,9 @@ NATRON_NAMESPACE_ENTER
 class CurveGui
     : public QObject
 {
-GCC_DIAG_SUGGEST_OVERRIDE_OFF
+    GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
-GCC_DIAG_SUGGEST_OVERRIDE_ON
+    GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
 
@@ -60,7 +60,7 @@ public:
 
     virtual ~CurveGui() OVERRIDE;
 
-    const QString & getName() const
+    const QString &getName() const
     {
         return _name;
     }
@@ -70,7 +70,7 @@ public:
         _name = name;
     }
 
-    const QColor & getColor() const
+    const QColor &getColor() const
     {
         return _color;
     }
@@ -119,7 +119,7 @@ public:
     virtual double evaluate(bool useExpr, double x) const = 0;
     virtual CurvePtr  getInternalCurve() const;
 
-    void drawCurve(int curveIndex, int curvesCount, double screenPixelRatio);
+    void drawCurve(int curveIndex, int curvesCount);
 
     virtual Curve::YRange getCurveYRange() const;
     virtual bool areKeyFramesTimeClampedToIntegers() const;
@@ -138,14 +138,14 @@ private:
                              const double parametricXMin,
                              const double parametricXMax,
                              KeyFrameSet::const_iterator* lastUpperIt,
-                             double* x2,
+                             double *x2,
                              KeyFrame* key,
-                             bool* isKey );
+                             bool* isKey);
 
 protected:
 
     CurvePtr _internalCurve; ///ptr to the internal curve
-    CurveWidget* _curveWidget;
+    CurveWidget *_curveWidget;
 
 private:
 
@@ -161,9 +161,9 @@ typedef std::list<CurveGuiPtr> Curves;
 class KnobCurveGui
     : public CurveGui
 {
-GCC_DIAG_SUGGEST_OVERRIDE_OFF
+    GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
-GCC_DIAG_SUGGEST_OVERRIDE_ON
+    GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
 
@@ -196,7 +196,10 @@ public:
     }
 
     virtual double evaluate(bool useExpr, double x) const OVERRIDE FINAL WARN_UNUSED_RETURN;
-    RotoContextPtr getRotoContext() const { return _roto; }
+    RotoContextPtr getRotoContext() const
+    {
+        return _roto;
+    }
 
     KnobIPtr getInternalKnob() const;
 
@@ -235,18 +238,33 @@ public:
 
     virtual ~BezierCPCurveGui();
 
-    RotoContextPtr getRotoContext() const { return _rotoContext; }
+    RotoContextPtr getRotoContext() const
+    {
+        return _rotoContext;
+    }
 
     BezierPtr getBezier() const;
     virtual double evaluate(bool useExpr, double x) const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual Curve::YRange getCurveYRange() const OVERRIDE FINAL WARN_UNUSED_RETURN;
-    virtual bool areKeyFramesTimeClampedToIntegers() const OVERRIDE FINAL WARN_UNUSED_RETURN { return true; }
+    virtual bool areKeyFramesTimeClampedToIntegers() const OVERRIDE FINAL WARN_UNUSED_RETURN
+    {
+        return true;
+    }
 
-    virtual bool areKeyFramesValuesClampedToBooleans() const OVERRIDE FINAL WARN_UNUSED_RETURN { return false; }
+    virtual bool areKeyFramesValuesClampedToBooleans() const OVERRIDE FINAL WARN_UNUSED_RETURN
+    {
+        return false;
+    }
 
-    virtual bool areKeyFramesValuesClampedToIntegers() const OVERRIDE FINAL WARN_UNUSED_RETURN { return true; }
+    virtual bool areKeyFramesValuesClampedToIntegers() const OVERRIDE FINAL WARN_UNUSED_RETURN
+    {
+        return true;
+    }
 
-    virtual bool isYComponentMovable() const OVERRIDE FINAL WARN_UNUSED_RETURN { return false; }
+    virtual bool isYComponentMovable() const OVERRIDE FINAL WARN_UNUSED_RETURN
+    {
+        return false;
+    }
 
     virtual KeyFrameSet getKeyFrames() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual int getKeyFrameIndex(double time) const OVERRIDE FINAL WARN_UNUSED_RETURN;

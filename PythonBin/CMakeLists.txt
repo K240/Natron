@@ -25,6 +25,9 @@ set(NatronPython_SOURCES
     ../Global/StrUtils.cpp 
 )
 add_executable(NatronPython ${NatronPython_SOURCES})
+if(WIN32)
+    target_sources(NatronPython PRIVATE ../Global/WindowsUtf8.manifest)
+endif()
 set_target_properties(NatronPython PROPERTIES OUTPUT_NAME "natron-python")
 target_link_libraries(NatronPython
     PRIVATE

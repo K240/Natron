@@ -13,6 +13,7 @@ permissions:
 jobs:
   windows-qt6:
     runs-on: windows-latest
+    timeout-minutes: 120
     defaults:
       run:
         shell: pwsh
@@ -25,14 +26,41 @@ jobs:
           python-version: '3.14'
       - name: Install matching Qt SDK
         run: uv tool run --from aqtinstall aqt install-qt windows desktop 6.11.2 win64_msvc2022_64 -O '${{ runner.temp }}\Qt'
+      - name: Provision pinned Vulkan SDK and software driver
+        run: |
+          .\tools\install-windows-vulkan-sdk.ps1
+          "VULKAN_SDK=$env:VULKAN_SDK" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "VK_LAYER_PATH=$env:VK_LAYER_PATH" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          .\tools\install-windows-software-vulkan.ps1
       - name: Build with MSVC and CMake
         run: .\tools\build-windows-qt6.ps1 -QtRoot '${{ runner.temp }}\Qt\6.11.2\msvc2022_64' -VcpkgRoot $env:VCPKG_INSTALLATION_ROOT -Jobs 4
       - name: Run native tests
         run: .\tools\run-windows-qt6.ps1 -QtRoot '${{ runner.temp }}\Qt\6.11.2\msvc2022_64' -Program CTest
-      - name: Render and reload a project through Python
-        run: .\tools\run-windows-qt6.ps1 -QtRoot '${{ runner.temp }}\Qt\6.11.2\msvc2022_64' -Program Smoke
+      - name: Rebuild all shipped OFX bundles
+        run: .\tools\build-windows-ofx.ps1 -Jobs 4
+      - name: Validate software Vulkan core and SPIR-V
+        run: |
+          .\tools\build-windows-vulkan.ps1 -QtRoot '${{ runner.temp }}\Qt\6.11.2\msvc2022_64' -Jobs 4
+          $env:PATH = "$PWD\build\software-vulkan-driver\bin;$env:PATH"
+          .\tools\test-windows-vulkan-software.ps1 -IcdPath build/software-vulkan-driver/vk_swiftshader_icd.json -QtRoot '${{ runner.temp }}\Qt\6.11.2\msvc2022_64'
+      - name: Audit and package the Release binaries
+        run: |
+          uv run --frozen python tools/audit-native-engine-source.py
+          uv run --frozen --with pefile==2024.8.26 python tools/audit-native-ofx-runtime.py
+          uv run --frozen --with pefile==2024.8.26 python tools/package-windows-portable.py --qt-root '${{ runner.temp }}\Qt\6.11.2\msvc2022_64' --destination build/portable --zip build/Natron-windows-qt6-vulkan.zip
+      - name: Test relocated portable Python, CPU OFX, native rendering and GUI
+        run: .\tools\test-windows-portable.ps1 -Archive build/Natron-windows-qt6-vulkan.zip -ReportDirectory build/portable-tests -SoftwareDriverDirectory build/software-vulkan-driver
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: windows-qt6-test-log
-          path: build/windows-qt6/Testing/Temporary/LastTest.log
+          name: windows-qt6-vulkan-test-evidence
+          path: |
+            build/windows-qt6/Testing/Temporary/LastTest.log
+            build/software-vulkan-tests
+            build/portable-tests
+            build/*audit.json
+            build/software-vulkan-driver/manifest.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Natron-windows-qt6-vulkan
+          path: build/Natron-windows-qt6-vulkan.zip

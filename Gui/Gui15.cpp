@@ -319,6 +319,18 @@ Gui::putSettingsPanelFirst(DockablePanel* panel)
 void
 Gui::addVisibleDockablePanel(DockablePanel* panel)
 {
+    assert(panel);
+    // Panels may be destroyed directly when a node's controls are rebuilt.
+    // Remove their non-owning registry entry before the next Viewer callback.
+    const auto tracked = QString::fromUtf8("natronVisiblePanelTracked");
+
+    if (!panel->property(tracked.toUtf8().constData()).toBool()) {
+        connect(panel, &QObject::destroyed, this, [this, panel] {
+            removeVisibleDockablePanel(panel);
+        });
+        panel->setProperty(tracked.toUtf8().constData(), true);
+    }
+
     DockablePanel* found = 0;
     int nbDockedPanels = 0;
     {

@@ -27,11 +27,9 @@ list(APPEND PYGUI_INCLUDE_DIRS ${PYSIDE_INCLUDE_DIRS} ${PYSIDE_INCLUDE_DIRS}/QtC
     ${PYSIDE_INCLUDE_DIRS}/QtGui ${PYSIDE_INCLUDE_DIRS}/QtWidgets)
 list(APPEND PYGUI_INCLUDE_DIRS ${QTCORE_INCLUDE_DIRS} ${QTGUI_INCLUDE_DIRS}
     ${QTWIDGETS_INCLUDE_DIRS} ${Python3_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
-list(APPEND PYGUI_INCLUDE_DIRS ${Qt6OpenGLWidgets_INCLUDE_DIRS})
 list(TRANSFORM PYGUI_INCLUDE_DIRS PREPEND "-I" OUTPUT_VARIABLE PYGUI_INCS)
 set(PYGUI_HEADER PySide${PYSIDE_VERSION_MAJOR}_Gui_Python.h)
 
-set(QT_OPENGLWIDGETS Qt::OpenGLWidgets)
 
 set(shiboken_args
     "-std=c++17" "--enable-parent-ctor-heuristic" "--use-isnull-as-nb_nonzero"
@@ -74,11 +72,11 @@ target_link_libraries(NatronGui
         Qt::Network
         Qt::Gui
         Qt::Widgets
-        ${QT_OPENGLWIDGETS}
         Python3::Module
         NatronEngine
     PRIVATE
         qhttpserver
+        NatronGpuQt
 )
 target_include_directories(NatronGui
     PRIVATE

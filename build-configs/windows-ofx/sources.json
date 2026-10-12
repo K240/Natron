@@ -2,7 +2,11 @@
   "repositories": {
     "openfx-misc": "0abd46b5a8cbc98fa24579042129460d0aa87b8f",
     "openfx-arena": "49e4d5fc197a637196c1a7decab7f97751b867f6",
-    "openfx-gmic": "292ac55c7c84f6eff56c1764a5a5037b96895d12"
+    "openfx-gmic": "292ac55c7c84f6eff56c1764a5a5037b96895d12",
+    "openfx-io": "1bce1f1a2ad05c793682dd6845e62e5b352a3ea6"
+  },
+  "codecs": {
+    "libultrahdr": "a8166d65171aef43cb4bc211538ee6619a9af680"
   },
   "cimgCommit": "b33dcc8f9f1acf1f276ded92c04f8231f6c23fcd",
   "gmicVersion": "2.8.4",

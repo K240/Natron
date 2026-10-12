@@ -28,12 +28,11 @@
 
 #include "Global/Macros.h"
 
-#include "Global/GLIncludes.h" //!<must be included before QGlWidget because of gl.h and glew.h
 #include "Global/GlobalDefines.h"
 
 #include <QTreeWidget>
 
-#include <QOpenGLWidget>
+#include <QWidget>
 
 #include "Engine/OverlaySupport.h"
 #include "Engine/ViewIdx.h"
@@ -67,11 +66,11 @@ class DopeSheetViewPrivate;
  * /!\ This class should depends less of the hierarchy view.
  */
 class DopeSheetView
-    : public QOpenGLWidget, public OverlaySupport
+    : public QWidget, public OverlaySupport
 {
-GCC_DIAG_SUGGEST_OVERRIDE_OFF
+    GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
-GCC_DIAG_SUGGEST_OVERRIDE_ON
+    GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
     /**
@@ -80,8 +79,7 @@ public:
      * Each state, except esNoEditingState, corresponds to  an user
      * interaction.
      */
-    enum EventStateEnum
-    {
+    enum EventStateEnum {
         esNoEditingState,
         esPickKeyframe,
         esReaderLeftTrim,
@@ -125,6 +123,11 @@ public:
     SequenceTime getCurrentFrame() const;
 
     void swapOpenGLBuffers() OVERRIDE FINAL;
+    bool supportsDrawList() const OVERRIDE FINAL
+    {
+        return true;
+    }
+    OverlayDrawList *getOverlayDrawList() OVERRIDE FINAL;
     void getViewportSize(double &width, double &height) const OVERRIDE FINAL;
     void getPixelScale(double &xScale, double &yScale) const OVERRIDE FINAL;
 #ifdef OFX_EXTENSIONS_NATRON
@@ -134,16 +137,16 @@ public:
     void saveOpenGLContext() OVERRIDE FINAL;
     void restoreOpenGLContext() OVERRIDE FINAL;
     virtual RectD getViewportRect() const OVERRIDE FINAL WARN_UNUSED_RETURN;
-    virtual void getCursorPosition(double& x, double& y) const OVERRIDE FINAL;
+    virtual void getCursorPosition(double &x, double &y) const OVERRIDE FINAL;
 
 
     /**
-     * @brief Converts the given (x,y) coordinates which are in OpenGL canonical coordinates to widget coordinates.
+     * @brief Converts the given (x,y) coordinates which are in canonical coordinates to widget coordinates.
      **/
     virtual void toWidgetCoordinates(double *x, double *y) const OVERRIDE FINAL;
 
     /**
-     * @brief Converts the given (x,y) coordinates which are in widget coordinates to OpenGL canonical coordinates
+     * @brief Converts the given (x,y) coordinates which are in widget coordinates to canonical coordinates
      **/
     virtual void toCanonicalCoordinates(double *x, double *y) const OVERRIDE FINAL;
 
@@ -163,9 +166,9 @@ public Q_SLOTS:
     void redraw() OVERRIDE FINAL;
 
 protected:
-    void initializeGL() OVERRIDE FINAL;
-    void resizeGL(int w, int h) OVERRIDE FINAL;
-    void paintGL() OVERRIDE FINAL;
+    bool event(QEvent* event) OVERRIDE FINAL;
+    void resizeEvent(QResizeEvent* event) OVERRIDE FINAL;
+    void paintEvent(QPaintEvent* event) OVERRIDE FINAL;
 
     /* events */
     void mousePressEvent(QMouseEvent *e) OVERRIDE FINAL;

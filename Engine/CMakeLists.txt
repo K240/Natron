@@ -53,19 +53,12 @@ add_custom_command(OUTPUT ${PyEngine_SOURCES}
     DEPENDS ${SHIBOKEN_EXE} ${PYENGINE_HEADER} ${NatronEngine_HEADERS} ../tools/utils/sourceCleanup.py typesystem_engine.xml
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
-if(UNIX AND NOT APPLE)
-    set(XDG_LIBS ${X11_LIBRARIES})
-    if(Wayland_FOUND)
-        set(XDG_LIBS Wayland::Client Wayland::Egl ${XDG_LIBS})
-        set(XDG_DEFS __NATRON_WAYLAND__)
-    endif()
-endif()
+
 
 
 list(APPEND NatronEngine_SOURCES
     ${NatronEngine_SOURCES}
     ${PyEngine_SOURCES}
-    ../Global/glad_source.c
     ../Global/FStreamsSupport.cpp
     ../Global/ProcInfo.cpp
     ../Global/PythonUtils.cpp
@@ -80,13 +73,13 @@ target_link_libraries(NatronEngine
         Boost::serialization
         PkgConfig::Cairo
     PRIVATE
+        NatronGpu
         ${SHIBOKEN_LIB}
         ${PYSIDE_LIB}
         Qt::Core
         Qt::Concurrent
         Qt::Network
         Python3::Module
-        ${XDG_LIBS}
         ceres
         hoedown
         mv
@@ -100,20 +93,16 @@ if(WIN32)
 endif()
 
 target_include_directories(NatronEngine
-    PUBLIC
-        ../Global/glad$<IF:$<CONFIG:Debug>,Deb,Rel>/include
     PRIVATE
         ${PYSIDE_INCLUDE_DIRS}/QtCore
         .
         ..
         ../Global
         ../libs/SequenceParsing
-        ${X11_INCLUDE_DIR}
 )
 target_compile_definitions(NatronEngine
     PRIVATE
         NATRON_CUSTOM_BUILD_USER_TOKEN="${BUILD_USER_NAME}"
         NATRON_BUILD_NUMBER=0
         QT_NO_KEYWORDS
-        ${XDG_DEFS}
 )

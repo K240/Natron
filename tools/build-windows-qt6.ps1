@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$QtRoot = 'D:\Qt\6.11.2\msvc2022_64',
+    [string]$VulkanSdkRoot = 'C:\VulkanSDK\1.4.363.0',
     [string]$VcpkgRoot = 'D:\work\apps\vcpkg',
     [string]$BuildDirectory = 'build\windows-qt6',
     [int]$Jobs = 16,
@@ -80,7 +81,11 @@ Invoke-Checked -Command cmake -Arguments @(
     "-DVCPKG_INSTALLED_DIR=$depsRoot", '-DVCPKG_MANIFEST_MODE=OFF', '-DVCPKG_TARGET_TRIPLET=x64-windows',
     "-DPython3_EXECUTABLE=$pythonExe", "-DPython_EXECUTABLE=$pythonExe",
     "-DPKG_CONFIG_EXECUTABLE=$depsRoot\x64-windows\tools\pkgconf\pkgconf.exe",
-    '-DSHIBOKEN6TOOLS_SKIP_FIND_DEPENDENCIES=ON'
+    '-DSHIBOKEN6TOOLS_SKIP_FIND_DEPENDENCIES=ON',
+    "-DNATRON_VULKAN_SDK_ROOT=$VulkanSdkRoot",
+    "-DVulkan_INCLUDE_DIR=$VulkanSdkRoot\Include",
+    "-DVulkan_LIBRARY=$VulkanSdkRoot\Lib\vulkan-1.lib",
+    "-DVulkan_GLSLANG_VALIDATOR_EXECUTABLE=$VulkanSdkRoot\Bin\glslangValidator.exe"
 )
 if (-not $ConfigureOnly) {
     Invoke-Checked -Command cmake -Arguments @('--build', $BuildDirectory, '--parallel', "$Jobs", '--', '-k', '0')

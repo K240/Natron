@@ -4580,7 +4580,7 @@ OfxParametricInstance::getCustomOverlayInteractEntryPoint(const OFX::Host::Param
 {
     Q_UNUSED(param);
     GCC_DIAG_PEDANTIC_OFF
-    return (OfxPluginEntryPoint*)getProperties().getPointerProperty(kOfxParamPropParametricInteractBackground);
+    return (OfxPluginEntryPoint*)getProperties().getPointerProperty(kNatronOfxParamPropParametricInteractBackgroundDrawSuiteV1);
     GCC_DIAG_PEDANTIC_ON
 }
 

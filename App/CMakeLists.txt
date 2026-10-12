@@ -19,7 +19,7 @@
 
 set(Natron_SOURCES NatronApp_main.cpp)
 if(WIN32)
-    list(APPEND Natron_SOURCES ../Natron.rc)
+    list(APPEND Natron_SOURCES ../Natron.rc ../Global/WindowsUtf8.manifest)
 endif()
 add_executable(Natron ${Natron_SOURCES})
 if(APPLE)

@@ -28,13 +28,12 @@
 
 #include "Global/Macros.h"
 
-#include "Global/GLIncludes.h" //!<must be included before QGlWidget because of gl.h and glew.h
 
 CLANG_DIAG_OFF(uninitialized)
 #include <QSize>
 CLANG_DIAG_ON(uninitialized)
 
-#include <QOpenGLWidget>
+#include <QWidget>
 
 #include <Global/QtCompat.h>
 
@@ -48,17 +47,16 @@ NATRON_NAMESPACE_ENTER
  **/
 struct HistogramPrivate;
 class Histogram
-    : public QOpenGLWidget
-      , public PanelWidget
+    : public QWidget
+    , public PanelWidget
 {
-GCC_DIAG_SUGGEST_OVERRIDE_OFF
+    GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
-GCC_DIAG_SUGGEST_OVERRIDE_ON
+    GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
 
-    enum DisplayModeEnum
-    {
+    enum DisplayModeEnum {
         eDisplayModeRGB = 0,
         eDisplayModeA,
         eDisplayModeY,
@@ -67,14 +65,13 @@ public:
         eDisplayModeB
     };
 
-    Histogram(Gui* gui,
-              const QOpenGLWidget* shareWidget = NULL);
+    explicit Histogram(Gui* gui);
 
     virtual ~Histogram();
 
     void renderText(double x, double y, const QString & text, const QColor & color, const QFont & font, int flags = 0) const;
 
-    void setViewerCursor(const std::vector<double>& pickerColor);
+    void setViewerCursor(const std::vector<double> &pickerColor);
     void hideViewerCursor();
 
     int getViewerTextureInputDisplayed() const;
@@ -82,7 +79,6 @@ public:
 
 public Q_SLOTS:
 
-#ifndef NATRON_HISTOGRAM_USING_OPENGL
 
     void onCPUHistogramComputed();
 
@@ -90,7 +86,6 @@ public Q_SLOTS:
 
     void populateViewersChoices();
 
-#endif
 
     void onDisplayModeChanged(QAction*);
 
@@ -102,9 +97,8 @@ public Q_SLOTS:
 
 private:
 
-    virtual void initializeGL() OVERRIDE FINAL;
-    virtual void paintGL() OVERRIDE FINAL;
-    virtual void resizeGL(int w, int h) OVERRIDE FINAL;
+    virtual void paintEvent(QPaintEvent* event) OVERRIDE FINAL;
+    virtual void resizeEvent(QResizeEvent* event) OVERRIDE FINAL;
     virtual void mousePressEvent(QMouseEvent* e) OVERRIDE FINAL;
     virtual void mouseMoveEvent(QMouseEvent* e) OVERRIDE FINAL;
     virtual void mouseReleaseEvent(QMouseEvent* e) OVERRIDE FINAL;

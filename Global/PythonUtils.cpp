@@ -56,15 +56,21 @@ static bool fileExists(const std::string& path)
 
 static bool dirExists(const std::string& path)
 {
+#ifdef _MSC_VER
+    const DWORD attributes = GetFileAttributesW(StrUtils::utf8_to_utf16(path).c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY);
+#else
     // https://stackoverflow.com/q/18100097
     struct stat info;
 
-    if(stat(path.c_str(), &info ) != 0) {
+    if (stat(path.c_str(), &info) != 0) {
         return false;
-    } else if(info.st_mode & S_IFDIR) {
+    } else if (info.st_mode & S_IFDIR) {
         return true;
     }
+
     return false;
+#endif
 }
 
 void setupPythonEnv(const std::string& binPath)
@@ -88,7 +94,7 @@ void setupPythonEnv(const std::string& binPath)
 #  if defined(__NATRON_LINUX__)
     std::string pythonHome = binPath + "/..";
 #  elif defined(__NATRON_OSX__)
-    std::string pythonHome = binPath+ "/../Frameworks/Python.framework/Versions/" NATRON_PY_VERSION_STRING;
+    std::string pythonHome = binPath + "/../Frameworks/Python.framework/Versions/" NATRON_PY_VERSION_STRING;
 #  else
 #    error "unsupported platform"
 #  endif
@@ -98,40 +104,46 @@ void setupPythonEnv(const std::string& binPath)
     std::string pyPathSitePackages = pyPath + "/site-packages";
     std::string pluginPath = binPath + "/../Plugins";
 #endif
-    if ( !fileExists( StrUtils::fromNativeSeparators(pyPathZip) ) ) {
+
+    if (!fileExists(StrUtils::fromNativeSeparators(pyPathZip))) {
 #     if defined(NATRON_CONFIG_SNAPSHOT) || defined(DEBUG)
-        printf( "\"%s\" does not exist, not added to PYTHONPATH\n", pyPathZip.c_str() );
+        printf("\"%s\" does not exist, not added to PYTHONPATH\n", pyPathZip.c_str());
 #     endif
         pyPathZip.clear();
     }
-    if ( !dirExists( StrUtils::fromNativeSeparators(pyPath) ) ) {
+
+    if (!dirExists(StrUtils::fromNativeSeparators(pyPath))) {
 #     if defined(NATRON_CONFIG_SNAPSHOT) || defined(DEBUG)
-        printf( "\"%s\" does not exist, not added to PYTHONPATH\n", pyPath.c_str() );
+        printf("\"%s\" does not exist, not added to PYTHONPATH\n", pyPath.c_str());
 #     endif
         pyPath.clear();
     }
-    if ( !dirExists( StrUtils::fromNativeSeparators(pyPathDynLoad) ) ) {
+
+    if (!dirExists(StrUtils::fromNativeSeparators(pyPathDynLoad))) {
 #     if defined(NATRON_CONFIG_SNAPSHOT) || defined(DEBUG)
-        printf( "\"%s\" does not exist, not added to PYTHONPATH\n", pyPathDynLoad.c_str() );
+        printf("\"%s\" does not exist, not added to PYTHONPATH\n", pyPathDynLoad.c_str());
 #     endif
         pyPathDynLoad.clear();
     }
-    if ( !dirExists( StrUtils::fromNativeSeparators(pyPathSitePackages) ) ) {
+
+    if (!dirExists(StrUtils::fromNativeSeparators(pyPathSitePackages))) {
 #     if defined(NATRON_CONFIG_SNAPSHOT) || defined(DEBUG)
-        printf( "\"%s\" does not exist, not added to PYTHONPATH\n", pyPathSitePackages.c_str() );
+        printf("\"%s\" does not exist, not added to PYTHONPATH\n", pyPathSitePackages.c_str());
 #     endif
         pyPathSitePackages.clear();
     }
-    if ( !dirExists( StrUtils::fromNativeSeparators(pluginPath) ) ) {
+
+    if (!dirExists(StrUtils::fromNativeSeparators(pluginPath))) {
 #     if defined(NATRON_CONFIG_SNAPSHOT) || defined(DEBUG)
-        printf( "\"%s\" does not exist, not added to PYTHONPATH\n", pluginPath.c_str() );
+        printf("\"%s\" does not exist, not added to PYTHONPATH\n", pluginPath.c_str());
 #     endif
         pluginPath.clear();
     }
+
     // PYTHONHOME is really useful if there's a python inside it
-    if ( pyPathZip.empty() && pyPath.empty() ) {
+    if (pyPathZip.empty() && pyPath.empty()) {
 #     if defined(NATRON_CONFIG_SNAPSHOT) || defined(DEBUG)
-        printf( "dir \"%s\" does not exist or does not contain lib/python*, not setting PYTHONHOME\n", pythonHome.c_str() );
+        printf("dir \"%s\" does not exist or does not contain lib/python*, not setting PYTHONHOME\n", pythonHome.c_str());
 #     endif
         pythonHome.clear();
     }
@@ -144,23 +156,28 @@ void setupPythonEnv(const std::string& binPath)
     //Add the Python distribution of Natron to the Python path
 
     std::vector<std::string> toPrepend;
-    if ( !pyPathZip.empty() ) {
+
+    if (!pyPathZip.empty()) {
         toPrepend.push_back(pyPathZip);
     }
-    if ( !pyPath.empty() ) {
+
+    if (!pyPath.empty()) {
         toPrepend.push_back(pyPath);
     }
-    if ( !pyPathDynLoad.empty() ) {
+
+    if (!pyPathDynLoad.empty()) {
         toPrepend.push_back(pyPathDynLoad);
     }
-    if ( !pyPathSitePackages.empty() ) {
+
+    if (!pyPathSitePackages.empty()) {
         toPrepend.push_back(pyPathSitePackages);
     }
-    if ( !pluginPath.empty() ) {
+
+    if (!pluginPath.empty()) {
         toPrepend.push_back(pluginPath);
     }
 
-    if ( toPrepend.empty() ) {
+    if (toPrepend.empty()) {
 #     if defined(NATRON_CONFIG_SNAPSHOT) || defined(DEBUG)
         printf("PYTHONPATH not modified\n");
 #     endif
@@ -171,21 +188,23 @@ void setupPythonEnv(const std::string& binPath)
         const char pathSep = ':';
 #     endif
         std::string toPrependStr = StrUtils::join(toPrepend, pathSep);
+
         if (pythonPath.empty()) {
             pythonPath = toPrependStr;
         } else {
             pythonPath = toPrependStr + pathSep + pythonPath;
         }
+
         // Keep the interpreter's standard library search paths.
-        ProcInfo::putenv_wrapper( "PYTHONPATH", pythonPath.c_str() );
+        ProcInfo::putenv_wrapper("PYTHONPATH", pythonPath.c_str());
 #     if defined(NATRON_CONFIG_SNAPSHOT) || defined(DEBUG)
-        printf( "PYTHONPATH set to %s\n", pythonPath.c_str() );
+        printf("PYTHONPATH set to %s\n", pythonPath.c_str());
 #     endif
     }
 
 } // setupPythonEnv
 
-PyObject* initializePython3(const std::vector<wchar_t*>& commandLineArgsWide)
+PyObject *initializePython3(const std::vector<wchar_t*> &commandLineArgsWide)
 {
     PyConfig config;
     PyConfig_InitPythonConfig(&config);
@@ -194,28 +213,35 @@ PyObject* initializePython3(const std::vector<wchar_t*>& commandLineArgsWide)
     config.install_signal_handlers = 0;
 
     PyStatus status = PyConfig_SetString(&config, &config.stdio_encoding, L"utf-8");
+
     if (!PyStatus_Exception(status) && !commandLineArgsWide.empty()) {
         status = PyConfig_SetString(&config, &config.program_name, commandLineArgsWide.front());
+
         if (!PyStatus_Exception(status)) {
             status = PyConfig_SetArgv(&config, commandLineArgsWide.size(),
-                const_cast<wchar_t**>(commandLineArgsWide.data()));
+                                      const_cast<wchar_t **>(commandLineArgsWide.data()));
         }
     }
+
     if (!PyStatus_Exception(status)) {
         status = Py_InitializeFromConfig(&config);
     }
+
     const std::string error = PyStatus_Exception(status) ?
-        (status.err_msg ? status.err_msg : "Python initialization failed") : "";
+                              (status.err_msg ? status.err_msg : "Python initialization failed") : "";
     PyConfig_Clear(&config);
+
     if (!error.empty()) {
         throw std::runtime_error(error);
     }
 
     PyObject* mainModule = PyImport_ImportModule("__main__");
+
     if (!mainModule) {
         PyErr_Print();
         throw std::runtime_error("Could not import Python's __main__ module");
     }
+
 #if defined(NATRON_CONFIG_SNAPSHOT) || defined(DEBUG)
     PySys_FormatStdout("Python %s\n", Py_GetVersion());
     PySys_FormatStdout("  sys.prefix = %A\n", PySys_GetObject("prefix"));
@@ -231,14 +257,15 @@ std::string
 PyStringToStdString(PyObject* py_val)
 {
     ///Must be locked
-    assert( PyThreadState_Get() );
+    assert(PyThreadState_Get());
     std::string val;
     PyObject* s = nullptr;
+
     if (!py_val) {
         val = "(null)";
-    } else if( PyUnicode_Check(py_val) ) {
+    } else if (PyUnicode_Check(py_val)) {
         s = PyUnicode_AsUTF8String(py_val);
-    } else if( PyBytes_Check(py_val) ) {
+    } else if (PyBytes_Check(py_val)) {
         s = PyObject_Bytes(py_val);
     } else {
         // Not a string => Error, warning ...
@@ -247,7 +274,7 @@ PyStringToStdString(PyObject* py_val)
 
     // If succesfully converted to bytes, then convert to C++ string
     if (s) {
-        val = std::string( PyBytes_AS_STRING(s) );
+        val = std::string(PyBytes_AS_STRING(s));
         Py_XDECREF(s);
     }
 

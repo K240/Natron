@@ -1,0 +1,7 @@
+EXPORTS
+    OfxGetNumberOfPlugins
+    OfxGetPlugin
+    OfxShadertoyVulkanRenderCount
+    OfxShadertoyVulkanDeviceInfo
+    OfxShadertoyVulkanClipRenderCount
+    OfxShadertoyVulkanTransferCounts

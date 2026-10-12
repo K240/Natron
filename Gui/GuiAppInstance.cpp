@@ -29,7 +29,7 @@
 #include <sstream> // stringstream
 
 #include <QDir>
-#include <QSettings>
+#include "Global/AppSettings.h"
 #include <QMutex>
 #include <QCoreApplication>
 
@@ -302,7 +302,7 @@ GuiAppInstance::loadInternal(const CLArgs& cl,
     QObject::connect( getProject().get(), SIGNAL(formatChanged(Format)), this, SLOT(projectFormatChanged(Format)) );
 
     {
-        QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+        AppSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
         if ( !settings.contains( QString::fromUtf8("checkForUpdates") ) ) {
             StandardButtonEnum reply = Dialogs::questionDialog(tr("Updates").toStdString(),
                                                                tr("Do you want %1 to check for updates "
@@ -332,11 +332,6 @@ GuiAppInstance::loadInternal(const CLArgs& cl,
 
 
     if (getAppID() == 0) {
-        QString missingOpenGLError;
-        if ( !appPTR->hasOpenGLForRequirements(eOpenGLRequirementsTypeViewer, &missingOpenGLError) ) {
-            throw std::runtime_error( missingOpenGLError.toStdString() );
-        }
-
         appPTR->getCurrentSettings()->doOCIOStartupCheckIfNeeded();
 
         if ( !appPTR->isShorcutVersionUpToDate() ) {

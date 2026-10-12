@@ -34,7 +34,7 @@
 #include "Engine/OverlaySupport.h"
 #include "Engine/ViewIdx.h"
 #include "Engine/EngineFwd.h"
-#include "Engine/Texture.h"
+#include "Engine/ViewerFrameTexture.h"
 
 
 NATRON_NAMESPACE_ENTER
@@ -55,6 +55,10 @@ public:
     }
 
     virtual bool isViewerUIVisible() const = 0;
+    virtual bool supportsNativeImageTransfer() const
+    {
+        return false;
+    }
 
     /**
      * @brief Must return the current scale factor applied to the viewport. (Screen pixels / image pixels)
@@ -77,7 +81,7 @@ public:
      **/
     virtual RectI getImageRectangleDisplayed(const RectI & pixelRod, const double par, unsigned int mipmapLevel) = 0;
     virtual RectI getImageRectangleDisplayedRoundedToTileSize(int texIndex, const RectD & rod, const double par, unsigned int mipmapLevel,
-                                                              std::vector<RectI>* tiles, std::vector<RectI>* tilesRounded, int *tileSize, RectI* roiNotRounded) = 0;
+            std::vector<RectI> *tiles, std::vector<RectI> *tilesRounded, int *tileSize, RectI* roiNotRounded) = 0;
     virtual RectI getExactImageRectangleDisplayed(int texIndex, const RectD & rod, const double par, unsigned int mipmapLevel) = 0;
 
     /**
@@ -101,11 +105,8 @@ public:
     virtual void clearPartialUpdateTextures()  = 0;
 
     /**
-     * @brief This function must do the following:
-     * 1) glMapBuffer to map a GPU buffer to the RAM
-     * 2) memcpy to copy the ramBuffer to previously mapped buffer.
-     * 3) glUnmapBuffer to unmap the GPU buffer
-     * 4) glTexSubImage2D or glTexImage2D depending whether yo need to resize the texture or not.
+     * @brief Upload one bottom-up cached Viewer tile. The display backend owns
+     * allocation, transfer and synchronization; Engine receives an opaque receipt.
      **/
     virtual void transferBufferFromRAMtoGPU(const unsigned char* ramBuffer,
                                             size_t bytesCount,
@@ -115,23 +116,26 @@ public:
                                             int textureIndex,
                                             bool isPartialRect,
                                             bool isFirstTile,
-                                            TexturePtr* texture) = 0;
+                                            ViewerFrameTexturePtr* texture) = 0;
+    // False means the display switched backend and queued a replacement frame.
+    virtual bool transferImageFromGPU(const UpdateViewerParams& params,
+                                      ViewerFrameTexturePtr* texture) = 0;
     virtual void endTransferBufferFromRAMToGPU(int textureIndex,
-                                               const TexturePtr& texture,
-                                               const ImagePtr& image,
-                                               int time,
-                                               const RectD& rod,
-                                               double par,
-                                               ImageBitDepthEnum depth,
-                                               unsigned int mipmapLevel,
-                                               ImagePremultiplicationEnum premult,
-                                               double gain,
-                                               double gamma,
-                                               double offset,
-                                               int lut,
-                                               bool recenterViewer,
-                                               const Point& viewportCenter,
-                                               bool isPartialRect) = 0;
+            const ViewerFrameTexturePtr& texture,
+            const ImagePtr& image,
+            int time,
+            const RectD& rod,
+            double par,
+            ImageBitDepthEnum depth,
+            unsigned int mipmapLevel,
+            ImagePremultiplicationEnum premult,
+            double gain,
+            double gamma,
+            double offset,
+            int lut,
+            bool recenterViewer,
+            const Point& viewportCenter,
+            bool isPartialRect) = 0;
 
     /**
      * @brief Called when the input of a viewer should render black.

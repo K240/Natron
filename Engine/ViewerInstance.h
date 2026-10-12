@@ -223,6 +223,10 @@ public:
     void forceFullComputationOnNextFrame();
     virtual void clearLastRenderedImage() OVERRIDE FINAL;
 
+    // Timeline indicators inspect the node image cache; they never retain pixels.
+    void getCachedNativeFrames(std::map<SequenceTime, StorageModeEnum>* frames) const;
+    void clearNativeCacheInputs();
+
     void disconnectViewer();
 
     void disconnectTexture(int index, bool clearRod);

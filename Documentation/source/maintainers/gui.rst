@@ -37,24 +37,32 @@ The node graph
 The viewer
 ----------
 
-- ``ViewerGL`` (``ViewerGL.cpp``, ``ViewerGLPrivate.*``): the ``QOpenGLWidget``
-  viewport; implements ``OpenGLViewerI``. Draws the rendered textures, overlays
-  and the user's interactions.
+- ``ViewerGL`` (``ViewerGL.cpp``, ``ViewerGLPrivate.*``, ``ViewerVulkan.cpp``):
+  the ``QWidget`` viewport containing a native Vulkan surface. It implements
+  the existing ``OpenGLViewerI`` interface and displays frames through the
+  shared Vulkan device. Overlays use ``OverlayDrawList`` and interactions
+  reach the widget through the native surface's event bridge.
 - ``ViewerTab`` (``ViewerTab.cpp`` and ``ViewerTab10``–``40.cpp``,
-  ``ViewerTabPrivate.*``): the panel around the GL widget — playback controls,
+  ``ViewerTabPrivate.*``): the panel around the viewport — playback controls,
   channel/view selectors, the timeline.
-- ``InfoViewerWidget``, ``Histogram`` (also a ``QOpenGLWidget``),
-  ``TimeLineGui``.
+- ``InfoViewerWidget``, ``Histogram`` and ``TimeLineGui`` use Qt raster widgets.
+  Histogram binning remains on the CPU.
 
 Animation editors
 -----------------
 
 - ``CurveEditor`` / ``CurveWidget`` (``CurveWidget.cpp``,
   ``CurveWidgetPrivate.*``, ``CurveGui``): the keyframe curve editor
-  (``QOpenGLWidget``).
+  (``QWidget`` / ``QPainter`` with the shared draw command list).
 - ``DopeSheet`` / ``DopeSheetView`` / ``DopeSheetEditor`` /
-  ``DopeSheetHierarchyView`` (with ``DopeSheetEditorUndoRedo``): the dope sheet.
+  ``DopeSheetHierarchyView`` (with ``DopeSheetEditorUndoRedo``): the raster
+  dope sheet, including key icons, clip ranges and editing handles.
 - Undo/redo for curves: ``CurveEditorUndoRedo``.
+
+Custom OFX parameter controls and parametric backgrounds use the Natron draw
+suite extensions. Standard Viewer overlays use OFX DrawSuite / Overlay
+Interact V2. The GUI does not link Qt OpenGL or OpenGLWidgets; remaining Engine
+and shipped plugin GL paths are tracked in :ref:`maint-vulkan-migration`.
 
 Parameter panels (Knob GUIs)
 ----------------------------

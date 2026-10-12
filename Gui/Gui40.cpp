@@ -36,7 +36,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
-#include <QSettings>
+#include "Global/AppSettings.h"
 
 #include <QScreen>
 
@@ -161,7 +161,7 @@ Gui::updateRecentFileActions()
     std::map<QString,QStringList> allDirNames;
 
     {
-        QSettings settings;
+        AppSettings settings;
         QStringList allfiles = settings.value( QString::fromUtf8("recentFileList") ).toStringList();
         int numFiles = allfiles.size();
         int iTotal = 0;

@@ -1,3 +1,5 @@
+.. _maint-qt6:
+
 Qt 6 migration
 ==============
 

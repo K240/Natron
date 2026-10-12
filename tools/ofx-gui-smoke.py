@@ -1,10 +1,14 @@
 """Create a graph using all rebuilt OFX sets in the Qt 6 GUI."""
 import json
+import os
 from pathlib import Path
 
+if marker := os.environ.get('NATRON_TEST_START_MARKER'):
+    Path(marker).write_text('Python OFX GUI smoke started', encoding='utf-8')
+
 import NatronEngine
-from PySide6.QtCore import QTimer, qVersion
-from PySide6.QtOpenGLWidgets import QOpenGLWidget
+from PySide6.QtCore import QTimer, qVersion, QMetaObject, Q_RETURN_ARG, Qt
+from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication, QMainWindow
 
 nodes = []
@@ -14,18 +18,27 @@ def inspect_gui():
     windows = [widget for widget in QApplication.allWidgets()
                if isinstance(widget, QMainWindow) and widget.isVisible()]
     viewers = [widget for widget in QApplication.allWidgets()
-               if isinstance(widget, QOpenGLWidget) and widget.isVisible()
-               and "ViewerGL" in widget.metaObject().className()]
+               if widget.property("graphicsBackend") == "Vulkan" and widget.isVisible()]
     report = {"qt": qVersion(), "nodes": [node.getPluginID() for node in nodes],
+              "unexpected_dialogs": [w.windowTitle() for w in QApplication.topLevelWidgets()
+                                     if w.isVisible() and w.isModal()],
               "registered_nodes": len(NatronEngine.natron.getPluginIDs()),
-              "valid_viewers": sum(widget.isValid() for widget in viewers)}
-    report["ok"] = bool(windows) and bool(viewers) and report["valid_viewers"] == len(viewers)
+              "valid_viewers": sum(widget.property("presentedFrames") > 0 and not widget.property("graphicsError") for widget in viewers),
+              "graphics_backend": [widget.property("graphicsBackend") for widget in viewers],
+              "validation_errors": [widget.property("validationErrors") for widget in viewers]}
+    report["ok"] = (bool(windows) and bool(viewers)
+                     and report["valid_viewers"] == len(viewers)
+                     and not report["unexpected_dialogs"] and not any(report["validation_errors"]))
     if viewers:
-        frame = viewers[0].grabFramebuffer()
+        frame = QMetaObject.invokeMethod(viewers[0], 'grabFrame', Qt.DirectConnection, Q_RETURN_ARG(QImage))
+        assert not frame.isNull(), "Vulkan Viewer returned an empty presentation readback"
         pixel = frame.pixelColor(frame.width() // 2, frame.height() // 2)
         report["center_pixel"] = pixel.name()
-        report["ok"] = report["ok"] and pixel.red() < 30 and pixel.green() > 100 and pixel.blue() > 100
+        # Half-brightness cyan catches an accidental second display transform.
+        report["ok"] = report["ok"] and pixel.red() <= 2 and abs(pixel.green() - 188) <= 2 and abs(pixel.blue() - 188) <= 2
         frame.save("build/ofx-gui-frame.png")
+        report["validation_errors"] = [widget.property("validationErrors") for widget in viewers]
+        report["ok"] = report["ok"] and not any(report["validation_errors"])
     if windows:
         windows[0].grab().save("build/ofx-gui-window.png")
     Path("build/ofx-gui-result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")

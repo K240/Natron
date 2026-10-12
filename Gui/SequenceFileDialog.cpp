@@ -70,7 +70,7 @@ GCC_DIAG_UNUSED_PRIVATE_FIELD_ON
 #include <QEvent>
 #include <QMimeData>
 #include <QtConcurrentRun>
-#include <QSettings>
+#include "Global/AppSettings.h"
 CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)
 
@@ -523,7 +523,7 @@ SequenceFileDialog::SequenceFileDialog( QWidget* parent, // necessary to transmi
     } else {
         setWindowTitle( tr("Select Directory") );
     }
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+    AppSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
     bool hasRestoredDir;
     restoreState( settings.value( QLatin1String("FileDialog") ).toByteArray(), directoryArgs.empty(), &hasRestoredDir );
 
@@ -563,7 +563,7 @@ SequenceFileDialog::~SequenceFileDialog()
 {
     _model->resetCompletly(false);
 
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+    AppSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
 
     settings.setValue( QLatin1String("FileDialog"), saveState() );
 }

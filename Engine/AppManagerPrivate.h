@@ -40,20 +40,10 @@
 #include <QCoreApplication>
 
 
-#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
-#include "Engine/OSGLContext_wayland.h"
-#include "Engine/OSGLContext_x11.h"
-#elif defined(Q_OS_WIN32)
-#include "Engine/OSGLContext_win.h"
-#elif defined(Q_OS_DARWIN)
-#include "Engine/OSGLContext_mac.h"
-#endif
-
 #include "Engine/AppManager.h"
 #include "Engine/Cache.h"
 #include "Engine/FrameEntry.h"
 #include "Engine/Image.h"
-#include "Engine/GPUContextPool.h"
 #include "Engine/GenericSchedulerThreadWatcher.h"
 #include "Engine/TLSHolder.h"
 
@@ -173,37 +163,8 @@ public:
     // Copy of the setting knob for faster access from OfxImage constructor
     bool pluginsUseInputImageCopyToRender;
 
-    // True if we can use OpenGL
-    struct OpenGLRequirementsData
-    {
-        QString error;
-        bool hasRequirements;
-
-        OpenGLRequirementsData()
-        : error()
-        , hasRequirements(false)
-        {
-
-        }
-    };
-    std::map<OpenGLRequirementsTypeEnum, OpenGLRequirementsData> glRequirements;
-    bool glHasTextureFloat;
-    bool hasInitializedOpenGLFunctions;
-    mutable QMutex openGLFunctionsMutex;
-
     bool onWayland;
 
-#ifdef Q_OS_WIN32
-    std::unique_ptr<OSGLContext_wgl_data> wglInfo;
-#endif
-#if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
-    std::unique_ptr<OSGLContext_egl_data> eglInfo;
-
-    std::unique_ptr<OSGLContext_glx_data> glxInfo;
-#endif
-
-    std::unique_ptr<GPUContextPool> renderingContextPool;
-    std::list<OpenGLRendererInfo> openGLRenderers;
     std::unique_ptr<QCoreApplication> _qApp;
 
 public:
@@ -218,8 +179,6 @@ public:
     void saveCaches();
 
     void restoreCaches();
-
-    static void addOpenGLRequirementsString(QString& str, OpenGLRequirementsTypeEnum type);
 
     bool checkForCacheDiskStructure(const QString & cachePath, bool isTiled);
 
@@ -239,12 +198,6 @@ public:
 
     void createBreakpadHandler(const QString& breakpadPipePath, int breakpad_client_fd);
 #endif
-
-    void initGl(bool checkRenderingReq);
-
-    void initGLAPISpecific();
-
-    void tearDownGL();
 
     void setViewerCacheTileSize();
 

@@ -46,7 +46,6 @@
 #include "Gui/CurveWidgetPrivate.h"
 #include "Gui/KnobGui.h"
 
-#include <QOpenGLContext>
 
 NATRON_NAMESPACE_ENTER
 
@@ -64,13 +63,13 @@ CurveGui::CurveGui(CurveWidget *curveWidget,
     , _selected(false)
 {
     // always running in the main thread
-    assert( qApp && qApp->thread() == QThread::currentThread() );
+    assert(qApp && qApp->thread() == QThread::currentThread());
 }
 
 CurveGui::~CurveGui()
 {
     // always running in the main thread
-    assert( qApp && qApp->thread() == QThread::currentThread() );
+    assert(qApp && qApp->thread() == QThread::currentThread());
 }
 
 void
@@ -80,13 +79,13 @@ CurveGui::nextPointForSegment(const double x, // < in curve coordinates
                               const double parametricXMin,
                               const double parametricXMax,
                               KeyFrameSet::const_iterator* lastUpperIt,
-                              double* x2WidgetCoords,
+                              double *x2WidgetCoords,
                               KeyFrame* x1Key,
                               bool* isx1Key)
 {
     // always running in the main thread
-    assert( qApp && qApp->thread() == QThread::currentThread() );
-    assert( !keys.empty() );
+    assert(qApp && qApp->thread() == QThread::currentThread());
+    assert(!keys.empty());
 
     *isx1Key = false;
 
@@ -117,11 +116,14 @@ CurveGui::nextPointForSegment(const double x, // < in curve coordinates
         //KeyFrameSet::const_iterator start = keys.begin();
         const double xMin = parametricXMin;// + start->getTime();
         const double xMax = parametricXMax;// + start->getTime();
+
         if ((x < xMin || x > xMax) && isPeriodic) {
             xClamped = std::fmod(x - xMin, period) + parametricXMin;
+
             if (xClamped < xMin) {
                 xClamped += period;
             }
+
             assert(xClamped >= xMin && xClamped <= xMax);
         }
     }
@@ -129,7 +131,7 @@ CurveGui::nextPointForSegment(const double x, // < in curve coordinates
 
         KeyFrameSet::const_iterator itKeys = keys.begin();
 
-        if ( *lastUpperIt != keys.end() ) {
+        if (*lastUpperIt != keys.end()) {
             // If we already have called this function before, start from the previously
             // computed iterator to avoid n square complexity
             itKeys = *lastUpperIt;
@@ -148,6 +150,7 @@ CurveGui::nextPointForSegment(const double x, // < in curve coordinates
     }
 
     double tprev, vprev, vprevDerivRight, tnext, vnext, vnextDerivLeft;
+
     if (upperIt == keys.end()) {
         // We are in a periodic curve: we are in-between the last keyframe and the parametric xMax
         // If the curve is non periodic, it should have been handled in the 2 cases above: we only draw a straightline
@@ -188,22 +191,25 @@ CurveGui::nextPointForSegment(const double x, // < in curve coordinates
         vnext = upperIt->getValue();
         vnextDerivLeft = upperIt->getLeftDerivative();
     }
+
     double normalizeTimeRange = tnext - tprev;
+
     if (normalizeTimeRange == 0) {
         // Only 1 keyframe, draw a horizontal line
         *x2WidgetCoords = _curveWidget->width() - 1;
         return;
     }
+
     assert(normalizeTimeRange > 0.);
 
-    double t = ( xClamped - tprev ) / normalizeTimeRange;
+    double t = (xClamped - tprev) / normalizeTimeRange;
     double P3 = vnext;
     double P0 = vprev;
     // Hermite coefficients P0' and P3' are for t normalized in [0,1]
     double P3pl = vnextDerivLeft / normalizeTimeRange; // normalize for t \in [0,1]
     double P0pr = vprevDerivRight / normalizeTimeRange; // normalize for t \in [0,1]
     double secondDer = 6. * (1. - t) * (P3 - P3pl / 3. - P0 - 2. * P0pr / 3.) +
-    6. * t * (P0 - P3 + 2 * P3pl / 3. + P0pr / 3. );
+                       6. * t * (P0 - P3 + 2 * P3pl / 3. + P0pr / 3.);
 
     double secondDerWidgetCoord = _curveWidget->toWidgetCoordinates(0, secondDer).y();
     double normalizedSecondDerWidgetCoord = std::abs(secondDerWidgetCoord / normalizeTimeRange);
@@ -224,6 +230,7 @@ CurveGui::nextPointForSegment(const double x, // < in curve coordinates
     double x2ClampedWidgetCoords = xClampedWidgetCoords + delta_x;
 
     double deltaXtoNext = (tNextWidgetCoords - xClampedWidgetCoords);
+
     // If nearby next key, clamp to it
     if (x2ClampedWidgetCoords > tNextWidgetCoords && deltaXtoNext > 1e-6) {
         // x2 is the position of the next keyframe with the period removed
@@ -251,15 +258,16 @@ CurveGui::getInternalCurve() const
 }
 
 static void
-drawLineStrip(const std::vector<float>& vertices,
+drawLineStrip(OverlayDrawList& draw, const std::vector<float> &vertices,
               const QPointF& btmLeft,
               const QPointF& topRight)
 {
-    glBegin(GL_LINE_STRIP);
+    draw.begin(OverlayPrimitive::LineStrip);
 
     bool prevVisible = true;
     bool prevTooAbove = false;
     bool prevTooBelow = false;
+
     for (int i = 0; i < (int)vertices.size(); i += 2) {
         const bool isAbove = i > 0 && vertices[i + 1] > topRight.y();
         const bool isBelow = i > 0 && vertices[i + 1] < btmLeft.y();
@@ -275,81 +283,90 @@ drawLineStrip(const std::vector<float>& vertices,
         if (!previousWasVisible && !vertexVisible) {
             continue;
         }
-        if ( !previousWasVisible && (i >= 2) ) {
+
+        if (!previousWasVisible && (i >= 2)) {
             //At least draw the previous point otherwise this will draw a line between the last previous point and this point
             //Draw them 10000 units further so that we're sure we don't see half of a pixel of a line remaining
             if (previousWasTooAbove) {
-                glVertex2f(vertices[i - 2], vertices[i - 1] + 100000);
+                draw.vertex(vertices[i - 2], vertices[i - 1] + 100000);
             } else if (previousWasTooBelow) {
-                glVertex2f(vertices[i - 2], vertices[i - 1] - 100000);
+                draw.vertex(vertices[i - 2], vertices[i - 1] - 100000);
             }
         }
-        glVertex2f(vertices[i], vertices[i + 1]);
+
+        draw.vertex(vertices[i], vertices[i + 1]);
     }
 
-    glEnd();
+    draw.end();
 }
 
 void
 CurveGui::drawCurve(int curveIndex,
-                    int curvesCount,
-                    double screenPixelRatio)
+                    int curvesCount)
 {
+    auto& draw = *_curveWidget->overlayDrawList();
     // always running in the main thread
-    assert( qApp && qApp->thread() == QThread::currentThread() );
+    assert(qApp && qApp->thread() == QThread::currentThread());
 
     if (!_visible) {
         return;
     }
 
-    assert( QOpenGLContext::currentContext() == _curveWidget->context() );
 
     std::vector<float> vertices, exprVertices;
     double x1 = 0;
     double x2;
     const double widgetWidth = _curveWidget->width();
     KeyFrameSet keyframes;
-    BezierCPCurveGui* isBezier = dynamic_cast<BezierCPCurveGui*>(this);
-    KnobCurveGui* isKnobCurve = dynamic_cast<KnobCurveGui*>(this);
+    BezierCPCurveGui* isBezier = dynamic_cast<BezierCPCurveGui *>(this);
+    KnobCurveGui* isKnobCurve = dynamic_cast<KnobCurveGui *>(this);
     bool hasDrawnExpr = false;
+
     if (isKnobCurve) {
         std::string expr;
         KnobIPtr knob = isKnobCurve->getInternalKnob();
         assert(knob);
-        expr = knob->getExpression( isKnobCurve->getDimension() );
-        if ( !expr.empty() ) {
+        expr = knob->getExpression(isKnobCurve->getDimension());
+
+        if (!expr.empty()) {
             //we have no choice but to evaluate the expression at each time
             for (int i = x1; i < widgetWidth; ++i) {
                 double x = _curveWidget->toZoomCoordinates(i, 0).x();;
-                double y = knob->getValueAtWithExpression( x, ViewIdx(0), isKnobCurve->getDimension() );
+                double y = knob->getValueAtWithExpression(x, ViewIdx(0), isKnobCurve->getDimension());
                 exprVertices.push_back(x);
                 exprVertices.push_back(y);
             }
+
             hasDrawnExpr = true;
         }
     }
+
     bool isPeriodic = false;
-    std::pair<double,double> parametricRange = std::make_pair(-std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity());
+    std::pair<double, double> parametricRange = std::make_pair(-std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity());
+
     if (isBezier) {
         std::set<double> keys;
         isBezier->getBezier()->getKeyframeTimes(&keys);
         int i = 0;
+
         for (std::set<double>::iterator it = keys.begin(); it != keys.end(); ++it, ++i) {
-            keyframes.insert( KeyFrame(*it, i) );
+            keyframes.insert(KeyFrame(*it, i));
         }
     } else {
         keyframes = getInternalCurve()->getKeyFrames_mt_safe();
         isPeriodic = getInternalCurve()->isCurvePeriodic();
         parametricRange = getInternalCurve()->getXRange();
     }
-    if ( !keyframes.empty() ) {
+
+    if (!keyframes.empty()) {
         try {
             bool isX1AKey = false;
             KeyFrame x1Key;
             KeyFrameSet::const_iterator lastUpperIt = keyframes.end();
 
-            while ( x1 < (widgetWidth - 1) ) {
+            while (x1 < (widgetWidth - 1)) {
                 double x, y;
+
                 if (!isX1AKey) {
                     x = _curveWidget->toZoomCoordinates(x1, 0).x();
                     y = evaluate(false, x);
@@ -358,17 +375,18 @@ CurveGui::drawCurve(int curveIndex,
                     y = x1Key.getValue();
                 }
 
-                vertices.push_back( (float)x );
-                vertices.push_back( (float)y );
+                vertices.push_back((float)x);
+                vertices.push_back((float)y);
                 nextPointForSegment(x, keyframes, isPeriodic, parametricRange.first, parametricRange.second,  &lastUpperIt, &x2, &x1Key, &isX1AKey);
                 x1 = x2;
             }
+
             //also add the last point
             {
                 double x = _curveWidget->toZoomCoordinates(x1, 0).x();
                 double y = evaluate(false, x);
-                vertices.push_back( (float)x );
-                vertices.push_back( (float)y );
+                vertices.push_back((float)x);
+                vertices.push_back((float)y);
             }
         } catch (...) {
         }
@@ -379,60 +397,62 @@ CurveGui::drawCurve(int curveIndex,
     const QColor & curveColor = _selected ?  _curveWidget->getSelectedCurveColor() : _color;
 
     {
-        GLProtectAttrib a(GL_HINT_BIT | GL_ENABLE_BIT | GL_LINE_BIT | GL_COLOR_BUFFER_BIT | GL_POINT_BIT | GL_CURRENT_BIT);
+        OverlayDrawScope scope(draw);
 
         if (!isBezier && _selected) {
             ///Draw y min/max axis so the user understands why the curve is clamped
             Curve::YRange curveYRange = getCurveYRange();
+
             if (curveYRange.min != std::numeric_limits<int>::min() &&
                 curveYRange.min != -std::numeric_limits<double>::infinity() &&
                 curveYRange.max != std::numeric_limits<int>::max() &&
-                curveYRange.max != std::numeric_limits<double>::infinity() ) {
+                curveYRange.max != std::numeric_limits<double>::infinity()) {
                 QColor minMaxColor;
                 minMaxColor.setRgbF(0.398979, 0.398979, 0.398979);
-                glColor4d(minMaxColor.redF(), minMaxColor.greenF(), minMaxColor.blueF(), 1.);
-                glLineWidth(1.5f * screenPixelRatio);
-                glBegin(GL_LINES);
-                glVertex2d(btmLeft.x(), curveYRange.min);
-                glVertex2d(topRight.x(), curveYRange.min);
-                glVertex2d(btmLeft.x(), curveYRange.max);
-                glVertex2d(topRight.x(), curveYRange.max);
-                glEnd();
-                glColor4d(1., 1., 1., 1.);
+                draw.color(minMaxColor.redF(), minMaxColor.greenF(), minMaxColor.blueF(), 1.);
+                draw.lineWidth(1.5f);
+                draw.begin(OverlayPrimitive::Lines);
+                draw.vertex(btmLeft.x(), curveYRange.min);
+                draw.vertex(topRight.x(), curveYRange.min);
+                draw.vertex(btmLeft.x(), curveYRange.max);
+                draw.vertex(topRight.x(), curveYRange.max);
+                draw.end();
+                draw.color(1., 1., 1., 1.);
 
                 double xText = _curveWidget->toZoomCoordinates(10, 0).x();
 
-                _curveWidget->renderText( xText, curveYRange.min, tr("min"), minMaxColor, _curveWidget->font() );
-                _curveWidget->renderText( xText, curveYRange.max, tr("max"), minMaxColor, _curveWidget->font() );
+                _curveWidget->renderText(xText, curveYRange.min, tr("min"), minMaxColor, _curveWidget->font());
+                _curveWidget->renderText(xText, curveYRange.max, tr("max"), minMaxColor, _curveWidget->font());
             }
         }
 
 
-        glColor4f( curveColor.redF(), curveColor.greenF(), curveColor.blueF(), curveColor.alphaF() );
-        glPointSize(_thickness * screenPixelRatio);
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glEnable(GL_LINE_SMOOTH);
-        glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE);
-        glLineWidth(1.5 * screenPixelRatio);
-        glCheckError();
+        draw.color(curveColor.redF(), curveColor.greenF(), curveColor.blueF(), curveColor.alphaF());
+        draw.pointSize(_thickness);
+
+
+
+
+        draw.lineWidth(1.5);
+
         if (hasDrawnExpr) {
-            drawLineStrip(exprVertices, btmLeft, topRight);
-            glLineStipple(2, 0xAAAA);
-            glEnable(GL_LINE_STIPPLE);
-        }
-        drawLineStrip(vertices, btmLeft, topRight);
-        if (hasDrawnExpr) {
-            glDisable(GL_LINE_STIPPLE);
+            drawLineStrip(draw, exprVertices, btmLeft, topRight);
+            draw.stipple(2, 0xAAAA);
+
         }
 
-        glCheckErrorIgnoreOSXBug();
+        drawLineStrip(draw, vertices, btmLeft, topRight);
+
+        if (hasDrawnExpr) {
+            draw.solidLine();
+        }
+
 
         //render the name of the curve
-        glColor4f(1.f, 1.f, 1.f, 1.f);
+        draw.color(1.f, 1.f, 1.f, 1.f);
 
 
-        double interval = ( topRight.x() - btmLeft.x() ) / (double)curvesCount;
+        double interval = (topRight.x() - btmLeft.x()) / (double)curvesCount;
         double textX = _curveWidget->toZoomCoordinates(15, 0).x() + interval * (double)curveIndex;
         double textY;
 
@@ -442,17 +462,19 @@ CurveGui::drawCurve(int curveIndex,
             textY = evaluate(true, textX);
         }
 
-        if ( ( textX >= btmLeft.x() ) && ( textX <= topRight.x() ) && ( textY >= btmLeft.y() ) && ( textY <= topRight.y() ) ) {
-            _curveWidget->renderText( textX, textY, _name, _color, _curveWidget->getFont() );
+        if ((textX >= btmLeft.x()) && (textX <= topRight.x()) && (textY >= btmLeft.y()) && (textY <= topRight.y())) {
+            _curveWidget->renderText(textX, textY, _name, _color, _curveWidget->getFont());
         }
-        glColor4f( curveColor.redF(), curveColor.greenF(), curveColor.blueF(), curveColor.alphaF() );
+
+        draw.color(curveColor.redF(), curveColor.greenF(), curveColor.blueF(), curveColor.alphaF());
 
         //draw keyframes
-        glEnable(GL_POINT_SMOOTH);
+        draw.roundPoints(true);
 
         const SelectedKeys & selectedKeyFrames = _curveWidget->getSelectedKeyFrames();
         SelectedKeys::const_iterator selectedKeyFramesIt;
         SelectedKeys::const_iterator foundCurveSelected = selectedKeyFrames.end();
+
         for (selectedKeyFramesIt = selectedKeyFrames.begin(); selectedKeyFramesIt != selectedKeyFrames.end(); ++selectedKeyFramesIt) {
             if (selectedKeyFramesIt->first.get() == this) {
                 foundCurveSelected = selectedKeyFramesIt;
@@ -465,20 +487,21 @@ CurveGui::drawCurve(int curveIndex,
         for (KeyFrameSet::const_iterator k = keyframes.begin(); k != keyframes.end(); ++k) {
             const KeyFrame & key = (*k);
 
-            if ( ( key.getTime() < btmLeft.x() ) || ( key.getTime() > topRight.x() ) || ( key.getValue() < btmLeft.y() ) || ( key.getValue() > topRight.y() ) ) {
+            if ((key.getTime() < btmLeft.x()) || (key.getTime() > topRight.x()) || (key.getValue() < btmLeft.y()) || (key.getValue() > topRight.y())) {
                 continue;
             }
 
-            glColor4f( _color.redF(), _color.greenF(), _color.blueF(), _color.alphaF() );
+            draw.color(_color.redF(), _color.greenF(), _color.blueF(), _color.alphaF());
 
             //if the key is selected change its color to white
             KeyPtr isSelected;
-            if ( foundCurveSelected != selectedKeyFrames.end() ) {
+
+            if (foundCurveSelected != selectedKeyFrames.end()) {
                 for (std::list<KeyPtr>::const_iterator it2 = foundCurveSelected->second.begin();
                      it2 != foundCurveSelected->second.end(); ++it2) {
-                    if ( ( (*it2)->key.getTime() == key.getTime() ) && ( (*it2)->curve.get() == this ) ) {
+                    if (((*it2)->key.getTime() == key.getTime()) && ((*it2)->curve.get() == this)) {
                         isSelected = *it2;
-                        glColor4f(1.f, 1.f, 1.f, 1.f);
+                        draw.color(1.f, 1.f, 1.f, 1.f);
                         break;
                     }
                 }
@@ -486,80 +509,83 @@ CurveGui::drawCurve(int curveIndex,
 
             double x = key.getTime();
             double y = key.getValue();
-            glPointSize(7.f * screenPixelRatio);
-            glBegin(GL_POINTS);
-            glVertex2f(x, y);
-            glEnd();
-            glCheckErrorIgnoreOSXBug();
+            draw.pointSize(7.f);
+            draw.begin(OverlayPrimitive::Points);
+            draw.vertex(x, y);
+            draw.end();
 
-            if ( !isBezier && isSelected && (key.getInterpolation() != eKeyframeTypeConstant) ) {
-                QFontMetrics m( _curveWidget->getFont() );
+
+            if (!isBezier && isSelected && (key.getInterpolation() != eKeyframeTypeConstant)) {
+                QFontMetrics m(_curveWidget->getFont());
 
 
                 //draw the derivatives lines
-                if ( (key.getInterpolation() != eKeyframeTypeFree) && (key.getInterpolation() != eKeyframeTypeBroken) ) {
-                    glLineStipple(2, 0xAAAA);
-                    glEnable(GL_LINE_STIPPLE);
+                if ((key.getInterpolation() != eKeyframeTypeFree) && (key.getInterpolation() != eKeyframeTypeBroken)) {
+                    draw.stipple(2, 0xAAAA);
+
                 }
-                glLineWidth(1.5f * screenPixelRatio);
-                glBegin(GL_LINES);
-                glColor4f(1., 0.35, 0.35, 1.);
-                glVertex2f( isSelected->leftTan.first, isSelected->leftTan.second );
-                glVertex2f(x, y);
-                glVertex2f(x, y);
-                glVertex2f( isSelected->rightTan.first, isSelected->rightTan.second );
-                glEnd();
-                if ( (key.getInterpolation() != eKeyframeTypeFree) && (key.getInterpolation() != eKeyframeTypeBroken) ) {
-                    glDisable(GL_LINE_STIPPLE);
+
+                draw.lineWidth(1.5f);
+                draw.begin(OverlayPrimitive::Lines);
+                draw.color(1., 0.35, 0.35, 1.);
+                draw.vertex(isSelected->leftTan.first, isSelected->leftTan.second);
+                draw.vertex(x, y);
+                draw.vertex(x, y);
+                draw.vertex(isSelected->rightTan.first, isSelected->rightTan.second);
+                draw.end();
+
+                if ((key.getInterpolation() != eKeyframeTypeFree) && (key.getInterpolation() != eKeyframeTypeBroken)) {
+                    draw.solidLine();
                 }
 
                 bool singleKey = selectedKeyFrames.size() == 1 && selectedKeyFrames.begin()->second.size() == 1;
+
                 if (singleKey) { //if one keyframe, also draw the coordinates
                     double rounding = ipow(10., CURVEWIDGET_DERIVATIVE_ROUND_PRECISION);
-                    QString leftDerivStr = QString::fromUtf8("l: %1").arg(std::floor( (key.getLeftDerivative() * rounding) + 0.5 ) / rounding);
-                    QString rightDerivStr = QString::fromUtf8("r: %1").arg(std::floor( (key.getRightDerivative() * rounding) + 0.5 ) / rounding);
+                    QString leftDerivStr = QString::fromUtf8("l: %1").arg(std::floor((key.getLeftDerivative() * rounding) + 0.5) / rounding);
+                    QString rightDerivStr = QString::fromUtf8("r: %1").arg(std::floor((key.getRightDerivative() * rounding) + 0.5) / rounding);
                     double yLeftWidgetCoord = _curveWidget->toWidgetCoordinates(0, isSelected->leftTan.second).y();
                     yLeftWidgetCoord += (m.height() + 4);
 
                     double yRightWidgetCoord = _curveWidget->toWidgetCoordinates(0, isSelected->rightTan.second).y();
                     yRightWidgetCoord += (m.height() + 4);
 
-                    glColor4f(1., 1., 1., 1.);
-                    glCheckFramebufferError();
-                    _curveWidget->renderText( isSelected->leftTan.first, _curveWidget->toZoomCoordinates(0, yLeftWidgetCoord).y(),
-                                              leftDerivStr, QColor(240, 240, 240), _curveWidget->getFont() );
-                    _curveWidget->renderText( isSelected->rightTan.first, _curveWidget->toZoomCoordinates(0, yRightWidgetCoord).y(),
-                                              rightDerivStr, QColor(240, 240, 240), _curveWidget->getFont() );
+                    draw.color(1., 1., 1., 1.);
+
+                    _curveWidget->renderText(isSelected->leftTan.first, _curveWidget->toZoomCoordinates(0, yLeftWidgetCoord).y(),
+                                             leftDerivStr, QColor(240, 240, 240), _curveWidget->getFont());
+                    _curveWidget->renderText(isSelected->rightTan.first, _curveWidget->toZoomCoordinates(0, yRightWidgetCoord).y(),
+                                             rightDerivStr, QColor(240, 240, 240), _curveWidget->getFont());
                 }
 
 
                 if (singleKey) { //if one keyframe, also draw the coordinates
                     QString coordStr = QString::fromUtf8("x: %1, y: %2");
                     coordStr = coordStr.arg(x).arg(y);
-                    double yWidgetCoord = _curveWidget->toWidgetCoordinates( 0, key.getValue() ).y();
+                    double yWidgetCoord = _curveWidget->toWidgetCoordinates(0, key.getValue()).y();
                     yWidgetCoord += (m.height() + 4);
-                    glColor4f(1., 1., 1., 1.);
-                    glCheckFramebufferError();
-                    _curveWidget->renderText( x, _curveWidget->toZoomCoordinates(0, yWidgetCoord).y(),
-                                              coordStr, QColor(240, 240, 240), _curveWidget->getFont() );
+                    draw.color(1., 1., 1., 1.);
+
+                    _curveWidget->renderText(x, _curveWidget->toZoomCoordinates(0, yWidgetCoord).y(),
+                                             coordStr, QColor(240, 240, 240), _curveWidget->getFont());
                 }
-                glPointSize(7.f * screenPixelRatio);
-                glBegin(GL_POINTS);
-                glVertex2f( isSelected->leftTan.first, isSelected->leftTan.second );
-                glVertex2f( isSelected->rightTan.first, isSelected->rightTan.second );
-                glEnd();
+
+                draw.pointSize(7.f);
+                draw.begin(OverlayPrimitive::Points);
+                draw.vertex(isSelected->leftTan.first, isSelected->leftTan.second);
+                draw.vertex(isSelected->rightTan.first, isSelected->rightTan.second);
+                draw.end();
             } // if ( !isBezier && ( isSelected != selectedKeyFrames.end() ) && (key.getInterpolation() != eKeyframeTypeConstant) ) {
         } // for (KeyFrameSet::const_iterator k = keyframes.begin(); k != keyframes.end(); ++k) {
-    } // GLProtectAttrib(GL_HINT_BIT | GL_ENABLE_BIT | GL_LINE_BIT | GL_COLOR_BUFFER_BIT | GL_POINT_BIT | GL_CURRENT_BIT);
+    }
 
-    glCheckError();
 } // drawCurve
 
 void
 CurveGui::setVisible(bool visible)
 {
     // always running in the main thread
-    assert( qApp && qApp->thread() == QThread::currentThread() );
+    assert(qApp && qApp->thread() == QThread::currentThread());
 
     _visible = visible;
 }
@@ -619,11 +645,11 @@ KnobCurveGui::KnobCurveGui(CurveWidget *curveWidget,
     }
 
     if (knob) {
-        QObject::connect( knob.get(), SIGNAL(keyFrameSet()), this, SLOT(onKnobInternalCurveChanged()) );
-        QObject::connect( knob.get(), SIGNAL(keyFrameRemoved()), this, SLOT(onKnobInternalCurveChanged()) );
-        QObject::connect( knob.get(), SIGNAL(keyInterpolationChanged()), this, SLOT(onKnobInterpolationChanged()) );
-        QObject::connect( knob.get(), SIGNAL(keyInterpolationChanged()), this, SLOT(onKnobInterpolationChanged()) );
-        QObject::connect( knob.get(), SIGNAL(refreshCurveEditor()), this, SLOT(onKnobInternalCurveChanged()) );
+        QObject::connect(knob.get(), SIGNAL(keyFrameSet()), this, SLOT(onKnobInternalCurveChanged()));
+        QObject::connect(knob.get(), SIGNAL(keyFrameRemoved()), this, SLOT(onKnobInternalCurveChanged()));
+        QObject::connect(knob.get(), SIGNAL(keyInterpolationChanged()), this, SLOT(onKnobInterpolationChanged()));
+        QObject::connect(knob.get(), SIGNAL(keyInterpolationChanged()), this, SLOT(onKnobInterpolationChanged()));
+        QObject::connect(knob.get(), SIGNAL(refreshCurveEditor()), this, SLOT(onKnobInternalCurveChanged()));
     }
 }
 
@@ -671,7 +697,8 @@ KnobCurveGui::evaluate(bool useExpr,
 {
     KnobIPtr knob = getInternalKnob();
 
-    KnobParametric* isParametric = dynamic_cast<KnobParametric*>( knob.get() );
+    KnobParametric* isParametric = dynamic_cast<KnobParametric *>(knob.get());
+
     if (isParametric) {
         return isParametric->getParametricCurve(_dimension)->getValueAt(x, false);
     } else if (useExpr) {
@@ -687,7 +714,7 @@ CurvePtr
 KnobCurveGui::getInternalCurve() const
 {
     KnobIPtr knob = getInternalKnob();
-    KnobParametric* isParametric = dynamic_cast<KnobParametric*>( knob.get() );
+    KnobParametric* isParametric = dynamic_cast<KnobParametric *>(knob.get());
 
     if (!knob || !isParametric) {
         return CurveGui::getInternalCurve();
@@ -753,6 +780,7 @@ BezierCPCurveGui::evaluate(bool /*useExpr*/,
 
     std::list<std::pair<double, KeyframeTypeEnum> >::iterator upb = keys.end();
     int dist = 0;
+
     for (std::list<std::pair<double, KeyframeTypeEnum> >::iterator it = keys.begin(); it != keys.end(); ++it, ++dist) {
         if (it->first > x) {
             upb = it;
@@ -760,22 +788,24 @@ BezierCPCurveGui::evaluate(bool /*useExpr*/,
         }
     }
 
-    if ( upb == keys.end() ) {
+    if (upb == keys.end()) {
         return keys.size() - 1;
-    } else if ( upb == keys.begin() ) {
+    } else if (upb == keys.begin()) {
         return 0;
     } else {
         std::list<std::pair<double, KeyframeTypeEnum> >::iterator prev = upb;
-        if ( prev != keys.begin() ) {
+
+        if (prev != keys.begin()) {
             --prev;
         }
+
         if (prev->second == eKeyframeTypeConstant) {
             return dist - 1;
         } else {
             ///Always linear for bezier interpolation
-            assert( (upb->first - prev->first) != 0 );
+            assert((upb->first - prev->first) != 0);
 
-            return ( (double)(x - prev->first) / (upb->first - prev->first) ) + dist - 1;
+            return ((double)(x - prev->first) / (upb->first - prev->first)) + dist - 1;
         }
     }
 }
@@ -796,8 +826,9 @@ BezierCPCurveGui::getKeyFrames() const
 
     _bezier->getKeyframeTimes(&keys);
     int i = 0;
+
     for (std::set<double>::iterator it = keys.begin(); it != keys.end(); ++it, ++i) {
-        ret.insert( KeyFrame(*it, i) );
+        ret.insert(KeyFrame(*it, i));
     }
 
     return ret;
@@ -811,7 +842,7 @@ BezierCPCurveGui::getKeyFrameIndex(double time) const
 
 KeyFrame
 BezierCPCurveGui::setKeyFrameInterpolation(KeyframeTypeEnum interp,
-                                           int index)
+        int index)
 {
     _bezier->setKeyFrameInterpolation(interp, index);
 

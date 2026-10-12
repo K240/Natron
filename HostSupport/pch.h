@@ -21,9 +21,6 @@
 #ifdef OFX_EXTENSIONS_NATRON
 #include "ofxNatron.h"
 #endif
-#ifdef OFX_SUPPORTS_OPENGLRENDER
-#include "ofxOpenGLRender.h"
-#endif
 #include "ofxOld.h" // old plugins may rely on deprecated properties being present
 
 #endif // __cplusplus
