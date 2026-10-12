@@ -2,6 +2,24 @@
 
 This directory contains various tools to help building and maintaining Natron.
 
+`node-size-gui-smoke.py` checks Reader node dimensions across 256 timeline
+changes, 64 label changes, preview toggles and a project save/reload. It also
+checks that toggling the preview repairs a previously enlarged node. Run it
+with a fresh owned profile, for example:
+
+```powershell
+./tools/run-windows-owned-gui-test.ps1 -Script tools/node-size-gui-smoke.py -Profile build/test-profiles/NodeSize-new -Result build/node-size-new/result.json -TimeoutSeconds 100
+```
+
+The Reader settings panel must remain open during the timeline changes; without
+it, the filename sublabel refresh that caused the original growth is skipped.
+
+`dot-insertion-gui-smoke.py` uses real graph key/mouse events to insert a Dot
+into a Reader/Viewer connection with Ctrl-click. It verifies the inserted
+connections, 16 undo/redo cycles, direct Dot creation and project save/reload.
+Run it with `run-windows-owned-gui-test.ps1` and a fresh profile/result directory
+as above. A stage report and bend-point screenshot survive a native crash.
+
 `test-windows-renderer-api-comparison.ps1 -ReportDirectory <fresh-directory>`
 records 20 unique timed frames per CPU/GPU case at 4K and 8K, using the same
 full-size CPU source, shipped OCIO Linear-to-sRGB node and dispersed CPU PNG

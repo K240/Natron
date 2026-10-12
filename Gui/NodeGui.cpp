@@ -826,7 +826,10 @@ NodeGui::removeSettingsPanel()
 void
 NodeGui::refreshSize()
 {
-    QRectF bbox = boundingRect();
+    if ( !canResize() ) {
+        return;
+    }
+    QRectF bbox = _boundingBox->rect();
 
     QString& label = _nodeLabel;
     resize( bbox.width(), bbox.height(), false, !label.isEmpty() );
@@ -977,6 +980,7 @@ NodeGui::resize(int width,
 
     QRectF bbox(topLeft.x(), topLeft.y(), width, height);
 
+    prepareGeometryChange();
     _boundingBox->setRect(bbox);
 
     int iconSize = TO_DPIY(NATRON_PLUGIN_ICON_SIZE);
@@ -2776,7 +2780,10 @@ QSize
 NodeGui::getSize() const
 {
     if ( QThread::currentThread() == qApp->thread() ) {
-        QRectF bbox = boundingRect();
+        // Layout and serialization use the unscaled body size. The painted
+        // bounds also include the outline and temporary node magnification.
+        // DotGui supplies its own circular geometry without a bounding box.
+        QRectF bbox = _boundingBox ? _boundingBox->rect() : boundingRect();
 
         return QSize( bbox.width(), bbox.height() );
     } else {
@@ -3139,7 +3146,9 @@ NodeGui::setNameItemHtml(const QString & name,
     _nameItem->adjustSize();
 
 
-    QRectF bbox = boundingRect();
+    // Feeding the painted bounds back into resize adds the outline on every
+    // Reader filename refresh, and also compounds temporary magnification.
+    QRectF bbox = _boundingBox->rect();
     resize( bbox.width(), bbox.height(), false, !label.isEmpty() );
 } // setNameItemHtml
 

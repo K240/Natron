@@ -34,6 +34,21 @@ The node graph
 - ``NodeGraphUndoRedo`` and ``NodeCreationDialog`` handle edits and node
   creation. Node clipboard: ``NodeClipBoard``.
 
+Node layout and serialization use the unscaled body rectangle, excluding the
+outline. Reusing ``boundingRect()`` as a new body size adds the outline on each
+Reader filename refresh and compounds temporary node magnification. The GUI
+regression in ``tools/node-size-gui-smoke.py`` changes sequence time with the
+Reader panel open, toggles previews, changes labels, and saves/reloads the
+project. To reset a node enlarged by an older build, select it and toggle its
+preview off and on (default shortcut: Alt+P).
+
+``DotGui`` creates an ellipse instead of the base node's rectangular body.
+The inherited size API uses its virtual geometry, and content resize refreshes
+skip nodes that cannot be resized. ``tools/dot-insertion-gui-smoke.py`` presses
+Ctrl in the actual node graph, clicks the displayed edge bend point, checks
+the Reader/Dot/Viewer connections and 16 undo/redo cycles, then saves/reloads
+a project containing two Dots.
+
 The viewer
 ----------
 
