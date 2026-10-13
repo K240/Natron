@@ -1,0 +1,43 @@
+#usda 1.0
+(
+    subLayers = [@scene.usda@]
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+    startTimeCode = 10
+    endTimeCode = 58
+    timeCodesPerSecond = 48
+    framesPerSecond = 24
+)
+over "World" {
+    over "Animated" {
+        over "Surface" {
+            asset inputs:albedo = @textures/checker.png@
+            string inputs:uvSet = "st"
+            over "Shader" {
+                color3f inputs:diffuseColor.connect = </World/Animated/Surface/Texture.outputs:rgb>
+            }
+            def Shader "Texture" {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file.connect = </World/Animated/Surface.inputs:albedo>
+                token inputs:sourceColorSpace = "sRGB"
+                token inputs:wrapS = "repeat"
+                token inputs:wrapT = "repeat"
+                float2 inputs:st.connect = </World/Animated/Surface/Transform.outputs:result>
+                float3 outputs:rgb
+            }
+            def Shader "Transform" {
+                uniform token info:id = "UsdTransform2d"
+                float2 inputs:in.connect = </World/Animated/Surface/UV.outputs:result>
+                float2 inputs:scale = (2,2)
+                float2 inputs:translation.timeSamples = {10:(0,0), 58:(0.5,0)}
+                float2 outputs:result
+            }
+            def Shader "UV" {
+                uniform token info:id = "UsdPrimvarReader_float2"
+                string inputs:varname.connect = </World/Animated/Surface.inputs:uvSet>
+                float2 outputs:result
+            }
+        }
+    }
+}

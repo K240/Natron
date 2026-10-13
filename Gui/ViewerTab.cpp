@@ -35,6 +35,7 @@
 #include <QAction>
 #include <QVBoxLayout>
 #include <QCheckBox>
+#include <QToolButton>
 #include <QPalette>
 
 #include "Engine/Node.h"
@@ -60,6 +61,7 @@
 #include "Gui/SpinBox.h"
 #include "Gui/TimeLineGui.h"
 #include "Gui/ViewerGL.h"
+#include "Gui/Scene3DViewer.h"
 
 
 NATRON_NAMESPACE_ENTER
@@ -134,6 +136,7 @@ ViewerTab::ViewerTab(const std::list<NodeGuiPtr> & existingNodesContext,
     QFontMetrics fm(font(), 0);
 
     _imp->firstSettingsRow = new QWidget(this);
+    _imp->firstSettingsRow->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     _imp->firstRowLayout = new QHBoxLayout(_imp->firstSettingsRow);
     _imp->firstSettingsRow->setLayout(_imp->firstRowLayout);
     _imp->firstRowLayout->setContentsMargins(0, 0, 0, 0);
@@ -409,6 +412,9 @@ ViewerTab::ViewerTab(const std::list<NodeGuiPtr> & existingNodesContext,
 
     /*2nd row of buttons*/
     _imp->secondSettingsRow = new QWidget(this);
+    // Gain/gamma sliders expand vertically by default. A toolbar row must
+    // keep its natural height when either the 2D or 3D viewport is resized.
+    _imp->secondSettingsRow->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     _imp->secondRowLayout = new QHBoxLayout(_imp->secondSettingsRow);
     _imp->secondSettingsRow->setLayout(_imp->secondRowLayout);
     _imp->secondRowLayout->setSpacing(0);
@@ -589,7 +595,29 @@ ViewerTab::ViewerTab(const std::list<NodeGuiPtr> & existingNodesContext,
         _imp->viewer->resetWipeControls();
     }
 
-    _imp->viewerSubContainerLayout->addWidget(_imp->viewer);
+    _imp->viewerSubContainerLayout->addWidget(_imp->viewer, 1);
+    auto sceneViewer = new Scene3DViewer(this);
+    sceneViewer->hide();
+    _imp->viewerSubContainerLayout->addWidget(sceneViewer, 1);
+    auto threeD = new QToolButton(_imp->firstSettingsRow);
+    threeD->setObjectName("Viewer3DToggle");
+    threeD->setText(tr("3D")); threeD->setCheckable(true);
+    threeD->setToolTip(tr("Switch between the 2D image and 3D scene"));
+    _imp->firstRowLayout->addWidget(threeD);
+    auto cameraView = new QToolButton(_imp->firstSettingsRow);
+    cameraView->setObjectName("Viewer3DCamera");cameraView->setText(tr("Camera"));cameraView->setCheckable(true);cameraView->hide();
+    _imp->firstRowLayout->addWidget(cameraView);
+    auto gizmoTool = new ComboBox(_imp->firstSettingsRow);
+    gizmoTool->setObjectName("Viewer3DGizmo");gizmoTool->addItem(tr("Move (W)"));gizmoTool->addItem(tr("Rotate (E)"));gizmoTool->addItem(tr("Scale (R)"));gizmoTool->hide();
+    _imp->firstRowLayout->addWidget(gizmoTool);
+    connect(threeD, &QToolButton::toggled, this, [this, sceneViewer, cameraView, gizmoTool](bool on) {
+        _imp->viewer->setVisible(!on);sceneViewer->setVisible(on);cameraView->setVisible(on);gizmoTool->setVisible(on);
+        if(on){sceneViewer->refreshScene();sceneViewer->setFocus();}
+    });
+    connect(cameraView, &QToolButton::toggled, sceneViewer, &Scene3DViewer::setLookThroughCamera);
+    connect(sceneViewer, &Scene3DViewer::lookThroughCameraChanged, cameraView, &QToolButton::setChecked);
+    connect(gizmoTool, qOverload<int>(&ComboBox::currentIndexChanged), sceneViewer, [sceneViewer](int mode){sceneViewer->setGizmoMode(mode);sceneViewer->setFocus();});
+    connect(sceneViewer, &Scene3DViewer::gizmoModeChanged, gizmoTool, &ComboBox::setCurrentIndex);
     for (int i = 0; i < 2; ++i) {
         _imp->viewerSubContainerLayout->addWidget(_imp->infoWidget[i]);
         if (i == 1) {
@@ -600,7 +628,7 @@ ViewerTab::ViewerTab(const std::list<NodeGuiPtr> & existingNodesContext,
 
     _imp->viewerLayout->addWidget(_imp->viewerSubContainer);
 
-    _imp->mainLayout->addWidget(_imp->viewerContainer);
+    _imp->mainLayout->addWidget(_imp->viewerContainer, 1);
     /*=============================================*/
 
     /*=============================================*/

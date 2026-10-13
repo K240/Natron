@@ -546,6 +546,7 @@ public:
         eCanConnectInput_differentPars,
         eCanConnectInput_differentFPS,
         eCanConnectInput_multiResNotSupported,
+        eCanConnectInput_incompatibleDataType,
     };
 
     /**

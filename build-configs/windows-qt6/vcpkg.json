@@ -12,6 +12,7 @@
     "boost-predef",
     "boost-serialization",
     "cairo",
-    "pkgconf"
+    "pkgconf",
+    { "name": "usd", "default-features": false }
   ]
 }

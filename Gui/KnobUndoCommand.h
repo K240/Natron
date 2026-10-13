@@ -85,6 +85,7 @@ public:
         , _merge(true)
         , _refreshGuiFirstTime(refreshGui)
         , _firstRedoCalled(false)
+        , _time(0)
     {
         _oldValue.push_back(oldValue);
         _newValue.push_back(newValue);
@@ -108,6 +109,7 @@ public:
         , _merge(true)
         , _refreshGuiFirstTime(refreshGui)
         , _firstRedoCalled(false)
+        , _time(0)
     {
     }
 
@@ -136,7 +138,7 @@ private:
 
         assert( (int)_oldValue.size() == knob->getDimension() || _dimension != -1 );
 
-        typename std::list<T>::iterator next = _oldValue.end();
+        typename std::list<T>::iterator next = _oldValue.begin();
         if ( next != _oldValue.end() ) {
             ++next;
         }
@@ -156,7 +158,7 @@ private:
             knobUI->setValue(dimension, *it, NULL, refreshUI, !refreshUI ? eValueChangedReasonUserEdited : eValueChangedReasonNatronGuiEdited);
 
             if ( knob->getHolder()->getApp() ) {
-                if (_valueChangedReturnCode[i] == 1) { //the value change also added a keyframe
+                if (_valueChangedReturnCode[i] == KnobHelper::eValueChangedReturnCodeKeyframeAdded) {
                     try {
                         knobUI->removeKeyFrame( _newKeys[i].getTime(), dimension, ViewIdx(0) );
                     } catch (std::exception&) {
@@ -164,10 +166,9 @@ private:
                         // ignore
                     }
                     modifiedKeyFrame = true;
-                } else if (_valueChangedReturnCode[i] == 2) {
-                    //the value change moved a keyframe
-                    knobUI->removeKeyFrame( _newKeys[i].getTime(), dimension, ViewIdx(0) );
-                    knobUI->setKeyframe( _oldKeys[i].getTime(), dimension, ViewIdx(0) );
+                } else if (_valueChangedReturnCode[i] == KnobHelper::eValueChangedReturnCodeKeyframeModified) {
+                    // Restore the original value, interpolation and derivatives.
+                    knobUI->setKeyframes(std::vector<KeyFrame>(1, _oldKeys[i]), dimension, ViewIdx(0));
                     modifiedKeyFrame = true;
                 }
             }
@@ -197,7 +198,6 @@ private:
 
     virtual void redo() OVERRIDE FINAL
     {
-        double time = 0;
         KnobGuiPtr knobUI = _knob.lock();
 
         if (!knobUI) {
@@ -210,8 +210,8 @@ private:
         // If the knob has several UI (one in the viewer and one in the settings panel) refreshUI
         bool refreshUI = holder ? holder->isInViewerUIKnob(knob) : false;
 
-        if ( holder && holder->getApp() ) {
-            time = holder->getApp()->getTimeLine()->currentFrame();
+        if (!_firstRedoCalled && holder && holder->getApp()) {
+            _time = holder->getApp()->getTimeLine()->currentFrame();
         }
 
         assert( (int)_oldValue.size() == knob->getDimension() || _dimension != -1 );
@@ -220,7 +220,7 @@ private:
 
         knob->beginChanges();
         int i = 0;
-        typename std::list<T>::iterator next = _newValue.end();
+        typename std::list<T>::iterator next = _newValue.begin();
         if ( next != _newValue.end() ) {
             ++next;
         }
@@ -233,8 +233,8 @@ private:
 
             CurvePtr c = knob->getCurve(ViewIdx(0), dimension);
             //find out if there's already an existing keyframe before calling setValue
-            if (c) {
-                bool found = c->getKeyFrameWithTime(time, &_oldKeys[i]);
+            if (!_firstRedoCalled && c) {
+                bool found = c->getKeyFrameWithTime(_time, &_oldKeys[i]);
                 Q_UNUSED(found); // we don't care if it existed or not
             }
 
@@ -242,8 +242,18 @@ private:
                 knob->unblockValueChanges();
             }
 
-            _valueChangedReturnCode[i] = knobUI->setValue(dimension, *it, &_newKeys[i], refreshUI, !refreshUI ? eValueChangedReasonUserEdited : eValueChangedReasonNatronGuiEdited);
-            if (_valueChangedReturnCode[i] != KnobHelper::eValueChangedReturnCodeNoKeyframeAdded) {
+            ValueChangedReasonEnum reason = !refreshUI ? eValueChangedReasonUserEdited : eValueChangedReasonNatronGuiEdited;
+            if (!_firstRedoCalled) {
+                _valueChangedReturnCode[i] = knobUI->setValue(dimension, *it, &_newKeys[i], refreshUI, reason);
+            } else if (_valueChangedReturnCode[i] == KnobHelper::eValueChangedReturnCodeKeyframeAdded ||
+                       _valueChangedReturnCode[i] == KnobHelper::eValueChangedReturnCodeKeyframeModified) {
+                // Redo at the edited frame even if the playhead has moved.
+                knobUI->setValueAtTime(dimension, *it, _time, ViewSpec::current(), &_newKeys[i], refreshUI, reason);
+            } else {
+                knobUI->setValue(dimension, *it, NULL, refreshUI, reason);
+            }
+            if (_valueChangedReturnCode[i] == KnobHelper::eValueChangedReturnCodeKeyframeAdded ||
+                _valueChangedReturnCode[i] == KnobHelper::eValueChangedReturnCodeKeyframeModified) {
                 modifiedKeyFrames = true;
             }
 
@@ -295,7 +305,8 @@ private:
         }
 
         KnobGuiPtr knob = knobCommand->_knob.lock();
-        if ( (_knob.lock() != knob) || !_merge || !knobCommand->_merge || (_dimension != knobCommand->_dimension) ) {
+        if ( (_knob.lock() != knob) || !_merge || !knobCommand->_merge || (_dimension != knobCommand->_dimension) ||
+             (_time != knobCommand->_time) ) {
             return false;
         }
 
@@ -317,6 +328,7 @@ private:
     bool _merge;
     bool _refreshGuiFirstTime;
     bool _firstRedoCalled;
+    double _time;
 };
 
 

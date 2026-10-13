@@ -46,14 +46,43 @@ add_custom_command(OUTPUT "${display_header}"
     COMMAND "${CMAKE_COMMAND}" "-DINPUT=${display_spv}" "-DOUTPUT=${display_header}" -DSYMBOL=ViewerDisplayShader
         -P "${CMAKE_CURRENT_SOURCE_DIR}/EmbedShader.cmake"
     DEPENDS shaders/viewer-display.comp EmbedShader.cmake VERBATIM)
-add_library(NatronGpu STATIC VulkanDevice.cpp VulkanMemory.cpp ViewerFrame.cpp ViewerRenderer.cpp RasterViewerRenderer.cpp ViewerDisplayConversion.cpp ImageOperations.cpp FragmentProgram.cpp LutTexture.cpp
+add_library(NatronUfbx STATIC ../libs/ufbx/ufbx.c)
+target_include_directories(NatronUfbx PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../libs/ufbx")
+set_target_properties(NatronUfbx PROPERTIES POSITION_INDEPENDENT_CODE ON AUTOMOC OFF AUTORCC OFF)
+add_library(NatronGpu STATIC VulkanDevice.cpp VulkanMemory.cpp ViewerFrame.cpp ViewerRenderer.cpp RasterViewerRenderer.cpp ViewerDisplayConversion.cpp ImageOperations.cpp FragmentProgram.cpp LutTexture.cpp CardScene.cpp Lighting.cpp Mesh.cpp MeshRenderer.cpp FbxMesh.cpp UsdScene.cpp UsdSceneBridge.cpp
     "${shader_header}" "${viewer_header}" "${operations_header}" "${display_header}")
 target_compile_features(NatronGpu PUBLIC cxx_std_17)
 target_compile_definitions(NatronGpu PUBLIC VK_NO_PROTOTYPES VOLK_NAMESPACE)
 target_include_directories(NatronGpu
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/.." "${NATRON_VOLK_INCLUDE_DIR}"
     PRIVATE "${NATRON_VMA_INCLUDE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
-target_link_libraries(NatronGpu PUBLIC Vulkan::Headers PRIVATE Vulkan::shaderc_combined "${CMAKE_DL_LIBS}")
+target_link_libraries(NatronGpu PUBLIC Vulkan::Headers PRIVATE NatronUfbx Vulkan::shaderc_combined "${CMAKE_DL_LIBS}")
+option(NATRON_ENABLE_USD "Build native USD scene import using OpenUSD" OFF)
+if(NATRON_ENABLE_USD)
+    find_package(pxr CONFIG REQUIRED)
+    target_compile_definitions(NatronGpu PUBLIC NATRON_HAS_USD)
+    target_sources(NatronGpu PRIVATE UsdTexture.cpp)
+    target_link_libraries(NatronGpu PUBLIC usd usdGeom usdShade usdLux PRIVATE Qt6::Gui)
+    if(WIN32)
+        get_target_property(_natron_usd_dll usd IMPORTED_LOCATION_RELEASE)
+        get_filename_component(_natron_usd_bin "${_natron_usd_dll}" DIRECTORY)
+        set(NATRON_USD_RUNTIME_RESOURCES "${_natron_usd_bin}/usd" CACHE INTERNAL "USD schema resources beside the imported DLLs" FORCE)
+    endif()
+endif()
+# Keep library plugin paths relative to the DLLs copied by vcpkg applocal.
+# Loading the original installation's plugins can load another copy of a DLL.
+function(natron_deploy_usd_resources target)
+    if(WIN32 AND NATRON_ENABLE_USD)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                "${NATRON_USD_RUNTIME_RESOURCES}" "$<TARGET_FILE_DIR:${target}>/usd"
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/UsdPlugInfo.json" "$<TARGET_FILE_DIR:${target}>/usd/plugInfo.json"
+            COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/usd/natron" "$<TARGET_FILE_DIR:${target}>/usd/natron"
+            VERBATIM)
+    endif()
+endfunction()
 set_target_properties(NatronGpu PROPERTIES POSITION_INDEPENDENT_CODE ON AUTOMOC OFF AUTORCC OFF)
 if(MSVC)
     target_compile_options(NatronGpu PRIVATE /utf-8 /Zc:__cplusplus)

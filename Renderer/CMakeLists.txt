@@ -38,3 +38,4 @@ target_include_directories(NatronRenderer
 )
 
 install(TARGETS NatronRenderer DESTINATION "${CMAKE_INSTALL_BINDIR}")
+natron_deploy_usd_resources(NatronRenderer)

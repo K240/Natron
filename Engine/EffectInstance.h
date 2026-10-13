@@ -108,6 +108,8 @@
 
 NATRON_NAMESPACE_ENTER
 
+enum class NodeDataType { Image, Geometry, Camera, Material, Transform, Scene, Unknown, Light };
+
 /**
  * @brief This is the base class for visual effects.
  * A live instance is always living throughout the lifetime of a Node and other copies are
@@ -305,6 +307,9 @@ public:
      * MT-Safe
      **/
     EffectInstancePtr getInput(int n) const WARN_UNUSED_RETURN;
+
+    virtual NodeDataType getOutputDataType() const;
+    virtual bool acceptsInputDataType(int input, NodeDataType type) const;
 
     /**
      * @brief Forwarded to the node holding the effect

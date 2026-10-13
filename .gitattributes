@@ -68,5 +68,10 @@ build-configs/windows-ofx/*.patch -whitespace
 # Vendored SDK and license files retain their upstream whitespace verbatim.
 Global/OpenFX/ofxDrawSuite.h -whitespace
 tools/license/components/LICENSE-SPIRV-Headers.txt -whitespace
+# Preserve vendored ufbx sources and FBX/OBJ reference data verbatim.
+libs/ufbx/ufbx.[ch] -text -whitespace
+libs/ufbx/LICENSE -text -whitespace
+Tests/fixtures/scene3d/*.fbx -text -whitespace
+Tests/fixtures/scene3d/*.obj -text -whitespace
 *.diff -text
 *.pc -text

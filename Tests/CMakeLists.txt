@@ -18,6 +18,23 @@
 # ***** END LICENSE BLOCK *****
 
 set(Tests_HEADERS BaseTest.h)
+if(NATRON_ENABLE_USD)
+    find_package(pxr CONFIG REQUIRED)
+    add_executable(NatronUsdSceneBridge UsdSceneBridge_Test.cpp)
+    natron_deploy_usd_resources(NatronUsdSceneBridge)
+    target_link_libraries(NatronUsdSceneBridge PRIVATE NatronGpu Qt6::Core Qt6::Gui)
+    target_compile_definitions(NatronUsdSceneBridge PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME UsdSceneBridgeExport COMMAND NatronUsdSceneBridge)
+    add_executable(NatronUsdScene UsdScene_Test.cpp UsdTexture_Test.cpp)
+    natron_deploy_usd_resources(NatronUsdScene)
+    target_link_libraries(NatronUsdScene PRIVATE NatronGpu usdUtils Qt6::Gui)
+    target_compile_definitions(NatronUsdScene PRIVATE QT_NO_KEYWORDS NATRON_USD_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/scene3d/usd")
+    add_test(NAME UsdSceneCpu COMMAND NatronUsdScene)
+    set_tests_properties(UsdSceneCpu PROPERTIES TIMEOUT 90)
+endif()
+add_executable(NatronLighting Lighting_Test.cpp)
+target_link_libraries(NatronLighting PRIVATE NatronGpu)
+add_test(NAME LightingCpu COMMAND NatronLighting)
 set(Tests_SOURCES
     google-test/src/gtest-all.cc
     google-mock/src/gmock-all.cc
@@ -51,6 +68,16 @@ target_include_directories(Tests
         google-mock
 )
 add_test(NAME Tests COMMAND Tests)
+
+add_executable(NatronCardScene CardScene_Test.cpp)
+target_link_libraries(NatronCardScene PRIVATE NatronGpu)
+add_test(NAME CardSceneCpu COMMAND NatronCardScene)
+set_tests_properties(CardSceneCpu PROPERTIES TIMEOUT 60)
+add_executable(NatronFbxMesh FbxMesh_Test.cpp)
+target_link_libraries(NatronFbxMesh PRIVATE NatronGpu)
+target_compile_definitions(NatronFbxMesh PRIVATE NATRON_FBX_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/scene3d")
+add_test(NAME FbxMeshCpu COMMAND NatronFbxMesh)
+set_tests_properties(FbxMeshCpu PROPERTIES TIMEOUT 60)
 
 # Hardware-dependent Engine tests run explicitly through the Vulkan runner.
 add_executable(NatronVulkanImageStorage VulkanImageStorage.cpp)

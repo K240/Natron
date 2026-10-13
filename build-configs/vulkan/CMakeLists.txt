@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(NatronVulkanTests LANGUAGES CXX)
+project(NatronVulkanTests LANGUAGES C CXX)
 find_package(Qt6 6.6 REQUIRED COMPONENTS Gui Widgets)
 add_compile_definitions(QT_NO_CAST_FROM_ASCII)
 if(MSVC)

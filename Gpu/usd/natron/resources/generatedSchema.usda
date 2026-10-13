@@ -1,0 +1,15 @@
+#usda 1.0
+# Codeless API schemas. Standard Mesh, Camera and Material prims retain their types.
+class "NatronCompositingAPI"
+{
+    bool natron:unlit = false
+}
+
+class "NatronProjectionAPI"
+{
+    rel natron:projection:camera
+    token natron:projection:timeMode = "live"
+    double natron:projection:referenceTime = 1
+    double natron:projection:imageTime = 1
+    double natron:projection:aspect = 1
+}

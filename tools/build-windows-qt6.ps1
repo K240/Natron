@@ -83,6 +83,7 @@ Invoke-Checked -Command cmake -Arguments @(
     "-DPKG_CONFIG_EXECUTABLE=$depsRoot\x64-windows\tools\pkgconf\pkgconf.exe",
     '-DSHIBOKEN6TOOLS_SKIP_FIND_DEPENDENCIES=ON',
     "-DNATRON_VULKAN_SDK_ROOT=$VulkanSdkRoot",
+    '-DNATRON_ENABLE_USD=ON',
     "-DVulkan_INCLUDE_DIR=$VulkanSdkRoot\Include",
     "-DVulkan_LIBRARY=$VulkanSdkRoot\Lib\vulkan-1.lib",
     "-DVulkan_GLSLANG_VALIDATOR_EXECUTABLE=$VulkanSdkRoot\Bin\glslangValidator.exe"

@@ -325,7 +325,10 @@ Gui::addVisibleDockablePanel(DockablePanel* panel)
     const auto tracked = QString::fromUtf8("natronVisiblePanelTracked");
 
     if (!panel->property(tracked.toUtf8().constData()).toBool()) {
-        connect(panel, &QObject::destroyed, this, [this, panel] {
+        if (!_imp->panelDestructionContext) {
+            _imp->panelDestructionContext = std::make_unique<QObject>();
+        }
+        connect(panel, &QObject::destroyed, _imp->panelDestructionContext.get(), [this, panel] {
             removeVisibleDockablePanel(panel);
         });
         panel->setProperty(tracked.toUtf8().constData(), true);

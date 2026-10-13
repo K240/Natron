@@ -1,6 +1,6 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
-    [ValidateSet('Natron', 'NatronRenderer', 'NatronPython', 'Tests', 'CTest', 'Smoke', 'RasterGuiSmoke', 'RasterIOOverlaySmoke', 'HeadlessCpuSmoke', 'MemoryFailureSmoke', 'MemoryPressureSmoke', 'DeviceLossSmoke', 'PerformanceRender', 'EngineVulkanSmoke', 'ShadertoyVulkanSmoke', 'OcioVulkanSmoke', 'ImageStorageSmoke', 'ImageConvertSmoke', 'ClipBorrowSmoke', 'VulkanProxySmoke', 'ReaderVulkanSmoke', 'ReaderEngineVulkanSmoke', 'WriterEngineVulkanSmoke', 'GuiSmoke', 'MemoryGuiSmoke', 'ConcurrentMemoryGuiSmoke', 'DeviceLossGuiSmoke', 'ViewerPerformance', 'OfxSmoke', 'OfxGuiSmoke', 'OverlaySmoke', 'IOOverlaySmoke', 'PluginOverlaySmoke', 'DrawSuiteSmoke', 'ParamDrawSuiteSmoke', 'CurveSmoke', 'DopeSheetSmoke', 'TimelineSmoke', 'HistogramSmoke')]
+    [ValidateSet('Natron', 'NatronRenderer', 'NatronPython', 'NatronUsdSceneBridge', 'Tests', 'CTest', 'Smoke', 'RasterGuiSmoke', 'RasterIOOverlaySmoke', 'HeadlessCpuSmoke', 'MemoryFailureSmoke', 'MemoryPressureSmoke', 'DeviceLossSmoke', 'PerformanceRender', 'EngineVulkanSmoke', 'ShadertoyVulkanSmoke', 'OcioVulkanSmoke', 'ImageStorageSmoke', 'ImageConvertSmoke', 'ClipBorrowSmoke', 'VulkanProxySmoke', 'ReaderVulkanSmoke', 'ReaderEngineVulkanSmoke', 'WriterEngineVulkanSmoke', 'GuiSmoke', 'MemoryGuiSmoke', 'ConcurrentMemoryGuiSmoke', 'DeviceLossGuiSmoke', 'ViewerPerformance', 'OfxSmoke', 'OfxGuiSmoke', 'OverlaySmoke', 'IOOverlaySmoke', 'PluginOverlaySmoke', 'DrawSuiteSmoke', 'ParamDrawSuiteSmoke', 'CurveSmoke', 'DopeSheetSmoke', 'TimelineSmoke', 'HistogramSmoke', 'Scene3DGuiSmoke', 'Scene3DFbxDemoGuiSmoke', 'Scene3DFbxAnimationDemoGuiSmoke', 'Scene3DFbxCameraDemoGuiSmoke', 'Scene3DSmoke', 'Scene3DLightingSmoke', 'Scene3DLightingDemoGuiSmoke', 'Scene3DEnvironmentSmoke', 'Scene3DEnvironmentDemoGuiSmoke', 'Scene3DHdNvpDemoGuiSmoke', 'Scene3DUsdDemoGuiSmoke', 'Scene3DUsdSmoke')]
     [string]$Program = 'Natron',
     [string]$QtRoot = 'D:\Qt\6.11.2\msvc2022_64',
     [string]$VulkanSdkRoot = 'C:\VulkanSDK\1.4.363.0',
@@ -49,6 +49,44 @@ $previousTestVulkanValidation = $env:NATRON_TEST_VULKAN_VALIDATION
 if ($Program -eq 'Smoke') {
     $smokeResult = Join-Path $repoRoot 'build\qt6-smoke\result.json'
     $ProgramArguments = @('--no-settings', 'tools/qt6-smoke.py', '1')
+} elseif ($Program -eq 'Scene3DSmoke') {
+    $sceneDevice = if ($env:NATRON_VULKAN_DEVICE) { $env:NATRON_VULKAN_DEVICE } else { 'auto' }
+    if ($env:NATRON_VULKAN_DISABLED -eq '1') { $sceneDevice += '-cpu-only' }
+    $smokeResult = Join-Path $repoRoot "build/scene3d-smoke-$sceneDevice/result.json"
+    $ProgramArguments = @('--no-settings', '--interpreter', 'tools/scene3d-smoke.py')
+} elseif ($Program -eq 'Scene3DUsdSmoke') {
+    $smokeResult = Join-Path $repoRoot ('build/scene3d-usd-smoke-' + $(if ($env:NATRON_VULKAN_DISABLED -eq '1') { 'cpu' } else { 'gpu' }) + '/result.json')
+    $ProgramArguments = @('--no-settings', '--interpreter', 'tools/scene3d-usd-smoke.py')
+} elseif ($Program -eq 'Scene3DHdNvpDemoGuiSmoke') {
+    $smokeResult = Join-Path $repoRoot 'build/scene3d-hdnvp-demo/gui-result.json'
+    $ProgramArguments = @('tools/scene3d-hdnvp-demo-gui-smoke.py')
+} elseif ($Program -eq 'Scene3DUsdDemoGuiSmoke') {
+    $smokeResult = Join-Path $repoRoot 'build/scene3d-usd-demo/gui-result.json'
+    $ProgramArguments = @('tools/scene3d-usd-demo-gui-smoke.py')
+} elseif ($Program -eq 'Scene3DLightingSmoke') {
+    $smokeResult = Join-Path $repoRoot ('build/scene3d-lighting-smoke-' + $(if ($env:NATRON_VULKAN_DISABLED -eq '1') { 'cpu' } else { 'gpu' }) + '/result.json')
+    $ProgramArguments = @('--no-settings', '--interpreter', 'tools/scene3d-lighting-smoke.py')
+} elseif ($Program -eq 'Scene3DEnvironmentSmoke') {
+    $smokeResult = Join-Path $repoRoot ('build/scene3d-environment-smoke-' + $(if ($env:NATRON_VULKAN_DISABLED -eq '1') { 'cpu' } else { 'gpu' }) + '/result.json')
+    $ProgramArguments = @('--no-settings', '--interpreter', 'tools/scene3d-environment-smoke.py')
+} elseif ($Program -eq 'Scene3DEnvironmentDemoGuiSmoke') {
+    $smokeResult = Join-Path $repoRoot 'build/scene3d-environment-demo/gui-result.json'
+    $ProgramArguments = @('tools/scene3d-environment-demo-gui-smoke.py')
+} elseif ($Program -eq 'Scene3DLightingDemoGuiSmoke') {
+    $smokeResult = Join-Path $repoRoot 'build/scene3d-lighting-demo/gui-result.json'
+    $ProgramArguments = @('tools/scene3d-lighting-demo-gui-smoke.py')
+} elseif ($Program -eq 'Scene3DFbxCameraDemoGuiSmoke') {
+    $smokeResult = Join-Path $repoRoot 'build/scene3d-fbx-camera-demo/gui-result.json'
+    $ProgramArguments = @('tools/scene3d-fbx-camera-demo-gui-smoke.py')
+} elseif ($Program -eq 'Scene3DFbxAnimationDemoGuiSmoke') {
+    $smokeResult = Join-Path $repoRoot 'build/scene3d-fbx-animation-demo/gui-result.json'
+    $ProgramArguments = @('tools/scene3d-fbx-animation-demo-gui-smoke.py')
+} elseif ($Program -eq 'Scene3DFbxDemoGuiSmoke') {
+    $smokeResult = Join-Path $repoRoot 'build/scene3d-fbx-demo/gui-result.json'
+    $ProgramArguments = @('tools/scene3d-fbx-demo-gui-smoke.py')
+} elseif ($Program -eq 'Scene3DGuiSmoke') {
+    $smokeResult = Join-Path $repoRoot 'build/scene3d-gui-result.json'
+    $ProgramArguments = @('tools/scene3d-gui-smoke.py')
 } elseif ($Program -eq 'RasterGuiSmoke') {
     $smokeResult = Join-Path $repoRoot 'build\raster-gui-smoke\result.json'
     $ProgramArguments = @('--clear-openfx-cache', 'tools/raster-gui-smoke.py')
@@ -193,17 +231,21 @@ if ($Program -eq 'CTest') {
     $executable = (Get-Command ctest -ErrorAction Stop).Source
     $ProgramArguments = @('--test-dir', $BuildDirectory, '--output-on-failure') + $ProgramArguments
 } else {
-    $binary = @{ RasterGuiSmoke = 'Natron'; RasterIOOverlaySmoke = 'Natron'; HeadlessCpuSmoke = 'NatronRenderer'; Smoke = 'NatronRenderer'; MemoryFailureSmoke = 'NatronRenderer'; MemoryPressureSmoke = 'NatronRenderer'; DeviceLossSmoke = 'NatronRenderer'; PerformanceRender = 'NatronRenderer'; EngineVulkanSmoke = 'NatronRenderer'; ShadertoyVulkanSmoke = 'NatronRenderer'; OcioVulkanSmoke = 'NatronRenderer'; VulkanProxySmoke = 'Natron'; ReaderVulkanSmoke = 'Natron'; ReaderEngineVulkanSmoke = 'NatronRenderer'; WriterEngineVulkanSmoke = 'NatronRenderer'; MemoryGuiSmoke = 'Natron'; ConcurrentMemoryGuiSmoke = 'Natron'; DeviceLossGuiSmoke = 'Natron'; ViewerPerformance = 'Natron'; GuiSmoke = 'Natron'; OfxSmoke = 'NatronRenderer'; OfxGuiSmoke = 'Natron'; OverlaySmoke = 'Natron'; IOOverlaySmoke = 'Natron'; PluginOverlaySmoke = 'Natron'; DrawSuiteSmoke = 'Natron'; ParamDrawSuiteSmoke = 'Natron'; CurveSmoke = 'Natron'; TimelineSmoke = 'Natron'; DopeSheetSmoke = 'Natron'; HistogramSmoke = 'Natron' }[$Program]
+    $binary = @{ RasterGuiSmoke = 'Natron'; RasterIOOverlaySmoke = 'Natron'; HeadlessCpuSmoke = 'NatronRenderer'; Smoke = 'NatronRenderer'; MemoryFailureSmoke = 'NatronRenderer'; MemoryPressureSmoke = 'NatronRenderer'; DeviceLossSmoke = 'NatronRenderer'; PerformanceRender = 'NatronRenderer'; EngineVulkanSmoke = 'NatronRenderer'; ShadertoyVulkanSmoke = 'NatronRenderer'; OcioVulkanSmoke = 'NatronRenderer'; VulkanProxySmoke = 'Natron'; ReaderVulkanSmoke = 'Natron'; ReaderEngineVulkanSmoke = 'NatronRenderer'; WriterEngineVulkanSmoke = 'NatronRenderer'; MemoryGuiSmoke = 'Natron'; ConcurrentMemoryGuiSmoke = 'Natron'; DeviceLossGuiSmoke = 'Natron'; ViewerPerformance = 'Natron'; GuiSmoke = 'Natron'; OfxSmoke = 'NatronRenderer'; OfxGuiSmoke = 'Natron'; OverlaySmoke = 'Natron'; IOOverlaySmoke = 'Natron'; PluginOverlaySmoke = 'Natron'; DrawSuiteSmoke = 'Natron'; ParamDrawSuiteSmoke = 'Natron'; CurveSmoke = 'Natron'; TimelineSmoke = 'Natron'; DopeSheetSmoke = 'Natron'; HistogramSmoke = 'Natron'; Scene3DGuiSmoke = 'Natron'; Scene3DFbxDemoGuiSmoke = 'Natron'; Scene3DFbxAnimationDemoGuiSmoke = 'Natron'; Scene3DFbxCameraDemoGuiSmoke = 'Natron'; Scene3DSmoke = 'NatronRenderer'; Scene3DLightingSmoke = 'NatronRenderer'; Scene3DEnvironmentSmoke = 'NatronRenderer'; Scene3DEnvironmentDemoGuiSmoke = 'Natron'; Scene3DLightingDemoGuiSmoke = 'Natron'; Scene3DUsdSmoke = 'NatronRenderer'; Scene3DUsdDemoGuiSmoke = 'Natron'; Scene3DHdNvpDemoGuiSmoke = 'Natron' }[$Program]
     if (-not $binary) { $binary = $Program }
     if ($Program -eq 'ImageStorageSmoke') { $binary = 'NatronVulkanImageStorage' }
     if ($Program -eq 'ImageConvertSmoke') { $binary = 'NatronVulkanImageConvert' }
     if ($Program -eq 'ClipBorrowSmoke') { $binary = 'NatronVulkanClipBorrow' }
-    $module = @{ Natron = 'App'; NatronRenderer = 'Renderer'; NatronPython = 'PythonBin'; Tests = 'Tests'; NatronVulkanImageStorage = 'Tests'; NatronVulkanImageConvert = 'Tests'; NatronVulkanClipBorrow = 'Tests' }[$binary]
+    $module = @{ Natron = 'App'; NatronRenderer = 'Renderer'; NatronPython = 'PythonBin'; Tests = 'Tests'; NatronVulkanImageStorage = 'Tests'; NatronVulkanImageConvert = 'Tests'; NatronVulkanClipBorrow = 'Tests'; NatronUsdSceneBridge = 'Tests' }[$binary]
     $binaryName = if ($binary -eq 'NatronPython') { 'natron-python' } else { $binary }
     $executable = Join-Path $BuildDirectory "$module\$binaryName.exe"
 }
 if (-not (Test-Path -LiteralPath $executable)) { throw "Build executable not found: $executable" }
-if ($Program -in @('RasterGuiSmoke', 'RasterIOOverlaySmoke', 'HeadlessCpuSmoke', 'MemoryFailureSmoke', 'MemoryPressureSmoke', 'DeviceLossSmoke', 'PerformanceRender', 'EngineVulkanSmoke', 'ShadertoyVulkanSmoke', 'OcioVulkanSmoke', 'ImageStorageSmoke', 'ImageConvertSmoke', 'ClipBorrowSmoke', 'VulkanProxySmoke', 'ReaderVulkanSmoke', 'ReaderEngineVulkanSmoke', 'WriterEngineVulkanSmoke', 'GuiSmoke', 'MemoryGuiSmoke', 'ConcurrentMemoryGuiSmoke', 'DeviceLossGuiSmoke', 'ViewerPerformance', 'OfxGuiSmoke', 'OverlaySmoke', 'IOOverlaySmoke', 'PluginOverlaySmoke', 'DrawSuiteSmoke', 'ParamDrawSuiteSmoke', 'CurveSmoke', 'DopeSheetSmoke', 'TimelineSmoke', 'HistogramSmoke')) {
+# USD plugins must resolve to the same applocal DLLs as the executable.
+$usdExecutableDirectory = if ($Program -eq 'CTest') { Join-Path $BuildDirectory 'Tests' } else { Split-Path -Parent $executable }
+$env:PXR_PLUGINPATH_NAME = Join-Path (Join-Path $repoRoot $usdExecutableDirectory) 'usd/*/resources/'
+
+if ($Program -in @('RasterGuiSmoke', 'RasterIOOverlaySmoke', 'HeadlessCpuSmoke', 'MemoryFailureSmoke', 'MemoryPressureSmoke', 'DeviceLossSmoke', 'PerformanceRender', 'EngineVulkanSmoke', 'ShadertoyVulkanSmoke', 'OcioVulkanSmoke', 'ImageStorageSmoke', 'ImageConvertSmoke', 'ClipBorrowSmoke', 'VulkanProxySmoke', 'ReaderVulkanSmoke', 'ReaderEngineVulkanSmoke', 'WriterEngineVulkanSmoke', 'GuiSmoke', 'MemoryGuiSmoke', 'ConcurrentMemoryGuiSmoke', 'DeviceLossGuiSmoke', 'ViewerPerformance', 'OfxGuiSmoke', 'OverlaySmoke', 'IOOverlaySmoke', 'PluginOverlaySmoke', 'DrawSuiteSmoke', 'ParamDrawSuiteSmoke', 'CurveSmoke', 'DopeSheetSmoke', 'TimelineSmoke', 'HistogramSmoke', 'Scene3DGuiSmoke', 'Scene3DFbxDemoGuiSmoke', 'Scene3DFbxAnimationDemoGuiSmoke', 'Scene3DFbxCameraDemoGuiSmoke', 'Scene3DSmoke', 'Scene3DLightingSmoke', 'Scene3DLightingDemoGuiSmoke', 'Scene3DEnvironmentSmoke', 'Scene3DEnvironmentDemoGuiSmoke', 'Scene3DHdNvpDemoGuiSmoke', 'Scene3DUsdDemoGuiSmoke', 'Scene3DUsdSmoke')) {
     $testProfile = Join-Path $repoRoot ("build\test-profiles\" + $Program + '-' + [Guid]::NewGuid().ToString('N'))
     $settingsDirectory = Join-Path $testProfile 'settings\INRIA'
     New-Item -ItemType Directory -Path $settingsDirectory -Force | Out-Null
@@ -240,7 +282,7 @@ if ($Program -in @('RasterGuiSmoke', 'RasterIOOverlaySmoke', 'HeadlessCpuSmoke',
             RedirectStandardOutput = (Join-Path $testProfile 'stdout.log')
             RedirectStandardError = (Join-Path $testProfile 'stderr.log')
         }
-        if ($Program -in @('RasterGuiSmoke', 'RasterIOOverlaySmoke', 'HeadlessCpuSmoke', 'MemoryFailureSmoke', 'MemoryPressureSmoke', 'DeviceLossSmoke', 'PerformanceRender', 'EngineVulkanSmoke', 'ShadertoyVulkanSmoke', 'OcioVulkanSmoke', 'ReaderEngineVulkanSmoke', 'WriterEngineVulkanSmoke')) {
+        if ($Program -in @('RasterGuiSmoke', 'RasterIOOverlaySmoke', 'HeadlessCpuSmoke', 'MemoryFailureSmoke', 'MemoryPressureSmoke', 'DeviceLossSmoke', 'PerformanceRender', 'EngineVulkanSmoke', 'ShadertoyVulkanSmoke', 'OcioVulkanSmoke', 'ReaderEngineVulkanSmoke', 'WriterEngineVulkanSmoke', 'Scene3DSmoke', 'Scene3DLightingSmoke', 'Scene3DEnvironmentSmoke', 'Scene3DUsdSmoke')) {
             # EOF closes the interpreter after the script; background autorun
             # would render saved Write nodes again and overwrite the fixtures.
             $interpreterInput = Join-Path $testProfile 'stdin.txt'
@@ -323,7 +365,7 @@ if ($Program -in @('RasterGuiSmoke', 'RasterIOOverlaySmoke', 'HeadlessCpuSmoke',
 if ($smokeResult) {
     if (-not (Test-Path -LiteralPath $smokeResult)) { throw 'Smoke test did not finish successfully. See the preceding Python diagnostics.' }
     $report = Get-Content -LiteralPath $smokeResult -Raw | ConvertFrom-Json
-    if ($Program -in @('RasterGuiSmoke', 'RasterIOOverlaySmoke', 'HeadlessCpuSmoke', 'MemoryFailureSmoke', 'MemoryPressureSmoke', 'DeviceLossSmoke', 'PerformanceRender', 'EngineVulkanSmoke', 'ShadertoyVulkanSmoke', 'OcioVulkanSmoke', 'ImageStorageSmoke', 'ImageConvertSmoke', 'ClipBorrowSmoke', 'VulkanProxySmoke', 'ReaderVulkanSmoke', 'ReaderEngineVulkanSmoke', 'WriterEngineVulkanSmoke', 'GuiSmoke', 'MemoryGuiSmoke', 'ConcurrentMemoryGuiSmoke', 'DeviceLossGuiSmoke', 'ViewerPerformance', 'OfxSmoke', 'OfxGuiSmoke', 'OverlaySmoke', 'IOOverlaySmoke', 'PluginOverlaySmoke', 'DrawSuiteSmoke', 'ParamDrawSuiteSmoke', 'CurveSmoke', 'DopeSheetSmoke', 'TimelineSmoke', 'HistogramSmoke') -and -not $report.ok) { throw "$Program failed." }
+    if ($Program -in @('RasterGuiSmoke', 'RasterIOOverlaySmoke', 'HeadlessCpuSmoke', 'MemoryFailureSmoke', 'MemoryPressureSmoke', 'DeviceLossSmoke', 'PerformanceRender', 'EngineVulkanSmoke', 'ShadertoyVulkanSmoke', 'OcioVulkanSmoke', 'ImageStorageSmoke', 'ImageConvertSmoke', 'ClipBorrowSmoke', 'VulkanProxySmoke', 'ReaderVulkanSmoke', 'ReaderEngineVulkanSmoke', 'WriterEngineVulkanSmoke', 'GuiSmoke', 'MemoryGuiSmoke', 'ConcurrentMemoryGuiSmoke', 'DeviceLossGuiSmoke', 'ViewerPerformance', 'OfxSmoke', 'OfxGuiSmoke', 'OverlaySmoke', 'IOOverlaySmoke', 'PluginOverlaySmoke', 'DrawSuiteSmoke', 'ParamDrawSuiteSmoke', 'CurveSmoke', 'DopeSheetSmoke', 'TimelineSmoke', 'HistogramSmoke', 'Scene3DGuiSmoke', 'Scene3DFbxDemoGuiSmoke', 'Scene3DFbxAnimationDemoGuiSmoke', 'Scene3DFbxCameraDemoGuiSmoke', 'Scene3DSmoke', 'Scene3DLightingSmoke', 'Scene3DLightingDemoGuiSmoke', 'Scene3DEnvironmentSmoke', 'Scene3DEnvironmentDemoGuiSmoke', 'Scene3DHdNvpDemoGuiSmoke', 'Scene3DUsdDemoGuiSmoke', 'Scene3DUsdSmoke') -and -not $report.ok) { throw "$Program failed." }
     Write-Output (Get-Content -LiteralPath $smokeResult -Raw)
 }
 exit $LASTEXITCODE

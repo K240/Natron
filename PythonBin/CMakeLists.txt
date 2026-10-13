@@ -25,6 +25,7 @@ set(NatronPython_SOURCES
     ../Global/StrUtils.cpp 
 )
 add_executable(NatronPython ${NatronPython_SOURCES})
+natron_deploy_usd_resources(NatronPython)
 if(WIN32)
     target_sources(NatronPython PRIVATE ../Global/WindowsUtf8.manifest)
 endif()

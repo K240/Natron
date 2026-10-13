@@ -12,6 +12,11 @@ struct FragmentInput {
     TextureWrap wrap = TextureWrap::Clamp;
     uint32_t filter = 0; // nearest, linear, mipmap, anisotropic
 };
+// Host data is copied and flushed before drawing; the shader reads std430 data.
+struct FragmentStorage {
+    const void *data = nullptr;
+    size_t bytes = 0;
+};
 // Immutable float LUT data is copied at construction; x varies fastest.
 struct FragmentLut {
     uint32_t binding = 0;
@@ -26,6 +31,7 @@ struct FragmentLayout {
     uint32_t uniformBinding = 4;
     std::vector<uint32_t> inputBindings{0, 1, 2, 3};
     std::vector<FragmentLut> luts;
+    std::vector<uint32_t> storageBindings;
 };
 // Default Vulkan GLSL: set 0 bindings 0..3 are sampler2D; binding 4 is a std140 UBO.
 // Output location 0 is RGBA32F. gl_FragCoord has the image's unchanged row order.
@@ -43,6 +49,10 @@ public:
     FragmentProgram &operator=(const FragmentProgram &) = delete;
     void render(VulkanImage& destination, ImageRegion region, const std::array<FragmentInput, 4> &inputs,
                 const void *uniforms, size_t uniformBytes);
+    // Native scenes can bind more textures without changing the OFX ABI.
+    void renderMany(VulkanImage& destination, ImageRegion region, const std::vector<FragmentInput> &inputs,
+                    const void *uniforms, size_t uniformBytes,
+                    const std::vector<FragmentStorage> &storage = {});
 private:
     struct Impl;
     std::unique_ptr<Impl> _imp;

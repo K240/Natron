@@ -49,6 +49,7 @@ target_include_directories(Natron
 )
 
 install(TARGETS Natron DESTINATION "${CMAKE_INSTALL_BINDIR}")
+natron_deploy_usd_resources(Natron)
 install(FILES ../Gui/Resources/Applications/fr.natron.Natron.desktop
     DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
 install(FILES ../Gui/Resources/Metainfo/fr.natron.Natron.appdata.xml

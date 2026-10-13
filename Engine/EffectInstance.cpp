@@ -57,6 +57,7 @@
 #include "Engine/Log.h"
 #include "Engine/MemoryInfo.h" // printAsRAM
 #include "Engine/Node.h"
+#include "Engine/NodeGroup.h"
 #include "Engine/OfxEffectInstance.h"
 #include "Engine/OfxOverlayInteract.h"
 #include "Engine/OfxImageEffectInstance.h"
@@ -78,6 +79,56 @@
 
 
 NATRON_NAMESPACE_ENTER
+
+NodeDataType EffectInstance::getOutputDataType() const
+{
+    const auto id = getPluginID();
+    if (id == PLUGINID_NATRON_INPUT && getNode()) {
+        const auto group = std::dynamic_pointer_cast<NodeGroup>(getNode()->getGroup());
+        const auto source = group ? group->getRealInputForInput(false, getNode()) : NodePtr();
+        return source ? source->getEffectInstance()->getOutputDataType() : NodeDataType::Unknown;
+    }
+    if (id == PLUGINID_NATRON_GROUP) {
+        const auto group = getNode() ? getNode()->isEffectGroup() : nullptr;
+        const auto output = group ? group->getOutputNodeInput(false) : NodePtr();
+        return output ? output->getEffectInstance()->getOutputDataType() : NodeDataType::Unknown;
+    }
+    if (id == PLUGINID_NATRON_DOT || id == PLUGINID_NATRON_INPUT || id == PLUGINID_NATRON_OUTPUT) {
+        const auto input = getNode() ? getInput(0) : EffectInstancePtr();
+        return input ? input->getOutputDataType() : NodeDataType::Unknown;
+    }
+    return NodeDataType::Image;
+}
+bool EffectInstance::acceptsInputDataType(int inputIndex, NodeDataType type) const
+{
+    const auto id = getPluginID();
+    if (id == PLUGINID_NATRON_GROUP) {
+        const auto group = getNode() ? getNode()->isEffectGroup() : nullptr;
+        std::vector<NodePtr> inputs;
+        if (group) group->getInputs(&inputs, false);
+        return inputIndex >= 0 && inputIndex < int(inputs.size()) &&
+            inputs[inputIndex]->getEffectInstance()->acceptsInputDataType(0, type);
+    }
+    if (id == PLUGINID_NATRON_DOT || id == PLUGINID_NATRON_INPUT || id == PLUGINID_NATRON_OUTPUT) {
+        // Retyping a passthrough must also satisfy its existing downstream sockets.
+        // Unknown allows wiring an empty Dot/Group before choosing its source.
+        NodePtr source = getNode();
+        if (id == PLUGINID_NATRON_OUTPUT && source) {
+            const auto group = std::dynamic_pointer_cast<NodeGroup>(source->getGroup());
+            source = group ? group->getNode() : NodePtr();
+        }
+        NodesWList outputs;
+        if (source) source->getOutputs_mt_safe(outputs);
+        for (const auto& weak : outputs) if (const auto output = weak.lock()) {
+            for (int i = 0; i < output->getNInputs(); ++i) {
+                if (output->getRealInput(i) == source && !output->getEffectInstance()->acceptsInputDataType(i, type))
+                    return false;
+            }
+        }
+        return true;
+    }
+    return type == NodeDataType::Image || type == NodeDataType::Unknown;
+}
 
 
 class KnobFile;

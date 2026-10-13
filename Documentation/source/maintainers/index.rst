@@ -36,5 +36,6 @@ introduced where needed.
     contributing
     qt6-migration
     vulkan-migration
+    3d-compositing
     todo
     issue-triage

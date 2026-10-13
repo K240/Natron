@@ -241,6 +241,9 @@ public:
     ///list of the currently opened property panels
     mutable QMutex openedPanelsMutex;
     std::list<DockablePanel*> openedPanels;
+    // Disconnect panel callbacks before Gui's private state is destroyed;
+    // QWidget destroys its child panels later, in its base destructor.
+    std::unique_ptr<QObject> panelDestructionContext;
     QToolButton* _toolButtonMenuOpened;
     QMutex aboutToCloseMutex;
     bool _aboutToClose;

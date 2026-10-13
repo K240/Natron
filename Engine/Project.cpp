@@ -1690,6 +1690,14 @@ Project::onKnobValueChanged(KnobI* knob,
         Q_EMIT autoPreviewChanged( _imp->previewMode->getValue() );
         shouldAutoSave = true;
     }  else if ( knob == _imp->frameRate.get() ) {
+        // Project FPS changes frame-to-seconds sampling (for example FBX
+        // animation). Refreshing metadata alone leaves old rendered poses in
+        // the image cache, including when FPS is changed from Python.
+        NodesList nodes;
+        getNodes_recursive(nodes, true);
+        for (const NodePtr& node : nodes) {
+            node->incrementKnobsAge();
+        }
         forceComputeInputDependentDataOnAllTrees();
         shouldAutoSave = true;
     } else if ( knob == _imp->frameRange.get() ) {

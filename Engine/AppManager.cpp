@@ -114,6 +114,7 @@
 #include "Engine/GroupInput.h"
 #include "Engine/GroupOutput.h"
 #include "Engine/JoinViewsNode.h"
+#include "Engine/NativeScene3D.h"
 #include "Engine/LibraryBinary.h"
 #include "Engine/Log.h"
 #include "Engine/MemoryInfo.h" // getSystemTotalRAM, printAsRAM
@@ -1478,6 +1479,19 @@ AppManager::loadBuiltinNodePlugins(IOPluginsMap* /*readersMap*/,
     registerBuiltInPlugin<TrackerNode>(QString::fromUtf8(NATRON_IMAGES_PATH "trackerNodeIcon.png"), false, false);
     registerBuiltInPlugin<JoinViewsNode>(QString::fromUtf8(NATRON_IMAGES_PATH "joinViewsNode.png"), false, false);
     registerBuiltInPlugin<OneViewNode>(QString::fromUtf8(NATRON_IMAGES_PATH "oneViewNode.png"), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::Card>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::ReadGeo>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::Camera>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::ReadCamera>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::ReadUSD>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::ReadUSDCamera>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::Light>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::PBRMaterial>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::Axis>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::TransformGeo>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::Scene>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::Project3D>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::Render3D>>(QString(), false, false);
 #ifdef NATRON_ENABLE_IO_META_NODES
     registerBuiltInPlugin<ReadNode>(QString::fromUtf8(NATRON_IMAGES_PATH "readImage.png"), false, false);
     registerBuiltInPlugin<WriteNode>(QString::fromUtf8(NATRON_IMAGES_PATH "writeImage.png"), false, false);

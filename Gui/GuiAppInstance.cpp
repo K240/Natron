@@ -32,6 +32,7 @@
 #include "Global/AppSettings.h"
 #include <QMutex>
 #include <QCoreApplication>
+#include <QPointer>
 
 #include "Engine/CLArgs.h"
 #include "Engine/Project.h"
@@ -115,7 +116,7 @@ struct KnobDnDData
 
 struct GuiAppInstancePrivate
 {
-    Gui* _gui; //< ptr to the Gui interface
+    QPointer<Gui> _gui; //< cleared when Qt destroys a closed window
     bool _isClosing;
 
     //////////////
@@ -217,20 +218,28 @@ GuiAppInstance::aboutToQuit()
 #ifdef DEBUG
     qDebug() << "GuiAppInstance::aboutToQuit()" << (void*)(this);
 #endif
+    if (_imp->_isClosing) {
+        return;
+    }
+    _imp->_isClosing = true;
     deletePreviewProvider();
 
-    if (_imp->_gui) {
+    const QPointer<Gui> gui = _imp->_gui;
+    if (gui) {
         ///don't show dialogs when about to close, otherwise we could enter in a deadlock situation
         _imp->_gui->setGuiAboutToClose(true);
 
         _imp->_gui->notifyGuiClosing();
 
-        AppInstance::aboutToQuit();
+    }
+    // A Qt close event can delete the window before pending render shutdown
+    // completes. The project still needs cleanup when its GUI is gone.
+    AppInstance::aboutToQuit();
 
-        _imp->_isClosing = true;
-        _imp->_gui->hide();
-        _imp->_gui->close();
-        _imp->_gui->deleteLater();
+    if (gui) {
+        gui->hide();
+        gui->close();
+        gui->deleteLater();
 
         // Make sure all events are processed
         qApp->processEvents();

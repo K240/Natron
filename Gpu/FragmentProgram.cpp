@@ -209,6 +209,10 @@ FragmentResources reflect(const std::vector<uint32_t> &words, const FragmentLayo
             if (storageClasses[variable] != spv::StorageClassUniform) {
                 throw std::invalid_argument("Fragment uniform binding has the wrong type.");
             }
+        } else if (std::find(layout.storageBindings.begin(), layout.storageBindings.end(), entry.second) != layout.storageBindings.end()) {
+            if (storageClasses[variable] != spv::StorageClassStorageBuffer) {
+                throw std::invalid_argument("Fragment storage binding has the wrong type.");
+            }
         } else {
             const auto expected = expectedDimensions.find(entry.second);
             const auto sampled = sampledImages.find(pointers[variables[variable]]);
@@ -245,11 +249,40 @@ FragmentResources reflect(const std::vector<uint32_t> &words, const FragmentLayo
     return result;
 }
 struct FragmentProgram::Impl {
+    struct StorageBuffer {
+        std::shared_ptr<VulkanDevice> device;
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VmaAllocation allocation = nullptr;
+        void *mapped = nullptr;
+        size_t capacity = 0;
+        explicit StorageBuffer(std::shared_ptr<VulkanDevice> value) : device(std::move(value)) {}
+        ~StorageBuffer() { if (buffer) vmaDestroyBuffer(device->allocator(), buffer, allocation); }
+        void upload(const FragmentStorage &source) {
+            if (source.bytes > capacity) {
+                VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+                info.size = source.bytes;
+                info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+                VmaAllocationCreateInfo memory{};
+                memory.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+                memory.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
+                VkBuffer next = VK_NULL_HANDLE;
+                VmaAllocation nextAllocation = nullptr;
+                VmaAllocationInfo mapping{};
+                device->check(vmaCreateBuffer(device->allocator(), &info, &memory, &next, &nextAllocation, &mapping), "allocate fragment storage");
+                if (buffer) vmaDestroyBuffer(device->allocator(), buffer, allocation);
+                buffer = next; allocation = nextAllocation; mapped = mapping.pMappedData; capacity = source.bytes;
+            }
+            std::memcpy(mapped, source.data, source.bytes);
+            device->check(vmaFlushAllocation(device->allocator(), allocation, 0, source.bytes), "flush fragment storage");
+        }
+    };
     FragmentResources resources;
     std::shared_ptr<VulkanDevice> device;
     uint32_t uniformBytes;
     uint32_t uniformBinding = 4;
     std::vector<uint32_t> inputBindings;
+    std::vector<uint32_t> storageBindings;
+    std::vector<std::unique_ptr<StorageBuffer>> storageBuffers;
     std::vector<std::unique_ptr<LutTexture>> luts;
     ImageOperations copies;
     std::unique_ptr<VulkanImage> zero;
@@ -296,9 +329,12 @@ FragmentProgram::FragmentProgram(std::shared_ptr<VulkanDevice> device, const std
     const auto &limits = device->properties().limits;
     const size_t samplerCount = layout.inputBindings.size() + layout.luts.size();
 
-    if (layout.inputBindings.size() > 4 || samplerCount > limits.maxPerStageDescriptorSamplers ||
+    if (layout.inputBindings.size() > 32 || samplerCount > limits.maxPerStageDescriptorSamplers ||
         samplerCount > limits.maxPerStageDescriptorSampledImages || samplerCount > limits.maxDescriptorSetSamplers ||
-        samplerCount > limits.maxDescriptorSetSampledImages || samplerCount + 1 > limits.maxPerStageResources) {
+        samplerCount > limits.maxDescriptorSetSampledImages ||
+        layout.storageBindings.size() > limits.maxPerStageDescriptorStorageBuffers ||
+        layout.storageBindings.size() > limits.maxDescriptorSetStorageBuffers ||
+        samplerCount + layout.storageBindings.size() + 1 > limits.maxPerStageResources) {
         throw std::invalid_argument("Fragment descriptor count exceeds device limits.");
     }
 
@@ -315,6 +351,9 @@ FragmentProgram::FragmentProgram(std::shared_ptr<VulkanDevice> device, const std
             throw std::invalid_argument("Duplicate or invalid fragment LUT binding.");
         }
     }
+    for (auto binding : layout.storageBindings) {
+        if (!occupied.insert(binding).second) throw std::invalid_argument("Duplicate fragment storage binding.");
+    }
 
     const auto vertexCode = compile(
                                 "#version 450\nvoid main(){vec2 p=vec2((gl_VertexIndex<<1)&2,gl_VertexIndex&2);"
@@ -324,6 +363,9 @@ FragmentProgram::FragmentProgram(std::shared_ptr<VulkanDevice> device, const std
     _imp->resources = reflect(fragmentCode, layout);
     _imp->uniformBinding = layout.uniformBinding;
     _imp->inputBindings = layout.inputBindings;
+    _imp->storageBindings = layout.storageBindings;
+    for (size_t i = 0; i < layout.storageBindings.size(); ++i)
+        _imp->storageBuffers.push_back(std::make_unique<Impl::StorageBuffer>(_imp->device));
 
     for (const auto &lut : layout.luts) {
         _imp->luts.push_back(std::make_unique<LutTexture>(_imp->device, lut));
@@ -336,6 +378,7 @@ FragmentProgram::FragmentProgram(std::shared_ptr<VulkanDevice> device, const std
     for (auto binding : layout.inputBindings) bindings.push_back({binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr});
 
     for (const auto &lut : layout.luts) bindings.push_back({lut.binding, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr});
+    for (auto binding : layout.storageBindings) bindings.push_back({binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr});
     bindings.push_back({layout.uniformBinding, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr});
 
     VkDescriptorSetLayoutCreateInfo descriptorInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -415,6 +458,7 @@ FragmentProgram::FragmentProgram(std::shared_ptr<VulkanDevice> device, const std
     std::vector<VkDescriptorPoolSize> sizes{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1}};
 
     if (samplerCount) sizes.push_back({VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(samplerCount)});
+    if (!layout.storageBindings.empty()) sizes.push_back({VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, static_cast<uint32_t>(layout.storageBindings.size())});
     VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     poolInfo.maxSets = 1;
     poolInfo.poolSizeCount = static_cast<uint32_t>(sizes.size());
@@ -463,6 +507,11 @@ uint32_t FragmentProgram::activeSamplers() const
 void FragmentProgram::render(VulkanImage& destination, ImageRegion roi, const std::array<FragmentInput, 4> &inputs,
                              const void *uniforms, size_t bytes)
 {
+    renderMany(destination, roi, std::vector<FragmentInput>(inputs.begin(), inputs.end()), uniforms, bytes);
+}
+void FragmentProgram::renderMany(VulkanImage& destination, ImageRegion roi, const std::vector<FragmentInput> &inputs,
+                                 const void *uniforms, size_t bytes, const std::vector<FragmentStorage> &storage)
+{
     PerformanceTrace trace("fragment-render", destination.byteSize());
     std::lock_guard<std::mutex> lock(_imp->mutex);
     _imp->device->requireUsable();
@@ -475,6 +524,16 @@ void FragmentProgram::render(VulkanImage& destination, ImageRegion roi, const st
     }
 
     bool aliased = false;
+    if (storage.size() != _imp->storageBindings.size()) {
+        throw std::invalid_argument("Fragment storage does not match its descriptor layout.");
+    }
+    for (const auto &source : storage) {
+        if (!source.data || !source.bytes || source.bytes > _imp->device->properties().limits.maxStorageBufferRange)
+            throw std::invalid_argument("Invalid fragment storage data or size.");
+    }
+    if (inputs.size() < _imp->inputBindings.size()) {
+        throw std::invalid_argument("Missing fragment input descriptors.");
+    }
 
     for (unsigned i = 0; i < inputs.size(); ++i) {
         const auto &input = inputs[i];
@@ -524,11 +583,12 @@ void FragmentProgram::render(VulkanImage& destination, ImageRegion roi, const st
     std::memcpy(_imp->mapped, uniforms, bytes);
     _imp->device->check(vmaFlushAllocation(_imp->device->allocator(), _imp->uniformAllocation, 0, bytes), "flush fragment uniforms");
     const auto& fn = _imp->device->functions();
-    std::array<VulkanImage *, 4> images{};
-    std::array<std::unique_ptr<MipTexture>, 4> mipmaps;
     const size_t inputCount = _imp->inputBindings.size();
+    std::vector<VulkanImage *> images(inputCount);
+    std::vector<std::unique_ptr<MipTexture>> mipmaps(inputCount);
     std::vector<VkDescriptorImageInfo> imageInfo(inputCount + _imp->luts.size());
-    std::vector<VkWriteDescriptorSet> writes(imageInfo.size() + 1);
+    std::vector<VkWriteDescriptorSet> writes(imageInfo.size() + storage.size() + 1);
+    std::vector<VkDescriptorBufferInfo> storageInfo(storage.size());
 
     for (unsigned i = 0; i < inputCount; ++i) {
         images[i] = inputs[i].image ? inputs[i].image : _imp->zero.get();
@@ -559,6 +619,17 @@ void FragmentProgram::render(VulkanImage& destination, ImageRegion roi, const st
         writes[i].descriptorCount = 1;
         writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[i].pImageInfo = &imageInfo[i];
+    }
+    for (size_t j = 0; j < storage.size(); ++j) {
+        _imp->storageBuffers[j]->upload(storage[j]);
+        storageInfo[j] = {_imp->storageBuffers[j]->buffer, 0, storage[j].bytes};
+        auto &write = writes[imageInfo.size() + j];
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = _imp->set;
+        write.dstBinding = _imp->storageBindings[j];
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        write.pBufferInfo = &storageInfo[j];
     }
 
     VkDescriptorBufferInfo bufferInfo{_imp->uniformBuffer, 0, bytes};
