@@ -48,6 +48,7 @@ CLANG_DIAG_ON(uninitialized)
 #include "Gui/GuiAppInstance.h"
 #include "Gui/GuiApplicationManager.h"
 #include "Gui/Histogram.h"
+#include "Gui/StageOutline.h"
 #include "Gui/NodeGraph.h"
 #include "Gui/NodeGui.h"
 #include "Gui/ProjectGui.h"
@@ -132,6 +133,7 @@ ProjectGuiSerialization::initialize(const ProjectGui* projectGui)
 
     ///Init windows
     _layoutSerialization.initialize( projectGui->getGui() );
+    _stageOutlineSource = projectGui->getGui()->getStageOutline()->pinnedSource().toStdString();
 
     ///save histograms
     std::list<Histogram*> histograms = projectGui->getGui()->getHistograms_mt_safe();

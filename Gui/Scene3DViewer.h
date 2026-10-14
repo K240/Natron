@@ -7,6 +7,8 @@
 #include <QPolygonF>
 #include <QVariant>
 #include <QStringList>
+#include <QFutureWatcher>
+#include <atomic>
 #include "Engine/NativeScene3D.h"
 #include "Gui/GuiFwd.h"
 
@@ -22,15 +24,19 @@ class Scene3DViewer : public QWidget {
     Q_PROPERTY(QImage capturedFrame READ capturedFrame)
     Q_PROPERTY(QString rendererBackend READ rendererBackend)
     Q_PROPERTY(bool lookThroughCamera READ lookThroughCamera WRITE setLookThroughCamera)
+    Q_PROPERTY(QString lookThroughPrimPath READ lookThroughPrimPath)
     Q_PROPERTY(int gizmoMode READ gizmoMode WRITE setGizmoMode)
     Q_PROPERTY(QPointF gizmoCenter READ gizmoCenter)
     Q_PROPERTY(QPolygonF gizmoHandles READ gizmoHandles)
     Q_PROPERTY(QVariantList gizmoRings READ gizmoRings)
     Q_PROPERTY(QVariantList sceneObjects READ sceneObjects)
+    Q_PROPERTY(QStringList selectedPrimPaths READ selectedPrimPaths)
+    Q_PROPERTY(bool rendering READ rendering)
     Q_PROPERTY(QVariantList inspectionPivot READ inspectionPivot)
     Q_PROPERTY(double inspectionDistance READ inspectionDistance)
 public:
     explicit Scene3DViewer(ViewerTab* tab);
+    static NodePtr rendererForViewer(ViewerTab* tab);
     ~Scene3DViewer() override;
     QString selectedNode() const;
     QStringList selectedNodes() const;
@@ -45,6 +51,15 @@ public:
     QVariantList sceneObjects() const;
     QVariantList inspectionPivot() const {return {_pivot.x,_pivot.y,_pivot.z};}
     double inspectionDistance() const {return _distance;}
+    std::shared_ptr<const Gpu::Cards::UsdSceneValue> stageValue()const{return _stageValue;}
+    QString stageBranch()const;
+    NodePtr stageSource()const{return _source.lock();}
+    QStringList selectedPrimPaths()const;
+    void setPrimSelection(const std::vector<Gpu::Cards::UsdPrimInfo>& prims);
+    void lookThroughPrim(const QString& path,const Gpu::Cards::Camera& camera);
+    QString lookThroughPrimPath()const{return _lookCameraPath;}
+    Q_INVOKABLE QString primAt(QPointF position)const;
+    bool rendering()const{return _previewRunning;}
 public Q_SLOTS:
     void setGizmoMode(int mode);
     void setLookThroughCamera(bool value);
@@ -54,6 +69,9 @@ public Q_SLOTS:
 Q_SIGNALS:
     void lookThroughCameraChanged(bool value);
     void gizmoModeChanged(int mode);
+    void stageValueChanged(bool resetTree);
+    void sceneSnapshotChanged();
+    void primPathsSelected(QStringList paths);
 protected:
     void paintEvent(QPaintEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
@@ -71,11 +89,25 @@ private:
     Scene3DSnapshot _scene;
     std::vector<Gpu::Cards::Card> _cards;
     Gpu::Cards::Camera _camera;
+    Gpu::Cards::Camera _lookCamera;
+    QString _lookCameraPath;
+    Gpu::Cards::HdNvpFrame _pickFrame;
     Gpu::Cards::Camera _dragCamera;
     Gpu::Cards::Settings _settings;
     std::unique_ptr<Gpu::Cards::Renderer> _renderer;
     std::shared_ptr<Gpu::VulkanDevice> _device;
-    std::unique_ptr<Gpu::Cards::UsdSceneBridge> _usdBridge;
+    std::shared_ptr<Gpu::Cards::UsdSceneBridge> _usdBridge;
+    std::shared_ptr<const Gpu::Cards::UsdSceneValue> _stageValue;
+    std::shared_ptr<const Gpu::Cards::UsdSceneValue> _previewValueBefore;
+    std::vector<Gpu::Cards::UsdPrimInfo> _primSelection;
+    struct PreviewReply {Gpu::Cards::HdNvpFrame frame;QString error;};
+    QFutureWatcher<PreviewReply>* _previewWatcher=nullptr;
+    bool _previewRunning=false;
+    std::shared_ptr<std::atomic<bool>> _previewCancelled;
+    bool _outlineReset=true;
+    QString _sceneLabels;
+    QString _renderSettingsKey;
+    void applyPixels(std::vector<float> pixels);
     QImage _frame;
     QString _error, _backend;
     QRectF _imageRect;

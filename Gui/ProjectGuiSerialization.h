@@ -83,7 +83,8 @@ GCC_DIAG_ON(unused-parameter)
 #define PROJECT_GUI_SERIALIZATION_MERGE_BACKDROP 10
 #define PROJECT_GUI_SERIALIZATION_INTRODUCES_PYTHON_PANELS 11
 #define PROJECT_GUI_SERIALIZATION_INTRODUCES_PANEL_STATES 12
-#define PROJECT_GUI_SERIALIZATION_VERSION PROJECT_GUI_SERIALIZATION_INTRODUCES_PANEL_STATES
+#define PROJECT_GUI_SERIALIZATION_INTRODUCES_STAGE_OUTLINE 13
+#define PROJECT_GUI_SERIALIZATION_VERSION PROJECT_GUI_SERIALIZATION_INTRODUCES_STAGE_OUTLINE
 
 #define PANE_SERIALIZATION_INTRODUCES_CURRENT_TAB 2
 #define PANE_SERIALIZATION_INTRODUCES_SIZE 3
@@ -663,6 +664,7 @@ class ProjectGuiSerialization
     std::list<std::string> _openedPanelsHideUnmodifiedOrdered;
     std::string _scriptEditorInput;
     std::list<PythonPanelSerializationPtr> _pythonPanels;
+    std::string _stageOutlineSource;
 
     ///The boost version passed to load(), this is not used on save
     unsigned int _version;
@@ -687,6 +689,7 @@ class ProjectGuiSerialization
         }
         ar & ::boost::serialization::make_nvp("OpenedPanelsMinimized", _openedPanelsMinimizedOrdered);
         ar & ::boost::serialization::make_nvp("OpenedPanelsHideUnmodified", _openedPanelsHideUnmodifiedOrdered);
+        ar & ::boost::serialization::make_nvp("StageOutlineSource", _stageOutlineSource);
     }
 
     template<class Archive>
@@ -737,6 +740,9 @@ class ProjectGuiSerialization
         }
 
         _version = version;
+        if (version >= PROJECT_GUI_SERIALIZATION_INTRODUCES_STAGE_OUTLINE) {
+            ar & ::boost::serialization::make_nvp("StageOutlineSource", _stageOutlineSource);
+        }
     }
 
 public:
@@ -780,6 +786,8 @@ public:
     {
         return _histograms;
     }
+
+    const std::string& getStageOutlineSource() const { return _stageOutlineSource; }
 
     const std::list<NodeBackdropSerialization> & getBackdrops() const
     {

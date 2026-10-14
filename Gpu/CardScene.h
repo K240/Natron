@@ -29,6 +29,10 @@ struct Camera {
     double focal = 50, aperture = 36, nearClip = .001, farClip = 100000;
     bool orthographic = false;
     double orthoWidth = 4;
+    // Both film offsets use horizontal aperture units. Vertical offsets stay
+    // physically consistent when the output aspect conforms the film gate.
+    double offsetX = 0, offsetY = 0;
+    std::string ownerId,label;
 };
 enum class TextureAddress { Black = 0, Clamp = 1, Repeat = 2, Mirror = 3 };
 struct Texture {
@@ -76,6 +80,7 @@ struct Light {
     double coneAngle = 30, coneSoftness = .2;
     bool shadows = true;
     double shadowBias = .0001;
+    std::string ownerId,label,instanceId;
     // Straight linear radiance in a latitude-longitude image. Alpha is ignored;
     // a missing image emits the uniform light color from every direction.
     std::shared_ptr<const Texture> environment;
@@ -118,6 +123,22 @@ struct Card {
     bool projected = false;
     Camera projector;
     double projectionAspect = 1;
+    bool projectionFrozen=false;
+    double projectionReferenceTime=1,projectionImageTime=1;
+    std::string ownerId,label,instanceId;
+    // A material-only card authors bindings on these composed USD paths.
+    std::vector<std::string> bindingPaths;
+};
+
+struct UsdPrimEdit {
+    enum class Kind { Transform, Visibility, Material, Compositing };
+    Kind kind = Kind::Transform;
+    std::string identity;
+    std::vector<std::string> paths;
+    Matrix transform; // world delta in right-handed Y-up meters
+    bool visible = true;
+    std::string materialPath;
+    bool cameraVisible = true, shadowVisible = true, reflectionVisible = true, holdout = false;
 };
 enum class RenderPass { Color, Depth };
 struct Settings {
@@ -126,6 +147,11 @@ struct Settings {
     int samples = 2; // samples per axis: 1, 2 or 4
     RenderPass pass = RenderPass::Color;
     std::vector<Light> lights;
+    std::vector<UsdPrimEdit> edits;
+    // Viewer inspection uses a separate camera without changing the authored
+    // render camera or its USD edit opinions.
+    std::shared_ptr<const Camera> stageCamera;
+    double stageCameraAspect=0; // zero conforms to the requested output
 };
 struct Hit { int card = -1; double depth = 0, u = 0, v = 0;
     std::array<float,4> tint{1,1,1,1};unsigned primitive=0;

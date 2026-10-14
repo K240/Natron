@@ -68,6 +68,7 @@ CLANG_DIAG_ON(deprecated)
 #include "Gui/GuiDefines.h"
 #include "Gui/GuiMacros.h"
 #include "Gui/Histogram.h"
+#include "Gui/StageOutline.h"
 #include "Gui/Menu.h"
 #include "Gui/NodeGraph.h"
 #include "Gui/PropertiesBinWrapper.h"
@@ -433,6 +434,7 @@ TabWidget::createMenu()
     menu.addSeparator();
     menu.addAction( tr("New viewer"), this, SLOT(addNewViewer()) );
     menu.addAction( tr("New histogram"), this, SLOT(newHistogramHere()) );
+    menu.addAction( tr("Stage Outline here"), this, SLOT(moveStageOutlineHere()) );
     menu.addAction( tr("Node graph here"), this, SLOT(moveNodeGraphHere()) );
     menu.addAction( tr("Curve Editor here"), this, SLOT(moveCurveEditorHere()) );
     menu.addAction( tr("Dope Sheet Editor here"), this, SLOT(moveDopeSheetEditorHere()) );
@@ -764,6 +766,15 @@ TabWidget::newHistogramHere()
 
     appendTab(h, h);
 
+    _imp->gui->getApp()->triggerAutoSave();
+}
+
+void
+TabWidget::moveStageOutlineHere()
+{
+    auto outline = _imp->gui->getStageOutline();
+    moveTab(outline, outline, this);
+    outline->refreshSource();
     _imp->gui->getApp()->triggerAutoSave();
 }
 

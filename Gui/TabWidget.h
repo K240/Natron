@@ -293,6 +293,7 @@ public Q_SLOTS:
     void moveDopeSheetEditorHere();
 
     void newHistogramHere();
+    void moveStageOutlineHere();
 
     void movePropertiesBinHere();
 

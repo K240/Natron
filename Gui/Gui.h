@@ -113,6 +113,8 @@ public:
 
     void setActiveViewer(ViewerTab* viewer);
     ViewerTab* getActiveViewer() const;
+    StageOutline* getStageOutline() const;
+    void showStageOutline();
     NodeCollectionPtr getLastSelectedNodeCollection() const;
 
     /**

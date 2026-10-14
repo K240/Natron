@@ -70,7 +70,7 @@ std::array<float,4> Texture::sample(double u,double v) const {
     return r;
 }
 static void validateCamera(const Camera& c) {
-    for(double v:{c.focal,c.aperture,c.nearClip,c.farClip,c.orthoWidth})
+    for(double v:{c.focal,c.aperture,c.nearClip,c.farClip,c.orthoWidth,c.offsetX,c.offsetY})
         if(!std::isfinite(v))throw std::invalid_argument("3D camera parameters must be finite.");
     if(!(c.focal>0) || !(c.aperture>0) || !(c.nearClip>0) || !(c.farClip>c.nearClip) || !(c.orthoWidth>0))
         throw std::invalid_argument("Invalid 3D camera parameters.");
@@ -108,7 +108,7 @@ struct PreparedCard {
 };
 Ray cameraRay(const Camera& camera,const Settings& s,double x,double y) {
     const double aspect=s.width*s.pixelAspect/s.height, tx=camera.aperture/(2*camera.focal),ty=tx/aspect;
-    const double nx=2*x/s.width-1,ny=2*y/s.height-1;
+    const double nx=2*x/s.width-1+2*camera.offsetX,ny=2*y/s.height-1+2*camera.offsetY*aspect;
     return {camera.transform.point(camera.orthographic?Vec3{nx*camera.orthoWidth*.5,ny*camera.orthoWidth*.5/aspect,0}:Vec3{}),
             camera.transform.vector(camera.orthographic?Vec3{0,0,-1}:Vec3{nx*tx,ny*ty,-1})};
 }
@@ -127,6 +127,7 @@ Hit intersectPrepared(const PreparedCard& prepared,const Camera& camera,const Ra
         const double px=card.projector.aperture/(2*card.projector.focal),py=px/card.projectionAspect;
         if(card.projector.orthographic) {u=q.x/card.projector.orthoWidth+.5;v=q.y/(card.projector.orthoWidth/card.projectionAspect)+.5;}
         else {u=q.x/(-q.z*px)*.5+.5;v=q.y/(-q.z*py)*.5+.5;}
+        u-=card.projector.offsetX;v-=card.projector.offsetY*card.projectionAspect;
     }
     if(u<0 || u>1 || v<0 || v>1) return {};
     if(card.projected && card.texture) {
@@ -178,6 +179,7 @@ void meshHits(const PreparedCard& prepared,const Camera& camera,const Ray& ray,i
             const double px=card.projector.aperture/(2*card.projector.focal),py=px/card.projectionAspect;
             if(card.projector.orthographic){hit.u=q.x/card.projector.orthoWidth+.5;hit.v=q.y/(card.projector.orthoWidth/card.projectionAspect)+.5;}
             else {hit.u=q.x/(-q.z*px)*.5+.5;hit.v=q.y/(-q.z*py)*.5+.5;}
+            hit.u-=card.projector.offsetX;hit.v-=card.projector.offsetY*card.projectionAspect;
             if(hit.u<0 || hit.u>1 || hit.v<0 || hit.v>1)continue;
         }else if(!card.texture || !card.texture->materialSampling){hit.u-=std::floor(hit.u);hit.v-=std::floor(hit.v);}
         if(card.texture && !card.texture->materialSampling) {
@@ -341,7 +343,7 @@ void main() {
     float nearest=0.,coverage=0.;
     for(int sy=0;sy<samples;++sy)for(int sx=0;sx<samples;++sx) {
         vec2 xy=gl_FragCoord.xy-vec2(.5)+vec2(sx+.5,sy+.5)/float(samples);
-        vec2 ndc=2.*xy/p.outputInfo.xy-1.;
+        vec2 ndc=2.*xy/p.outputInfo.xy-1.+vec2(p.film.w,p.clip.w);
         bool ortho=p.film.z>.5;
         vec3 origin=(p.camera*vec4(ortho?vec3(ndc*p.film.xy,0):vec3(0),1)).xyz;
         vec3 direction=(p.camera*vec4(ortho?vec3(0,0,-1):vec3(ndc*p.film.xy,-1),0)).xyz;
@@ -357,6 +359,7 @@ void main() {
                 vec3 q=(card.projector*vec4(origin+direction*t,1)).xyz;
                 if(-q.z<card.clip.x || -q.z>card.clip.y)continue;
                 uv=card.projection.z>.5 ? q.xy/card.projection.xy*.5+.5 : q.xy/(-q.z*card.projection.xy)*.5+.5;
+                uv-=card.clip.zw;
             }
             if(any(lessThan(uv,vec2(0))) || any(greaterThan(uv,vec2(1))))continue;
             if(card.size.w>.5)uv=uv*card.textureUv.xy+card.textureUv.zw;
@@ -394,7 +397,7 @@ std::vector<float> Renderer::render(const std::vector<Card>& cards,const Camera&
     if(cards.size()>maxCards)throw std::invalid_argument("Vulkan card renderer supports up to 16 cards; select CPU for larger scenes.");
     Uniforms u{};copyMatrix(u.camera,c.transform);
     const double aspect=s.width*s.pixelAspect/s.height;
-    u.film[0]=float(c.orthographic?c.orthoWidth*.5:c.aperture/(2*c.focal));u.film[1]=float(u.film[0]/aspect);u.film[2]=c.orthographic?1.f:0.f;
+    u.film[0]=float(c.orthographic?c.orthoWidth*.5:c.aperture/(2*c.focal));u.film[1]=float(u.film[0]/aspect);u.film[2]=c.orthographic?1.f:0.f;u.film[3]=float(2*c.offsetX);u.clip[3]=float(2*c.offsetY*aspect);
     u.output[0]=float(s.width);u.output[1]=float(s.height);u.output[2]=float(cards.size());u.output[3]=float(s.samples);
     u.clip[0]=float(c.nearClip);u.clip[1]=float(c.farClip);u.clip[2]=s.pass==RenderPass::Depth?1.f:0.f;
     std::vector<std::unique_ptr<VulkanImage>> textures;
@@ -407,6 +410,7 @@ std::vector<float> Renderer::render(const std::vector<Card>& cards,const Camera&
         dest.projection[0]=float(camera.orthographic?camera.orthoWidth*.5:camera.aperture/(2*camera.focal));
         dest.projection[1]=float(dest.projection[0]/card.projectionAspect);dest.projection[2]=camera.orthographic?1.f:0.f;
         dest.clip[0]=float(camera.nearClip);dest.clip[1]=float(camera.farClip);
+        dest.clip[2]=float(camera.offsetX);dest.clip[3]=float(camera.offsetY*card.projectionAspect);
         dest.textureUv[0]=dest.textureUv[1]=1;
         if(card.texture && card.texture->width>0 && card.texture->height>0) {
             for(int j=0;j<2;++j) {

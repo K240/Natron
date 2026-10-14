@@ -156,6 +156,7 @@ Hit nextHit(int index,vec3 origin,vec3 direction,float first,float last) {
         vec3 q=(object.projector*vec4(origin+direction*hit.depth,1)).xyz;
         if(-q.z<object.clip.x || -q.z>object.clip.y){hit.uv=vec2(-1);return hit;}
         hit.uv=object.projection.z>.5?q.xy/object.projection.xy*.5+.5:q.xy/(-q.z*object.projection.xy)*.5+.5;
+        hit.uv-=object.clip.zw;
     }
     if((object.geometry.w&1u)==0u || object.size.w>.5) {
         if(!inside(hit.uv)){hit.uv=vec2(-1);return hit;}
@@ -233,7 +234,7 @@ void main() {
     color=vec4(0);int samples=int(p.outputInfo.w),objects=int(p.outputInfo.z);bool depthPass=p.clip.z>.5;
     float nearest=0.,coverage=0.;
     for(int sy=0;sy<samples;++sy)for(int sx=0;sx<samples;++sx) {
-        vec2 xy=gl_FragCoord.xy-vec2(.5)+vec2(sx+.5,sy+.5)/float(samples),ndc=2.*xy/p.outputInfo.xy-1.;
+        vec2 xy=gl_FragCoord.xy-vec2(.5)+vec2(sx+.5,sy+.5)/float(samples),ndc=2.*xy/p.outputInfo.xy-1.+vec2(p.film.w,p.clip.w);
         bool ortho=p.film.z>.5;
         vec3 origin=(p.camera*vec4(ortho?vec3(ndc*p.film.xy,0):vec3(0),1)).xyz;
         vec3 direction=(p.camera*vec4(ortho?vec3(0,0,-1):vec3(ndc*p.film.xy,-1),0)).xyz;
@@ -269,7 +270,7 @@ std::vector<float> Renderer::renderMeshes(const std::vector<Card>& cards,const C
     if(cards.size()>maxObjects)throw std::invalid_argument("Vulkan 3D renderer supports up to 16 geometry objects; select CPU for larger scenes.");
     Uniforms u{};copyMatrix(u.camera,camera.transform);
     const double aspect=s.width*s.pixelAspect/s.height;
-    u.film[0]=asFloat(camera.orthographic?camera.orthoWidth*.5:camera.aperture/(2*camera.focal));u.film[1]=asFloat(u.film[0]/aspect);u.film[2]=camera.orthographic?1.f:0.f;
+    u.film[0]=asFloat(camera.orthographic?camera.orthoWidth*.5:camera.aperture/(2*camera.focal));u.film[1]=asFloat(u.film[0]/aspect);u.film[2]=camera.orthographic?1.f:0.f;u.film[3]=asFloat(2*camera.offsetX);u.clip[3]=asFloat(2*camera.offsetY*aspect);
     u.output[0]=float(s.width);u.output[1]=float(s.height);u.output[2]=float(cards.size());u.output[3]=float(s.samples);
     u.clip[0]=asFloat(camera.nearClip);u.clip[1]=asFloat(camera.farClip);u.clip[2]=s.pass==RenderPass::Depth?1.f:0.f;
     packLights(u.lights,s.lights);u.lightInfo[0]=float(s.lights.size());
@@ -301,6 +302,7 @@ std::vector<float> Renderer::renderMeshes(const std::vector<Card>& cards,const C
         dest.projection[0]=asFloat(projector.orthographic?projector.orthoWidth*.5:projector.aperture/(2*projector.focal));
         dest.projection[1]=asFloat(dest.projection[0]/card.projectionAspect);dest.projection[2]=projector.orthographic?1.f:0.f;
         dest.clip[0]=asFloat(projector.nearClip);dest.clip[1]=asFloat(projector.farClip);dest.textureUv[0]=dest.textureUv[1]=1;
+        dest.clip[2]=asFloat(projector.offsetX);dest.clip[3]=asFloat(projector.offsetY*card.projectionAspect);
         dest.geometry[1]=upload(card.texture);
         for(int j=0;j<3;++j){dest.maps[j]=upload(card.maps[j].texture);dest.channels[j]=card.maps[j].channel|(card.maps[j].useMeshUv?4u:0u);}
         dest.geometry[2]=card.overrideMaterial?1u:0u;packMaterial(dest.surface,card.material);

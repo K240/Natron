@@ -36,6 +36,7 @@
 #include <QVBoxLayout>
 #include <QCheckBox>
 #include <QToolButton>
+#include <QSignalBlocker>
 #include <QPalette>
 
 #include "Engine/Node.h"
@@ -62,6 +63,7 @@
 #include "Gui/TimeLineGui.h"
 #include "Gui/ViewerGL.h"
 #include "Gui/Scene3DViewer.h"
+#include "Gui/StageOutline.h"
 
 
 NATRON_NAMESPACE_ENTER
@@ -599,6 +601,7 @@ ViewerTab::ViewerTab(const std::list<NodeGuiPtr> & existingNodesContext,
     auto sceneViewer = new Scene3DViewer(this);
     sceneViewer->hide();
     _imp->viewerSubContainerLayout->addWidget(sceneViewer, 1);
+    getGui()->getStageOutline()->registerViewer(sceneViewer);
     auto threeD = new QToolButton(_imp->firstSettingsRow);
     threeD->setObjectName("Viewer3DToggle");
     threeD->setText(tr("3D")); threeD->setCheckable(true);
@@ -610,12 +613,14 @@ ViewerTab::ViewerTab(const std::list<NodeGuiPtr> & existingNodesContext,
     auto gizmoTool = new ComboBox(_imp->firstSettingsRow);
     gizmoTool->setObjectName("Viewer3DGizmo");gizmoTool->addItem(tr("Move (W)"));gizmoTool->addItem(tr("Rotate (E)"));gizmoTool->addItem(tr("Scale (R)"));gizmoTool->hide();
     _imp->firstRowLayout->addWidget(gizmoTool);
+    auto outlineToggle=new QToolButton(_imp->firstSettingsRow);outlineToggle->setObjectName("Viewer3DOutline");outlineToggle->setText(tr("Outline"));outlineToggle->setToolTip(tr("Open or focus the dockable Stage Outline panel"));_imp->firstRowLayout->addWidget(outlineToggle);
+    connect(outlineToggle,&QToolButton::clicked,this,[this]{getGui()->setActiveViewer(this);getGui()->showStageOutline();});
     connect(threeD, &QToolButton::toggled, this, [this, sceneViewer, cameraView, gizmoTool](bool on) {
         _imp->viewer->setVisible(!on);sceneViewer->setVisible(on);cameraView->setVisible(on);gizmoTool->setVisible(on);
         if(on){sceneViewer->refreshScene();sceneViewer->setFocus();}
     });
     connect(cameraView, &QToolButton::toggled, sceneViewer, &Scene3DViewer::setLookThroughCamera);
-    connect(sceneViewer, &Scene3DViewer::lookThroughCameraChanged, cameraView, &QToolButton::setChecked);
+    connect(sceneViewer, &Scene3DViewer::lookThroughCameraChanged, cameraView, [cameraView](bool checked){QSignalBlocker blocker(cameraView);cameraView->setChecked(checked);});
     connect(gizmoTool, qOverload<int>(&ComboBox::currentIndexChanged), sceneViewer, [sceneViewer](int mode){sceneViewer->setGizmoMode(mode);sceneViewer->setFocus();});
     connect(sceneViewer, &Scene3DViewer::gizmoModeChanged, gizmoTool, &ComboBox::setCurrentIndex);
     for (int i = 0; i < 2; ++i) {

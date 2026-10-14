@@ -233,6 +233,8 @@ Camera readCamera(const UsdGeomCamera& usd,UsdTimeCode time,const UsdStageRefPtr
     for(int col=0;col<3;++col)for(int row=0;row<3;++row)c.transform.m[col*4+row]/=meters;
     c.focal=value(usd.GetFocalLengthAttr(),time,50.f)*meters*100;
     c.aperture=value(usd.GetHorizontalApertureAttr(),time,20.955f)*meters*100;
+    c.offsetX=value(usd.GetHorizontalApertureOffsetAttr(),time,0.f)/value(usd.GetHorizontalApertureAttr(),time,20.955f);
+    c.offsetY=value(usd.GetVerticalApertureOffsetAttr(),time,0.f)/value(usd.GetHorizontalApertureAttr(),time,20.955f);
     c.orthoWidth=c.aperture/1000;c.orthographic=value(usd.GetProjectionAttr(),time,UsdGeomTokens->perspective)==UsdGeomTokens->orthographic;
     const auto clip=value(usd.GetClippingRangeAttr(),time,GfVec2f(1,1000000));c.nearClip=clip[0]*meters;c.farClip=clip[1]*meters;return c;
 }
@@ -335,7 +337,6 @@ UsdScenePose UsdSceneAsset::evaluate(double seconds,bool animated,const std::str
         }else if(prim.IsA<UsdLuxDistantLight>() || prim.IsA<UsdLuxSphereLight>() || prim.IsA<UsdLuxDomeLight>())pose.lights.push_back(readLight(prim,time,cache,basis,UsdGeomGetStageMetersPerUnit(stage),_impl->textures,pose.warnings));
         else if(prim.HasAPI<UsdLuxLightAPI>())warn(pose.warnings,name+": unsupported light type "+type+".");
         else if(prim.IsA<UsdGeomCamera>()) {
-            UsdGeomCamera c(prim);if(value(c.GetHorizontalApertureOffsetAttr(),time,0.f)!=0 || value(c.GetVerticalApertureOffsetAttr(),time,0.f)!=0)warn(pose.warnings,name+": camera film offsets are not evaluated.");
         }else if(type=="Cube" || type=="Sphere" || type=="Cylinder" || type=="Cone" || type=="Capsule" || type=="BasisCurves" || type=="NurbsPatch" || type=="Points")warn(pose.warnings,name+": unsupported geometry type "+type+" (convert to Mesh).");
     }
     return pose;

@@ -61,6 +61,7 @@ CLANG_DIAG_ON(uninitialized)
 #include "Gui/GuiAppInstance.h"
 #include "Gui/GuiApplicationManager.h"
 #include "Gui/Histogram.h"
+#include "Gui/StageOutline.h"
 #include "Gui/Label.h"
 #include "Gui/LineEdit.h"
 #include "Gui/MultiInstancePanel.h"
@@ -572,6 +573,7 @@ ProjectGui::load<boost::archive::xml_iarchive>(bool isAutosave,  boost::archive:
     // For auto-saves, always load the workspace
     bool loadWorkspace = isAutosave || appPTR->getCurrentSettings()->getLoadProjectWorkspce();
     if (loadWorkspace) {
+        _gui->getStageOutline()->setPinnedSource(QString::fromStdString(obj.getStageOutlineSource()));
         _gui->restoreLayout( true, obj.getVersion() < PROJECT_GUI_SERIALIZATION_MAJOR_OVERHAUL, obj.getGuiLayout() );
     }
 

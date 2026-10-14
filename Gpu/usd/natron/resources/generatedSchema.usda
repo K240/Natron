@@ -3,6 +3,10 @@
 class "NatronCompositingAPI"
 {
     bool natron:unlit = false
+    bool natron:cameraVisible = true
+    bool natron:shadowVisible = true
+    bool natron:reflectionVisible = true
+    bool natron:holdout = false
 }
 
 class "NatronProjectionAPI"
@@ -12,4 +16,6 @@ class "NatronProjectionAPI"
     double natron:projection:referenceTime = 1
     double natron:projection:imageTime = 1
     double natron:projection:aspect = 1
+    matrix4d natron:projection:worldToCamera
+    asset natron:projection:image
 }

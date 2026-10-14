@@ -1492,6 +1492,10 @@ AppManager::loadBuiltinNodePlugins(IOPluginsMap* /*readersMap*/,
     registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::Scene>>(QString(), false, false);
     registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::Project3D>>(QString(), false, false);
     registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::Render3D>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::USDTransform>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::USDVisibility>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::BindMaterial>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::USDCompositing>>(QString(), false, false);
 #ifdef NATRON_ENABLE_IO_META_NODES
     registerBuiltInPlugin<ReadNode>(QString::fromUtf8(NATRON_IMAGES_PATH "readImage.png"), false, false);
     registerBuiltInPlugin<WriteNode>(QString::fromUtf8(NATRON_IMAGES_PATH "writeImage.png"), false, false);

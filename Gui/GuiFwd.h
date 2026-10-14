@@ -149,6 +149,8 @@ class GuiGLContext;
 class GuiLayoutSerialization;
 class HierarchyView;
 class Histogram;
+class StageOutline;
+class Scene3DViewer;
 class HostOverlay;
 class InfoViewerWidget;
 class InspectorNode;

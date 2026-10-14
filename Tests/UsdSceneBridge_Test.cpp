@@ -90,10 +90,26 @@ int main(int argc,char** argv) {
         require(std::abs(usdCamera.GetHorizontalAperture()*.1-camera.orthoWidth)<1e-6,"Orthographic camera units changed");
         if(argc<2 || std::string(argv[1])!="--hdnvp"){std::cout<<"USD export/schema/camera passed\n";return 0;}
         require(UsdSceneBridge::available(),"Build the hdNVP host first");
+        {
+            UsdSceneBridge cancellable;const auto caller=std::this_thread::get_id();int checks=0;bool interrupted=false;
+            try{cancellable.render({card},camera,settings,{1024,0,HdNvpDenoiser::None},[&]{
+                require(std::this_thread::get_id()==caller,"Abort predicate lost the calling render thread");return ++checks>=2;
+            });}catch(const std::exception& e){require(std::string(e.what())=="hdNVP rendering cancelled","Cancellation reported an unrelated failure");interrupted=true;}
+            require(interrupted && checks>=2,"Running host request was not cancelled");
+            auto recovered=cancellable.render({card},camera,settings,{1,0,HdNvpDenoiser::None});
+            require(std::abs(recovered.color[(size_t(24)*64+32)*4]-.25)<.001,"Rendering did not recover after host cancellation");
+        }
         auto first=bridge.render({card},camera,settings,{1,0,HdNvpDenoiser::None});const size_t center=(size_t(24)*64+32);
         for(int c=0;c<4;++c)require(std::abs(first.color[center*4+c]-card.material.baseColor[c])<.001,"Unlit HDR card color differed");
         require(std::abs(first.depth[center]-5)<.001,"Depth is not camera-space -Z");
         require(first.depth[0]==0 && first.color[3]==0,"Background is not transparent/zero-depth");
+        UsdPrimEdit cameraDelta;cameraDelta.paths={"/Natron/Camera"};cameraDelta.identity="cameraMove";cameraDelta.transform=Matrix::transform({0,0,1},{});
+        auto cameraSettings=settings;cameraSettings.edits={cameraDelta};
+        auto editedCamera=bridge.render({card},camera,cameraSettings,{1,0,HdNvpDenoiser::None});
+        require(std::abs(editedCamera.depth[center]-6)<.001 && std::abs(editedCamera.position[center*3+2])<1e-5,"P ignored the composed render camera transform");
+        cameraSettings.stageCamera=std::make_shared<Camera>(camera);
+        auto inspection=bridge.render({card},camera,cameraSettings,{1,0,HdNvpDenoiser::None});
+        require(std::abs(inspection.depth[center]-5)<.001 && std::abs(bridge.sceneValue()->camera("/Natron/Camera").transform.m[14]-6)<1e-6,"Inspection changed the authored USD render camera");
         auto a=QJsonDocument::fromJson(QByteArray::fromStdString(first.report)).object();
         camera.transform=Matrix::transform({1,0,5},{});auto moved=bridge.render({card},camera,settings,{1,0,HdNvpDenoiser::None});
         auto b=QJsonDocument::fromJson(QByteArray::fromStdString(moved.report)).object();
@@ -149,6 +165,54 @@ int main(int argc,char** argv) {
             triangle.color=face==0?std::array<float,4>{1,0,0,1}:std::array<float,4>{0,1,0,1};geometry->triangles.push_back(triangle);}
         Card grouped;grouped.mesh=geometry;auto faces=bridge.render({grouped},camera,settings,{4,0,HdNvpDenoiser::None});
         require(faces.color[(size_t(14)*64+42)*4]> .9 && faces.color[(size_t(34)*64+22)*4+1]>.9,"Native mesh face materials were not retained");
-        std::cout<<"hdNVP HDR/color/depth/maps/camera/material/subsets/removal/thread/units/reload passed\n"<<first.report<<"\n"<<material.report<<"\n";
+        require(first.pickPath(first.primIds[center],first.instanceIds[center])=="/Natron/Geometry/Object0","GPU IDs did not resolve to the composed Prim");
+        require(first.albedo.size()==size_t(64)*48*3 && first.normal.size()==first.albedo.size() && first.position.size()==first.albedo.size(),"Utility AOVs missing");
+        require(std::abs(first.position[center*3+2])<1e-5 && std::abs(first.normal[center*3+2])>.99,"P/N are not world-space data");
+        require(report(first).value(QStringLiteral("transport")).toString()==QStringLiteral("sharedMemory"),"Frames still use AOV files");
+        Camera offsetCamera=camera;offsetCamera.offsetX=.15;offsetCamera.offsetY=-.1;
+        auto offsetFrame=bridge.render({plain},offsetCamera,settings,{1,0,HdNvpDenoiser::None});
+        require(offsetFrame.color!=first.color && std::abs(offsetFrame.position[center*3]-(.15*camera.orthoWidth+camera.orthoWidth*.5/64))<1e-4,"USD aperture offset or P reconstruction failed");
+        UsdSceneSource instances;instances.filename=QFileInfo(QStringLiteral("Tests/fixtures/scene3d/usd/scene.usda")).absoluteFilePath().toStdString();instances.timeCode=10;instances.timeCodesPerSecond=48;
+        Camera instanceCamera=camera;instanceCamera.transform=Matrix::transform({1,0,5},{});
+        auto instanceFrame=bridge.render({},instanceCamera,settings,{1,0,HdNvpDenoiser::None},{},{instances});
+        require(instanceFrame.pickPath(instanceFrame.primIds[center],instanceFrame.instanceIds[center])=="/World/Instance/Panel","GPU picking did not resolve the USD instance proxy");
+        Card projection;projection.texture=image;projection.projected=true;projection.projector=camera;projection.projector.orthographic=false;projection.projector.focal=50;projection.projectionAspect=4./3;
+        auto projected=bridge.render({projection},camera,settings,{4,0,HdNvpDenoiser::None});
+        auto rgb=[&](int x,int y,int c){return projected.color[(size_t(y)*64+x)*4+c];};
+        require(rgb(22,14,0)>rgb(22,14,1) && rgb(22,14,0)>rgb(22,14,2),"Project3D bottom-left orientation failed");
+        require(rgb(42,34,0)>.1 && rgb(42,34,1)>.1 && rgb(42,34,2)>.1,"Project3D top-right orientation failed");
+        projection.projector.transform=Matrix::transform({0,0,-5},{0,180,0});
+        auto reversed=bridge.render({projection},camera,settings,{1,0,HdNvpDenoiser::None});
+        require(reversed.color!=projected.color,"Projection camera did not invalidate hit shading");
+        projection.projector.transform=Matrix::transform({0,0,-5},{});
+        auto behind=bridge.render({projection},camera,settings,{1,0,HdNvpDenoiser::None});require(behind.color[center*4+3]==0,"Projection behind the camera was not clipped");
+        auto overscan=std::make_shared<Texture>();overscan->width=overscan->height=2;overscan->pixels=std::vector<float>(16,1);overscan->imageUvScale={.5,.5};overscan->imageUvOffset={.25,.25};
+        projection.texture=overscan;projection.width=projection.height=6;projection.projector=camera;projection.projector.orthoWidth=2;projection.projectionAspect=2;
+        auto gateFrame=bridge.render({projection},camera,settings,{1,0,HdNvpDenoiser::None});
+        require(gateFrame.color[center*4+3]==1 && gateFrame.color[(size_t(24)*64+58)*4+3]==0 && gateFrame.color[(size_t(40)*64+32)*4+3]==0,"Overscan escaped the projection gate or changed its aspect");
+        auto crop=std::make_shared<Texture>(*overscan);crop->imageUvScale={2,2};crop->imageUvOffset={-.5,-.5};projection.texture=crop;
+        auto cropFrame=bridge.render({projection},camera,settings,{1,0,HdNvpDenoiser::None});
+        require(cropFrame.color[center*4+3]==1 && cropFrame.color[(size_t(24)*64+44)*4+3]==0,"Projection crop stretched over the full camera gate");
+        projection.projected=false;projection.texture=overscan;
+        auto ordinary=bridge.render({projection},camera,settings,{1,0,HdNvpDenoiser::None});require(ordinary.color[center*4]>.99 && ordinary.color[center*4+3]==1,"Removing projection left a stale material graph");
+        auto editSettings=settings;UsdPrimEdit edit;edit.kind=UsdPrimEdit::Kind::Transform;edit.identity="move";edit.paths={"/Original"};edit.transform=Matrix::transform({0,0,1},{});editSettings.edits={edit};
+        auto movedPrim=bridge.render({},camera,editSettings,{1,0,HdNvpDenoiser::None},{},{source});require(std::abs(movedPrim.depth[center]-5)<.001,"GPU USD transform opinion failed with centimeter/Z-up source");
+        edit.kind=UsdPrimEdit::Kind::Compositing;edit.holdout=true;editSettings.edits={edit};
+        auto holdout=bridge.render({},camera,editSettings,{1,0,HdNvpDenoiser::None},{},{source});require(holdout.depth[center]>0 && holdout.color[center*4+3]==0,"GPU holdout failed");
+        edit.holdout=false;edit.cameraVisible=false;editSettings.edits={edit};
+        auto cameraHidden=bridge.render({},camera,editSettings,{1,0,HdNvpDenoiser::None},{},{source});require(cameraHidden.depth[center]==0 && cameraHidden.color[center*4+3]==0,"GPU camera visibility failed");
+        edit.cameraVisible=true;editSettings.edits={edit};Card binding;binding.ownerId="bound";binding.bindingPaths={"/Original"};binding.material.baseColor={.1f,.8f,.2f,1};
+        UsdPrimEdit materialBind;materialBind.kind=UsdPrimEdit::Kind::Material;materialBind.paths=binding.bindingPaths;materialBind.materialPath="/Natron/Materials/n_bound";editSettings.edits.push_back(materialBind);
+        auto bound=bridge.render({binding},camera,editSettings,{1,0,HdNvpDenoiser::None},{},{source});require(std::abs(bound.color[center*4+1]-.8)<.001,"GPU USD material binding failed");
+        int progressive=0;auto progressiveSettings=settings;progressiveSettings.width=640;progressiveSettings.height=360;
+        auto partials=bridge.render({plain},camera,progressiveSettings,{256,0,HdNvpDenoiser::None,true},{},{},[&](const HdNvpFrame& f){require(f.color.size()==size_t(640)*360*4,"Malformed progressive frame");++progressive;});
+        require(progressive>0,"No intermediate preview frames were published");
+        bool warmCancelled=false;int warmChecks=0;
+        try{bridge.render({plain},camera,progressiveSettings,{2048,0,HdNvpDenoiser::None,true},[&]{return ++warmChecks>=2;});}
+        catch(const std::exception& e){require(std::string(e.what())=="hdNVP rendering cancelled","Warm cancellation failed");warmCancelled=true;}
+        require(warmCancelled,"Warm preview request was not cancelled");
+        auto resumed=bridge.render({plain},camera,progressiveSettings,{1,0,HdNvpDenoiser::None,true});
+        require(report(partials).value(QStringLiteral("pid"))==report(resumed).value(QStringLiteral("pid")),"Warm cancellation restarted the host");
+        std::cout<<"hdNVP HDR/depth/P/N/albedo/maps/offsets/instance picking/projection/USD edits/holdout/visibility/material binding/shared memory/progressive rendering passed\n"<<first.report<<"\n"<<material.report<<"\n";
     }catch(const std::exception& e){std::cerr<<e.what()<<"\n";return 1;}
 }

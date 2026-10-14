@@ -10,7 +10,7 @@
 #include <mutex>
 
 NATRON_NAMESPACE_ENTER
-enum class Scene3DKind { Card, Camera, Axis, TransformGeo, Scene, Project3D, Render3D, ReadGeo, ReadCamera, Light, PBRMaterial, ReadUSD, ReadUSDCamera };
+enum class Scene3DKind { Card, Camera, Axis, TransformGeo, Scene, Project3D, Render3D, ReadGeo, ReadCamera, Light, PBRMaterial, ReadUSD, ReadUSDCamera, USDTransform, USDVisibility, BindMaterial, USDCompositing };
 struct Scene3DMapSource {
     EffectInstancePtr source;
     unsigned channel = 0;
@@ -45,6 +45,7 @@ struct Scene3DSnapshot {
     std::vector<Gpu::Cards::Light> lights;
     std::vector<EnvironmentSource> environmentSources;
     std::vector<Gpu::Cards::UsdSceneSource> usdSources;
+    std::vector<Gpu::Cards::UsdPrimEdit> usdEdits;
     Gpu::Cards::Camera camera;
 };
 class NativeScene3D : public EffectInstance {
@@ -79,6 +80,7 @@ public:
     bool knobChanged(KnobI* knob, ValueChangedReasonEnum reason, ViewSpec view, double time, bool mainThread) override;
     StatusEnum getRegionOfDefinition(U64, double, const RenderScale&, ViewIdx, RectD* rod) override;
     Scene3DKind kind() const {return _kind;}
+    std::string sceneId() const;
     Gpu::Cards::Matrix transformAt(double time, ViewIdx view) const;
     Gpu::Cards::Camera cameraAt(double time, ViewIdx view) const;
     Scene3DSnapshot sceneAt(double time, ViewIdx view, bool preserveUsd=false) const;
@@ -88,6 +90,9 @@ public:
     Gpu::Cards::HdNvpSettings hdNvpSettingsAt(double time,ViewIdx view,bool draft) const;
     KnobDoublePtr translationKnob() const {return _translate.lock();}
     static const ImagePlaneDesc& depthPlane();
+    static const ImagePlaneDesc& albedoPlane();
+    static const ImagePlaneDesc& normalPlane();
+    static const ImagePlaneDesc& positionPlane();
     bool depthPreviewAt(double time, ViewIdx view) const;
     std::array<double,2> depthPreviewRangeAt(double time, ViewIdx view) const;
 protected:
@@ -112,6 +117,9 @@ private:
     Scene3DKind _kind;
     KnobDoubleWPtr _translate, _rotate, _scale, _size, _opacity, _focal, _aperture, _near, _far, _orthoWidth;
     KnobBoolWPtr _orthographic, _freeze;
+    KnobBoolWPtr _visible, _cameraVisible, _shadowVisible, _reflectionVisible, _holdout;
+    KnobChoiceWPtr _imageTiming;
+    KnobStringWPtr _usdTargets, _usdCamera;
     KnobIntWPtr _reference;
     KnobChoiceWPtr _backend, _samples, _output, _pathDenoiser;
     KnobIntWPtr _pathSamples, _pathBounces;
@@ -122,6 +130,8 @@ private:
     KnobDoubleWPtr _animationStart, _animationSpeed, _animationOffset;
     KnobStringWPtr _cameraName, _cameraInfo;
     KnobStringWPtr _primPath, _variants;
+    KnobStringWPtr _sceneId;
+    KnobChoiceWPtr _usdAssemblyMode;
     KnobBoolWPtr _loadPayloads;
     mutable std::shared_ptr<Gpu::Cards::UsdSceneAsset> _usdAsset, _usdPoseAsset;
     mutable std::shared_ptr<const Gpu::Cards::UsdScenePose> _usdPose;
@@ -151,6 +161,8 @@ private:
     std::unique_ptr<Gpu::Cards::Renderer> _renderer;
     std::shared_ptr<Gpu::VulkanDevice> _rendererDevice;
     std::unique_ptr<Gpu::Cards::UsdSceneBridge> _usdBridge;
+    std::shared_ptr<const Gpu::Cards::HdNvpFrame> _usdFrame;
+    std::string _usdFrameKey;
 };
 template<Scene3DKind K> class BuiltinScene3D : public NativeScene3D {
 public:

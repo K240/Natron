@@ -2,6 +2,7 @@
 import json
 import math
 import os
+import time
 import traceback
 from pathlib import Path
 from PySide6.QtCore import Q_ARG, QEvent, QMetaObject, QPoint, QPointF, QTimer, Qt
@@ -812,6 +813,7 @@ def fbx_mesh():
     later(fbx_animation)
 
 def fbx_animation():
+    global animation_connection_deadline
     app.getProjectParam('frameRange').set(1,49)
     app.getProjectParam('frameRate').setValue(24.)
     mesh=app.createNode('fr.inria.built-in.ReadGeo')
@@ -822,12 +824,17 @@ def fbx_animation():
     camera_button.setChecked(True);app.setSelection([mesh]);key(Qt.Key_W)
     # Connections made while the 2D Viewer is rendering are queued until that
     # render finishes. Yield to the event loop before testing the new scene.
+    animation_connection_deadline=time.monotonic()+30
     later(fbx_animation_frames)
 
 
 def fbx_animation_frames():
     mesh=app.getNode('AnimatedFbxViewer')
-    assert renderer.getInput(0).getScriptName()==mesh.getScriptName(), 'FBX Viewer connection has not been applied'
+    connected=renderer.getInput(0)
+    if connected is None or connected.getScriptName()!=mesh.getScriptName():
+        assert time.monotonic()<animation_connection_deadline, 'FBX Viewer connection has not been applied'
+        later(fbx_animation_frames)
+        return
     assert all(name in mesh.getParam('animationInfo').getValue() for name in ('Move','Scale','Hide'))
     def frame(number):
         app.getViewer(viewer.getScriptName()).seek(number);refresh()

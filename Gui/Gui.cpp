@@ -58,6 +58,7 @@ GCC_DIAG_UNUSED_PRIVATE_FIELD_ON
 #include "Gui/ProjectGui.h"
 #include "Gui/ToolButton.h"
 #include "Gui/RenderStatsDialog.h"
+#include "Gui/StageOutline.h"
 #include "Gui/ViewerTab.h"
 
 NATRON_NAMESPACE_ENTER
@@ -264,6 +265,7 @@ Gui::abortProject(bool quitApp,
         }
 
         setGuiAboutToClose(true);
+        _imp->_stageOutline->resetSource();
         if (app) {
             app->resetPreviewProvider();
             if (!blocking) {

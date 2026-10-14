@@ -1,7 +1,7 @@
 .. _maint-3d-compositing:
 
 Native 3D compositing
-====================
+=====================
 
 Natron's native 3D nodes support image planes, animated cameras, camera
 projection, FBX meshes, composed USD stages, parallax and direct-light PBR materials. They are
@@ -9,7 +9,7 @@ registered under **3D**. The existing OFX
 Card3D remains a separate image transform. The new native Card outputs geometry.
 
 Creating a scene
----------------
+----------------
 
 Connect images to Card nodes, connect the cards to a Scene, then connect Scene
 and Camera to Render3D. Render3D produces ordinary linear, premultiplied RGBA
@@ -403,10 +403,11 @@ Fixed camera projection
 
 Connect the source image and a projection Camera to Project3D, then connect its
 material output to Card or ReadGeo. Use a second Camera on Render3D to view the result.
-**Freeze projection and image** evaluates the source image and the projection
-camera at **Reference frame** (default: 1). The render camera and card transforms
-continue to animate at the output frame. Disabling Freeze evaluates the image
-and projection camera at the current frame.
+**Freeze projection camera** samples the projector at **Reference frame**
+(default: 1). **Image timing** independently selects Reference frame or Current
+frame; its default Follow camera preserves the original combined Freeze
+behavior in existing projects. The render camera and geometry transforms
+continue to animate at the output frame.
 
 Pixels outside the projected image or outside the projection camera's near/far
 range are transparent. Both faces of the card receive the projection. The
@@ -636,7 +637,7 @@ To create an editable three-layer sample project, run::
 The project and its image assets are saved to ``build/scene3d-demo``.
 
 FBX test scene and execution
----------------------------
+----------------------------
 
 From the repository root, generate the editable FBX example and add its
 Viewer/graph layout::
@@ -676,7 +677,7 @@ before Scene3DSmoke and remove it afterwards with
 ``Remove-Item Env:NATRON_VULKAN_DISABLED``.
 
 Animated FBX test scene
-----------------------
+-----------------------
 
 Generate and prepare the animation example from the repository root::
 
@@ -875,20 +876,31 @@ not extract its triangles or build its CPU BVH. Source-info mesh/light
 counts read metadata without evaluating geometry. Native Card, mesh, PBR
 maps and Light nodes are authored as standard USD prims; native mesh face
 materials use material-binding subsets. Float TIFF assets preserve HDR and
-signed data maps. Color, camera-linear Depth.Z and integer picking AOVs are
-returned together. Depth is normalized to meters and empty depth is zero.
+signed data maps. Beauty, camera-linear Depth.Z, Albedo, world-space N and P,
+and integer picking buffers are returned together. Depth and P use Y-up meters;
+empty depth and utility pixels are zero. N is the shading normal, including
+normal maps. P reconstructs the primary surface from depth at the pixel center;
+it is not an averaged position across mixed foreground/background samples.
 
 The worker retains its delegate, Stage, render index and GPU resources
 between camera/material/frame requests. USD edits are reloaded with Sdf
 diffs and delivered through ``ApplyPendingUpdates``. A dedicated IPC thread
-owns QProcess even when Natron changes render-pool threads. Cancellation
-terminates the worker; another request restarts it.
+owns QProcess even when Natron changes render-pool threads. Cancellation is
+cooperative through shared memory; an unresponsive host is restarted after
+a bounded timeout. Camera opinions use a separate layer so camera movement
+does not rewrite or reload the geometry layer. Unchanged native geometry and
+material resources are retained.
 
 **Path tracing samples** and **Path tracing bounces** control convergence.
 Draft/3D Viewer requests cap samples at four. Native antialiasing does not
-control this path tracer. The current integration waits for a completed
-frame and transfers AOVs through CPU memory; asynchronous progressive
-presentation and GPU image sharing remain to be implemented. The first
+control this path tracer. The 3D Viewer requests completed frames asynchronously,
+retains the previous image while rendering and rejects obsolete preview replies.
+Interactive requests can publish intermediate samples while converging.
+Writer requests wait for the completed frame. On Windows, frames up to 512 MiB
+transfer through a revisioned shared-memory buffer, with files as the larger
+frame fallback. This still includes GPU readback and CPU image conversion.
+Beauty and utility requests reuse the same completed frame. GPU image sharing
+remains future work. The first
 frame includes texture loading and GPU shader/pipeline creation, so report
 it separately from subsequent camera updates.
 
@@ -906,24 +918,144 @@ recreates the delegate because hdNVP fixes renderMode at construction.
 Low sample counts can still lose fine detail after denoising. Host reports
 include the selected mode, active denoiser and denoise timings.
 
-The initial composed-stage path accepts one complete ReadUSD stage, retaining
-its original materials. Native ReadUSD/TransformGeo transforms, opacity,
-subtree or material overrides, multiple independent ReadUSD stages and
-native mesh vertex-color gradients require additional composition/primvar
-adapters. These cases report an error on this backend. Compose additional
-USD assets through references in the source stage. Native camera offsets
-and focal multipliers work; imported camera film offsets/DOF are still
-limited by the existing ReadUSDCamera representation. Stage mesh selection,
-bounds framing and geometry Gizmos are not yet populated for this direct
-path. Render camera Gizmos and camera parameters remain editable.
+ReadUSD retains original materials and now supports **Shot layers** and
+**Asset reference** composition. Complete shot layers preserve root paths;
+multiple shot inputs intentionally combine opinions in Scene input order
+(input 0 is strongest) and require matching units, up-axis, time and payload
+policy. Asset references use separate stable namespaces and support ReadUSD/
+TransformGeo transforms and independent source sample times. The selected
+Prim subtree, or defaultPrim when blank, must include its material/relationship
+dependencies. Use Shot layers for a multi-root shot without a common asset
+root. Arbitrary whole-shot namespace normalization, opacity/material overrides
+and native mesh vertex-color gradients still need adapters. These cases report
+an error on this backend. Asset assembly currently rejects nested
+``resetXformStack`` operations; use Shot layers to retain those source-space
+semantics. A referenced asset root's reset is cleared in the private layer so
+the assembly transform applies, while its original transform operations remain.
+Imported camera film offsets and focal multipliers are evaluated. Depth of
+field is not yet exposed by the Natron camera representation. Imported prim
+selection, GPU pixel picking and bounds framing are available through Stage
+Outline, including instance-proxy paths. USD edit nodes author per-prim
+opinions. Direct imported-prim Gizmos remain future work.
+Native geometry and render camera Gizmos remain editable.
+
+.. _maint-3d-stage-outline:
+
+UsdStage composition and Stage Outline
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``Gpu/UsdStageValue`` publishes a branch-private composed UsdStage with an
+immutable generated opinion layer, source composition arcs, revision and
+sampling time. The bridge exports that assembly for Hydra and supplies the
+same composition to Outline inspection. Source files remain read-only; new
+published values do not change earlier values' private opinions. Generated
+native prim paths use a hidden persistent node UUID, independent of the node's
+label and its position in Scene inputs. TransformGeo branches have distinct
+instance path identities. Saving an assembly retains references and sublayers,
+rather than flattening imported mesh data.
+
+Open **Outline** in the Viewer toolbar, or choose **Stage Outline here** from
+a pane's menu. Stage Outline is a single native application panel per project
+window: drag its tab between panes, split a pane or float its tab using the
+existing workspace controls. Reopening Outline focuses the existing tab and
+retains its placement. The Viewer button is available in both 2D and 3D.
+
+**Follow active Viewer** inspects the Render3D branch upstream of the active
+Viewer. Select a Render3D in the source menu to pin that branch while switching
+Viewers. The pin uses the persistent node identity and survives renames. The
+current timeline frame and active Viewer's view select the sample. A deleted
+source is reported as missing rather than silently switching to another node.
+Panel placement and the pinned source are saved in the project; enable
+**Load workspace embedded within projects** to restore both on opening it.
+Pane placement also participates in Natron's layout export/import.
+
+Stage composition is independent of the visible 3D preview. The panel can
+inspect and update a stage while the Viewer displays a 2D image, without
+starting an hdNVP preview. It uses the existing bridge exporter and immutable
+UsdSceneValue; source files stay read-only. Composition runs asynchronously
+after the native scene and texture snapshot has been captured, and replies
+for superseded source/frame/view requests are discarded. Use BindMaterial for
+imported material overrides on this backend.
+
+The panel shows the composed prim hierarchy. Expand branches to fetch children
+asynchronously in pages of at
+most 256; double-click **More prims** for the next page. Filtering applies to
+fetched rows. Expanding/searching does not load payloads; use ReadUSD's existing
+payload policy. Instance-proxy children can be inspected as read-only entries.
+
+Select one or more rows to inspect prim properties, bindings, contributing
+layers, variants and API schemas. The 3D Viewer highlights composed world
+bounds, and **Frame selection** (or F in the Viewer) frames those bounds.
+The panel's button switches a matching Viewer to 3D if needed; it is disabled
+when no Viewer is connected to the selected source. Node ownership selection
+also works during 2D inspection. Selection is not transferred between unrelated
+stage branches.
+Selecting a child reveals its owning graph node while keeping the child prim
+selection. Existing native Card/ReadGeo/Light selection also connects to the
+Outline. Camera-only Viewer changes retain expanded rows and selected paths;
+scene/time changes use revision-tagged replies and restore available paths.
+The property view remains read-only. With a Camera selected, **Look through**
+sets the inspection camera; **Render camera** separately sets Render3D's
+``usdCamera`` path, with Undo/Redo. A stage camera can replace the Camera input.
+Inspection cameras follow stage animation while the panel is open.
+
+**Edit** inserts USDTransform, USDVisibility, BindMaterial or USDCompositing
+on the inspected Render3D scene input. ``primPaths`` lists exact absolute
+composed paths. These nodes and their parameters use normal Undo/Redo and
+project serialization; source layers remain read-only. USDTransform is a
+world-space delta in Y-up meters and applies once to a parent/child selection.
+An instance-proxy override privately makes that instance editable, preserving
+other instances. BindMaterial accepts PBRMaterial, Project3D or an image;
+ordinary imported textures use ``st``. Arbitrary rename/reparent is future work.
+
+USDCompositing supports Mesh holdout and separate camera, shadow and indirect
+ray visibility. Reflection visibility currently governs all indirect rays,
+including diffuse bounces. Holdout cuts primary beauty/alpha but retains depth,
+picking and secondary-ray participation. This requires the matching hdNVP
+renderer changes, not just the Natron schema resources. Curves, volumes,
+catchers, UV, motion vectors, motion blur, DOF and Cryptomatte remain subsequent
+delivery stages.
+
+Regression coverage is provided by ``UsdStageComposition`` and the real GUI
+smoke, including 2D updates without a preview, active-Viewer following, source
+pinning, moving/floating/closing/reopening the panel and restoring a floating
+layout with its pinned UUID. It also covers framing with Outline and Viewer in
+the same pane, and checks that a closed Outline does not restore an old prim
+selection when the Viewer reloads its scene. The smoke creates and saves a portable test scene at
+``build/scene3d-stage-outline/outline.ntp``:
+
+.. code-block:: powershell
+
+   .\tools\run-windows-qt6.ps1 -Program CTest -ProgramArguments @('-R', 'UsdStageComposition')
+   .\tools\run-windows-qt6.ps1 -Program Scene3DStageOutlineGuiSmoke -GuiTimeoutSeconds 180
+   .\tools\run-windows-qt6.ps1 -Program Natron -ProgramArguments @('build/scene3d-stage-outline/outline.ntp')
+
+For the local large test scene, set ``NATRON_STAGE_OUTLINE_SCENE`` to
+``D:/test_0001.usd`` before the GUI smoke. Results and its project are written
+to ``build/scene3d-stage-outline-user``; the source and its dependencies are
+not edited. The GUI smoke verifies that Outline is available while GPU
+rendering is still in progress.
 
 ``Gpu/usd/natron/resources`` registers codeless NatronCompositingAPI and
 NatronProjectionAPI schemas without changing standard prim types. The former
 preserves unlit intent alongside the emitted PreviewSurface network. The
-projection schema is a data contract; its Hydra/material adapter is not
-implemented. Project3D therefore reports an explicit error on hdNVP. These
-schemas alone do not add renderer behavior. Existing projection workflows
-continue to use the prior renderer until that adapter is available.
+projection schema records camera, timing, aspect, image and world-to-camera
+data. Project3D emits a MaterialX graph evaluated at each ray hit by hdNVP,
+including perspective division, near/far clipping and data-window UV mapping.
+It does not depend on interpolated vertex projection. Images retain alpha,
+format/PAR and crop semantics; outside the projector is transparent.
+
+Run the interaction/EXR fixture and the expanded GPU bridge regression with::
+
+    .\tools\run-windows-qt6.ps1 -Program NatronUsdSceneBridge -ProgramArguments @('--hdnvp')
+    .\tools\run-windows-qt6.ps1 -Program NatronRenderer -ProgramArguments @('--no-settings','--interpreter','tools/scene3d-usd-interaction-smoke.py')
+    $env:NATRON_STAGE_INTERACTION_TEST = '1'
+    .\tools\run-windows-qt6.ps1 -Program Scene3DStageOutlineGuiSmoke -GuiTimeoutSeconds 240
+    Remove-Item Env:NATRON_STAGE_INTERACTION_TEST
+
+The EXR fixture saves ``build/scene3d-usd-interaction/interaction.ntp`` and
+float beauty/utility outputs. The GUI check exercises GPU instance picking,
+independent camera actions and USD edit-node insertion/Undo/project reload.
 
 For the supplied ``D:/test_0001.usd`` scene::
 
@@ -935,7 +1067,11 @@ For the supplied ``D:/test_0001.usd`` scene::
 
 The generator uses ``NATRON_HDNVP_TEST_SCENE`` to override the scene path and
 selects ``/cameras/camera1``. The GUI check saves HdNvpViewer in 3D/Camera mode,
-checks camera edits and Gizmos, and saves a Viewer screenshot. The standalone
+checks camera edits and Gizmos, and saves a Viewer screenshot. It also switches
+between 3D and 2D during active previews, verifies arrival of new 2D frames and
+checks that cancellation leaves no persistent Render3D error. Abort predicates
+run on the calling render thread; the host thread receives an atomic flag.
+The standalone
 scene check writes linear float RGBA, sRGB previews and ``result.json`` with
 initial load, initial render, camera update and renderer GPU timings. In the
 initial RTX 5080 measurement (640x360, 8 samples, 4 bounces), stage metadata
