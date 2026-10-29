@@ -25,6 +25,11 @@
 #include <QString>
 #include <QUrl>
 #include <QFileInfo>
+#include <QMutexLocker>
+
+QT_BEGIN_NAMESPACE
+class QEnterEvent;
+QT_END_NAMESPACE
 
 NATRON_NAMESPACE_ENTER
 
@@ -46,14 +51,9 @@ removeFileExtension(QString & filename)
     return extension;
 }
 
-// Define compatibility typedefs so code builds with Qt5 & Qt6
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-typedef QEnterEvent QEnterEvent;
-#elif QT_VERSION >= QT_VERSION_CHECK(5, 0, 0)
-typedef QEvent QEnterEvent;
-#else
-#error "Unsupported version of QT"
-#endif
+using QEnterEvent = ::QEnterEvent;
+using MutexLocker = QMutexLocker<QMutex>;
+using RecursiveMutexLocker = QMutexLocker<QRecursiveMutex>;
 
 } // namespace QtCompat
 

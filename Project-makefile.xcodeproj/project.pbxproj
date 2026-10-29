@@ -64,7 +64,6 @@
 		1ECD849B276039C0001F75EA /* GuiMacros.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = GuiMacros.h; sourceTree = "<group>"; };
 		1ECD849C276039C0001F75EA /* ViewerTabPrivate.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ViewerTabPrivate.h; sourceTree = "<group>"; };
 		1ECD849D276039C0001F75EA /* PanelWidget.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PanelWidget.h; sourceTree = "<group>"; };
-		1ECD849E276039C0001F75EA /* Shaders.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Shaders.cpp; sourceTree = "<group>"; };
 		1ECD849F276039C0001F75EA /* NodeGraphUndoRedo.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NodeGraphUndoRedo.h; sourceTree = "<group>"; };
 		1ECD84A0276039C0001F75EA /* GuiAppInstance.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = GuiAppInstance.cpp; sourceTree = "<group>"; };
 		1ECD84A1276039C0001F75EA /* Gui20.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Gui20.cpp; sourceTree = "<group>"; };
@@ -80,7 +79,6 @@
 		1ECD84AB276039C0001F75EA /* Gui40.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Gui40.cpp; sourceTree = "<group>"; };
 		1ECD84AC276039C0001F75EA /* QtEnumConvert.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = QtEnumConvert.cpp; sourceTree = "<group>"; };
 		1ECD84AD276039C0001F75EA /* KnobGuiFactory.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = KnobGuiFactory.cpp; sourceTree = "<group>"; };
-		1ECD84AE276039C0001F75EA /* TextRenderer.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = TextRenderer.cpp; sourceTree = "<group>"; };
 		1ECD84AF276039C0001F75EA /* KnobGuiBool.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = KnobGuiBool.cpp; sourceTree = "<group>"; };
 		1ECD84B0276039C0001F75EA /* ProgressPanel.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ProgressPanel.cpp; sourceTree = "<group>"; };
 		1ECD84B1276039C0001F75EA /* RotoPanel.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = RotoPanel.cpp; sourceTree = "<group>"; };
@@ -130,7 +128,6 @@
 		1ECD84DD276039C1001F75EA /* ViewerGL.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ViewerGL.cpp; sourceTree = "<group>"; };
 		1ECD84DE276039C2001F75EA /* NodeGraph10.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = NodeGraph10.cpp; sourceTree = "<group>"; };
 		1ECD84DF276039C2001F75EA /* Splitter.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Splitter.cpp; sourceTree = "<group>"; };
-		1ECD84E0276039C2001F75EA /* TextRenderer.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = TextRenderer.h; sourceTree = "<group>"; };
 		1ECD84E1276039C2001F75EA /* PickKnobDialog.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PickKnobDialog.h; sourceTree = "<group>"; };
 		1ECD84E2276039C2001F75EA /* KnobGuiValue.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = KnobGuiValue.h; sourceTree = "<group>"; };
 		1ECD84E3276039C2001F75EA /* AboutWindow.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = AboutWindow.cpp; sourceTree = "<group>"; };
@@ -150,7 +147,6 @@
 		1ECD84F1276039C2001F75EA /* QtEnumConvert.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = QtEnumConvert.h; sourceTree = "<group>"; };
 		1ECD84F2276039C2001F75EA /* LinkToKnobDialog.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = LinkToKnobDialog.cpp; sourceTree = "<group>"; };
 		1ECD84F3276039C2001F75EA /* ResizableMessageBox.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ResizableMessageBox.h; sourceTree = "<group>"; };
-		1ECD84F4276039C2001F75EA /* Shaders.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = Shaders.h; sourceTree = "<group>"; };
 		1ECD84F5276039C2001F75EA /* KnobGuiContainerHelper.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = KnobGuiContainerHelper.h; sourceTree = "<group>"; };
 		1ECD84F6276039C2001F75EA /* Gui50.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Gui50.cpp; sourceTree = "<group>"; };
 		1ECD84F7276039C2001F75EA /* MultiInstancePanel.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = MultiInstancePanel.cpp; sourceTree = "<group>"; };
@@ -1207,8 +1203,6 @@
 				1ECD84B4276039C0001F75EA /* SequenceFileDialog.h */,
 				1ECD851B276039C3001F75EA /* SerializableWindow.cpp */,
 				1ECD8514276039C3001F75EA /* SerializableWindow.h */,
-				1ECD849E276039C0001F75EA /* Shaders.cpp */,
-				1ECD84F4276039C2001F75EA /* Shaders.h */,
 				1ECD850E276039C3001F75EA /* SpinBox.cpp */,
 				1ECD84BD276039C1001F75EA /* SpinBox.h */,
 				1ECD84D8276039C1001F75EA /* SpinBoxValidator.cpp */,
@@ -1223,8 +1217,6 @@
 				1ECD850B276039C3001F75EA /* TableModelView.h */,
 				1ECD851C276039C3001F75EA /* TabWidget.cpp */,
 				1ECD84D1276039C1001F75EA /* TabWidget.h */,
-				1ECD84AE276039C0001F75EA /* TextRenderer.cpp */,
-				1ECD84E0276039C2001F75EA /* TextRenderer.h */,
 				1ECD846F276039BE001F75EA /* ticks.cpp */,
 				1ECD8545276039C4001F75EA /* ticks.h */,
 				1ECD84B6276039C0001F75EA /* TimeLineGui.cpp */,

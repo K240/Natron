@@ -15,20 +15,6 @@
 
 #include "Global/Macros.h"
 
-#ifdef __APPLE__
-// Silence Apple's OpenGL deprecation warnings
-//
-//../Natron/Gui/ViewerGL.cpp:1606:5: warning: 'gluErrorString' is deprecated: first deprecated in OS X 10.9 [-Wdeprecated-declarations]
-///System/Library/Frameworks/OpenGL.framework/Headers/glu.h:260:24: note: 'gluErrorString' declared here
-//extern const GLubyte * gluErrorString (GLenum error) OPENGL_DEPRECATED(10_0, 10_9);
-//                       ^
-#include <AvailabilityMacros.h>
-#ifdef MAC_OS_X_VERSION_10_9
-#include <OpenGL/OpenGLAvailability.h>
-#undef OPENGL_DEPRECATED
-#define OPENGL_DEPRECATED(from, to)
-#endif // MAC_OS_X_VERSION_10_9
-#endif
 
 #include "Global/Macros.h"
 

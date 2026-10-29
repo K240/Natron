@@ -3,6 +3,9 @@
 
 # General build artifacts
 
+.venv/
+CMakeUserPresets.json
+
 *.h.cpp
 *.com
 *.DS_Store

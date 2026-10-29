@@ -1,0 +1,58 @@
+#version 450
+layout(local_size_x = 64) in;
+layout(binding = 0, rgba32f) uniform readonly image2D sourceImage;
+layout(binding = 1, rgba8) uniform writeonly image2D outputImage;
+layout(binding = 2, std430) readonly buffer Tables {
+    uint color[65536];
+    float gamma[1024];
+} lut;
+layout(push_constant) uniform Parameters {
+    uvec4 region;
+    vec4 correction; // gain, offset, gamma, reserved
+    ivec4 options; // linear, opaque, global origin X/Y
+} p;
+uint byteValue(float value) {
+    if (isnan(value) || value <= 0) return 0u;
+    if (value >= 1) return 255u;
+    return uint(value * 255 + .5);
+}
+float gammaValue(float value) {
+    if (p.correction.z <= 0) return value < 1 ? 0 : (value == 1 ? 1 : uintBitsToFloat(0x7f800000u));
+    if (p.correction.z == 1) return value;
+    if (value < 0) return 0;
+    if (value > 1) return 1;
+    if (isnan(value)) return value;
+    float position = value * 1023;
+    int i = int(position);
+    float alpha = clamp(position - i, 0, 1);
+    float next = i < 1023 ? lut.gamma[i + 1] : 0;
+    precise float result = lut.gamma[i] * (1 - alpha) + next * alpha;
+    return result;
+}
+void main() {
+    uint y = gl_GlobalInvocationID.x;
+    if (y >= p.region.w) return;
+    // Deterministic row seed; unsigned wrap is intentional for negative origins.
+    uint seed = (uint(p.options.z) * 1664525u) ^ ((uint(p.options.w) + y) * 1013904223u);
+    int start = int(seed % p.region.z);
+    for (int backward = 0; backward < 2; ++backward) {
+        int x = backward != 0 ? start - 1 : start;
+        uvec3 error = uvec3(128u);
+        while (x >= 0 && x < int(p.region.z)) {
+            vec4 inputValue = imageLoad(sourceImage, ivec2(p.region.xy) + ivec2(x, y));
+            precise vec3 scaled = inputValue.rgb * p.correction.x + p.correction.y;
+            uvec3 bytes;
+            for (int c = 0; c < 3; ++c) {
+                float value = gammaValue(scaled[c]);
+                if (p.options.x != 0) bytes[c] = byteValue(value);
+                else {
+                    error[c] = (error[c] & 255u) + lut.color[floatBitsToUint(value) >> 16];
+                    bytes[c] = error[c] >> 8;
+                }
+            }
+            uint alpha = p.options.y != 0 ? 255u : byteValue(inputValue.a);
+            imageStore(outputImage, ivec2(x, y), vec4(bytes, alpha) / 255);
+            x += backward != 0 ? -1 : 1;
+        }
+    }
+}

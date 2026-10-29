@@ -1,0 +1,32 @@
+diff --git a/IOSupport/GenericOCIO.cpp b/IOSupport/GenericOCIO.cpp
+index 30ffb3b..0381156 100644
+--- a/IOSupport/GenericOCIO.cpp
++++ b/IOSupport/GenericOCIO.cpp
+@@ -23,6 +23,7 @@
+  */
+ 
+ #include "GenericOCIO.h"
++#include "NatronEnvironment.h"
+ 
+ /*
+    http://opencolorio.org/userguide/config_syntax.html#roles
+@@ -1311,7 +1312,8 @@ GenericOCIO::describeInContextInput(ImageEffectDescriptor& desc,
+ #ifdef OFX_IO_USING_OCIO
+     gHostIsNatron = (getImageEffectHostDescription()->isNatron);
+ 
+-    char* file = std::getenv("OCIO");
++    const std::string fileName = NatronOFX::environmentUtf8("OCIO");
++    const char* file = fileName.empty() ? NULL : fileName.c_str();
+     AutoSetAndRestoreThreadLocale locale;
+     OCIO::ConstConfigRcPtr config;
+     if (file != NULL) {
+@@ -1401,7 +1403,8 @@ GenericOCIO::describeInContextOutput(ImageEffectDescriptor& desc,
+ #ifdef OFX_IO_USING_OCIO
+     gHostIsNatron = (getImageEffectHostDescription()->isNatron);
+ 
+-    char* file = std::getenv("OCIO");
++    const std::string fileName = NatronOFX::environmentUtf8("OCIO");
++    const char* file = fileName.empty() ? NULL : fileName.c_str();
+     AutoSetAndRestoreThreadLocale locale;
+     OCIO::ConstConfigRcPtr config;
+     if (file != NULL) {

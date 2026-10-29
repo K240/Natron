@@ -18,6 +18,70 @@
 # ***** END LICENSE BLOCK *****
 
 set(Tests_HEADERS BaseTest.h)
+add_executable(NatronCompositing Compositing_Test.cpp)
+target_link_libraries(NatronCompositing PRIVATE NatronGpu Qt6::Core Qt6::Gui)
+set_target_properties(NatronCompositing PROPERTIES AUTOMOC OFF AUTORCC OFF)
+add_test(NAME CompositingCpu COMMAND NatronCompositing)
+set_tests_properties(CompositingCpu PROPERTIES TIMEOUT 60)
+add_executable(NatronReflection Reflection_Test.cpp)
+target_link_libraries(NatronReflection PRIVATE NatronGpu Qt6::Core Qt6::Gui)
+set_target_properties(NatronReflection PROPERTIES AUTOMOC OFF AUTORCC OFF)
+add_test(NAME ReflectionCpu COMMAND NatronReflection)
+set_tests_properties(ReflectionCpu PROPERTIES TIMEOUT 90)
+add_executable(NatronCameraSolve CameraSolve_Test.cpp)
+target_link_libraries(NatronCameraSolve PRIVATE NatronReconstruction)
+set_target_properties(NatronCameraSolve PROPERTIES AUTOMOC OFF AUTORCC OFF)
+add_test(NAME CameraSolveCpu COMMAND NatronCameraSolve)
+set_tests_properties(CameraSolveCpu PROPERTIES TIMEOUT 90)
+add_executable(NatronFeatureTracking FeatureTracking_Test.cpp)
+target_link_libraries(NatronFeatureTracking PRIVATE NatronReconstruction Qt6::Core Qt6::Gui)
+set_target_properties(NatronFeatureTracking PROPERTIES AUTOMOC OFF AUTORCC OFF)
+add_test(NAME FeatureTrackingCpu COMMAND NatronFeatureTracking)
+set_tests_properties(FeatureTrackingCpu PROPERTIES TIMEOUT 120)
+add_executable(NatronCameraIntrinsics CameraIntrinsics_Test.cpp)
+target_link_libraries(NatronCameraIntrinsics PRIVATE NatronReconstruction)
+set_target_properties(NatronCameraIntrinsics PROPERTIES AUTOMOC OFF AUTORCC OFF)
+add_test(NAME CameraIntrinsicsCpu COMMAND NatronCameraIntrinsics)
+set_tests_properties(CameraIntrinsicsCpu PROPERTIES TIMEOUT 180)
+add_executable(NatronSceneFrame SceneFrame_Test.cpp)
+target_link_libraries(NatronSceneFrame PRIVATE NatronReconstruction)
+set_target_properties(NatronSceneFrame PROPERTIES AUTOMOC OFF AUTORCC OFF)
+add_test(NAME SceneFrameCpu COMMAND NatronSceneFrame)
+set_tests_properties(SceneFrameCpu PROPERTIES TIMEOUT 90)
+if(NATRON_ENABLE_USD)
+    find_package(pxr CONFIG REQUIRED)
+    add_executable(NatronUsdSceneBridge UsdSceneBridge_Test.cpp)
+    add_dependencies(NatronCompositing NatronUsdSceneBridge)
+    add_dependencies(NatronReflection NatronUsdSceneBridge)
+    # These USD executables share one runtime directory. Deploy schema resources
+    # once so concurrent post-build copies cannot overwrite each other.
+    natron_deploy_usd_resources(NatronUsdSceneBridge)
+    target_link_libraries(NatronUsdSceneBridge PRIVATE NatronGpu Qt6::Core Qt6::Gui)
+    target_compile_definitions(NatronUsdSceneBridge PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME UsdSceneBridgeExport COMMAND NatronUsdSceneBridge)
+    add_executable(NatronUsdStageValue UsdStageValue_Test.cpp)
+    add_dependencies(NatronUsdStageValue NatronUsdSceneBridge)
+    target_link_libraries(NatronUsdStageValue PRIVATE NatronGpu Qt6::Core Qt6::Gui)
+    target_compile_definitions(NatronUsdStageValue PRIVATE QT_NO_KEYWORDS)
+    add_test(NAME UsdStageComposition COMMAND NatronUsdStageValue)
+    set_tests_properties(UsdStageComposition PROPERTIES TIMEOUT 60)
+    add_executable(NatronCameraSolveUsd CameraSolveUsd_Test.cpp)
+    add_dependencies(NatronCameraSolveUsd NatronUsdSceneBridge)
+    target_link_libraries(NatronCameraSolveUsd PRIVATE NatronReconstruction NatronReconstructionUsd NatronGpu Qt6::Core)
+    target_compile_definitions(NatronCameraSolveUsd PRIVATE QT_NO_KEYWORDS)
+    set_target_properties(NatronCameraSolveUsd PROPERTIES AUTOMOC OFF AUTORCC OFF)
+    add_test(NAME CameraSolveUsd COMMAND NatronCameraSolveUsd)
+    set_tests_properties(CameraSolveUsd PROPERTIES TIMEOUT 90)
+    add_executable(NatronUsdScene UsdScene_Test.cpp UsdTexture_Test.cpp)
+    add_dependencies(NatronUsdScene NatronUsdSceneBridge)
+    target_link_libraries(NatronUsdScene PRIVATE NatronGpu usdUtils Qt6::Gui)
+    target_compile_definitions(NatronUsdScene PRIVATE QT_NO_KEYWORDS NATRON_USD_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/scene3d/usd")
+    add_test(NAME UsdSceneCpu COMMAND NatronUsdScene)
+    set_tests_properties(UsdSceneCpu PROPERTIES TIMEOUT 90)
+endif()
+add_executable(NatronLighting Lighting_Test.cpp)
+target_link_libraries(NatronLighting PRIVATE NatronGpu)
+add_test(NAME LightingCpu COMMAND NatronLighting)
 set(Tests_SOURCES
     google-test/src/gtest-all.cc
     google-mock/src/gmock-all.cc
@@ -28,7 +92,9 @@ set(Tests_SOURCES
     Image_Test.cpp
     KnobFile_Test.cpp
     Lut_Test.cpp
-    OSGLContext_Test.cpp
+    OfxDrawSuite_Test.cpp
+    OverlayDrawList_Test.cpp
+    SchedulerShutdown_Test.cpp
     Tracker_Test.cpp
     wmain.cpp
 )
@@ -50,3 +116,114 @@ target_include_directories(Tests
         google-mock
 )
 add_test(NAME Tests COMMAND Tests)
+
+add_executable(NatronCardScene CardScene_Test.cpp)
+target_link_libraries(NatronCardScene PRIVATE NatronGpu)
+add_test(NAME CardSceneCpu COMMAND NatronCardScene)
+set_tests_properties(CardSceneCpu PROPERTIES TIMEOUT 60)
+add_executable(NatronFbxMesh FbxMesh_Test.cpp)
+target_link_libraries(NatronFbxMesh PRIVATE NatronGpu)
+target_compile_definitions(NatronFbxMesh PRIVATE NATRON_FBX_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/scene3d")
+add_test(NAME FbxMeshCpu COMMAND NatronFbxMesh)
+set_tests_properties(FbxMeshCpu PROPERTIES TIMEOUT 60)
+
+# Hardware-dependent Engine tests run explicitly through the Vulkan runner.
+add_executable(NatronVulkanImageStorage VulkanImageStorage.cpp)
+target_compile_features(NatronVulkanImageStorage PRIVATE cxx_std_17)
+target_link_libraries(NatronVulkanImageStorage PRIVATE NatronEngine NatronGpu Qt::Core Python3::Python)
+add_executable(NatronVulkanImageConvert VulkanImageConvert.cpp)
+target_compile_features(NatronVulkanImageConvert PRIVATE cxx_std_17)
+target_link_libraries(NatronVulkanImageConvert PRIVATE NatronEngine NatronGpu Qt::Core Python3::Python)
+add_executable(NatronVulkanClipBorrow VulkanClipBorrow.cpp)
+target_compile_features(NatronVulkanClipBorrow PRIVATE cxx_std_17)
+target_link_libraries(NatronVulkanClipBorrow PRIVATE NatronEngine NatronGpu Qt::Core Python3::Python)
+
+# Exercise the public OFX DrawSuite ABI independently of Natron's C++ API.
+add_library(DrawSuiteSmoke MODULE DrawSuitePlugin.cpp)
+target_compile_features(DrawSuiteSmoke PRIVATE cxx_std_17)
+target_include_directories(DrawSuiteSmoke PRIVATE .. ../libs/OpenFX/include)
+if(WIN32)
+    set(_draw_suite_platform Win64)
+elseif(APPLE)
+    set(_draw_suite_platform MacOS)
+else()
+    set(_draw_suite_platform Linux-x86-64)
+endif()
+set_target_properties(DrawSuiteSmoke PROPERTIES
+    PREFIX "" SUFFIX ".ofx"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../ofx-tests/DrawSuiteSmoke.ofx.bundle/Contents/${_draw_suite_platform}"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../ofx-tests/DrawSuiteSmoke.ofx.bundle/Contents/${_draw_suite_platform}"
+)
+
+# Native custom-parameter extension, independently loaded through the OFX C ABI.
+add_library(LegacyInteractSmoke MODULE LegacyInteractPlugin.cpp)
+target_compile_features(LegacyInteractSmoke PRIVATE cxx_std_17)
+target_include_directories(LegacyInteractSmoke PRIVATE .. ../libs/OpenFX/include)
+set_target_properties(LegacyInteractSmoke PROPERTIES PREFIX "" SUFFIX ".ofx"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../ofx-tests/LegacyInteractSmoke.ofx.bundle/Contents/${_draw_suite_platform}"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../ofx-tests/LegacyInteractSmoke.ofx.bundle/Contents/${_draw_suite_platform}")
+
+add_library(RetiredRenderSmoke MODULE RetiredRenderPlugin.cpp)
+target_compile_features(RetiredRenderSmoke PRIVATE cxx_std_17)
+target_include_directories(RetiredRenderSmoke PRIVATE .. ../libs/OpenFX/include)
+set_target_properties(RetiredRenderSmoke PROPERTIES PREFIX "" SUFFIX ".ofx"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../ofx-tests/RetiredRenderSmoke.ofx.bundle/Contents/${_draw_suite_platform}"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../ofx-tests/RetiredRenderSmoke.ofx.bundle/Contents/${_draw_suite_platform}")
+
+add_library(ParamDrawSuiteSmoke MODULE ParamDrawSuitePlugin.cpp)
+target_compile_features(ParamDrawSuiteSmoke PRIVATE cxx_std_17)
+target_include_directories(ParamDrawSuiteSmoke PRIVATE .. ../libs/OpenFX/include)
+set_target_properties(ParamDrawSuiteSmoke PROPERTIES
+    PREFIX "" SUFFIX ".ofx"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../ofx-tests/ParamDrawSuiteSmoke.ofx.bundle/Contents/${_draw_suite_platform}"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../ofx-tests/ParamDrawSuiteSmoke.ofx.bundle/Contents/${_draw_suite_platform}"
+)
+
+add_library(CurveDrawSuiteSmoke MODULE CurveDrawSuitePlugin.cpp)
+target_compile_features(CurveDrawSuiteSmoke PRIVATE cxx_std_17)
+target_include_directories(CurveDrawSuiteSmoke PRIVATE .. ../libs/OpenFX/include)
+set_target_properties(CurveDrawSuiteSmoke PROPERTIES
+    PREFIX "" SUFFIX ".ofx"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../ofx-tests/CurveDrawSuiteSmoke.ofx.bundle/Contents/${_draw_suite_platform}"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../ofx-tests/CurveDrawSuiteSmoke.ofx.bundle/Contents/${_draw_suite_platform}"
+)
+
+# Exercise Engine Vulkan compute through an independently compiled OFX C ABI.
+add_library(VulkanImageSuiteSmoke MODULE VulkanImageSuitePlugin.cpp)
+target_compile_features(VulkanImageSuiteSmoke PRIVATE cxx_std_17)
+target_include_directories(VulkanImageSuiteSmoke PRIVATE .. ../libs/OpenFX/include)
+set_target_properties(VulkanImageSuiteSmoke PROPERTIES
+    PREFIX "" SUFFIX ".ofx"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../ofx-tests/VulkanImageSuiteSmoke.ofx.bundle/Contents/${_draw_suite_platform}"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../ofx-tests/VulkanImageSuiteSmoke.ofx.bundle/Contents/${_draw_suite_platform}"
+)
+
+# The raster display contract runs without creating a Vulkan device or loader.
+add_library(VulkanMemoryFailureSmoke MODULE VulkanMemoryFailurePlugin.cpp)
+target_compile_features(VulkanMemoryFailureSmoke PRIVATE cxx_std_17)
+target_include_directories(VulkanMemoryFailureSmoke PRIVATE .. ../libs/OpenFX/include)
+set_target_properties(VulkanMemoryFailureSmoke PROPERTIES PREFIX "" SUFFIX ".ofx"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../ofx-tests/VulkanMemoryFailureSmoke.ofx.bundle/Contents/${_draw_suite_platform}"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../ofx-tests/VulkanMemoryFailureSmoke.ofx.bundle/Contents/${_draw_suite_platform}")
+
+add_executable(NatronRasterViewer ../Gpu/tests/RasterViewer.cpp)
+add_library(VulkanPressureSmoke MODULE VulkanPressurePlugin.cpp)
+add_library(VulkanBenchmarkSmoke MODULE VulkanBenchmarkPlugin.cpp)
+target_compile_features(VulkanBenchmarkSmoke PRIVATE cxx_std_17)
+target_include_directories(VulkanBenchmarkSmoke PRIVATE .. ../libs/OpenFX/include)
+set_target_properties(VulkanBenchmarkSmoke PROPERTIES PREFIX "" SUFFIX ".ofx"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../ofx-tests/VulkanBenchmarkSmoke.ofx.bundle/Contents/${_draw_suite_platform}"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../ofx-tests/VulkanBenchmarkSmoke.ofx.bundle/Contents/${_draw_suite_platform}")
+target_compile_features(VulkanPressureSmoke PRIVATE cxx_std_17)
+target_include_directories(VulkanPressureSmoke PRIVATE .. ../libs/OpenFX/include)
+set_target_properties(VulkanPressureSmoke PROPERTIES PREFIX "" SUFFIX ".ofx"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../ofx-tests/VulkanPressureSmoke.ofx.bundle/Contents/${_draw_suite_platform}"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/../ofx-tests/VulkanPressureSmoke.ofx.bundle/Contents/${_draw_suite_platform}")
+
+target_link_libraries(NatronRasterViewer PRIVATE NatronGpu)
+add_test(NAME RasterViewerNoGpu COMMAND NatronRasterViewer)
+set_tests_properties(RasterViewerNoGpu PROPERTIES TIMEOUT 30)
+
+# Explicit hardware comparison, kept out of the CPU-only default CTest suite.
+add_executable(NatronRasterGpuCompare ../Gpu/tests/RasterGpuCompare.cpp)
+target_link_libraries(NatronRasterGpuCompare PRIVATE NatronGpu)

@@ -234,8 +234,7 @@ public:
             updateGUI(dimension);
         }
 
-        return ( (addedKey != KnobHelper::eValueChangedReturnCodeNoKeyframeAdded) &&
-                 (addedKey != KnobHelper::eValueChangedReturnCodeNothingChanged) );
+        return addedKey == KnobHelper::eValueChangedReturnCodeKeyframeAdded;
     }
 
     virtual RectD getViewportRect() const OVERRIDE FINAL;

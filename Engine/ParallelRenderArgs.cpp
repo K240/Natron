@@ -35,8 +35,6 @@
 #include "Engine/Image.h"
 #include "Engine/Node.h"
 #include "Engine/NodeGroup.h"
-#include "Engine/GPUContextPool.h"
-#include "Engine/OSGLContext.h"
 #include "Engine/RotoContext.h"
 #include "Engine/RotoDrawableItem.h"
 #include "Engine/ViewIdx.h"
@@ -67,17 +65,21 @@ EffectInstance::treeRecurseFunctor(bool isRenderFunctor,
     bool isRoto = node->isRotoPaintingNode();
 
     //Same as FramesNeededMap but we also get a pointer to EffectInstance* as key
-    typedef std::map<EffectInstancePtr, std::pair</*inputNb*/ int, FrameRangesMap> > PreRenderFrames;
+    // Preserve each clip's frame/component/storage request when one effect is
+    // connected to several inputs (for example native color and CPU Alpha mask).
+    typedef std::multimap<EffectInstancePtr, std::pair</*inputNb*/ int, FrameRangesMap> > PreRenderFrames;
 
     PreRenderFrames framesToRender;
+
     //Add frames needed to the frames to render
     for (FramesNeededMap::const_iterator it = framesNeeded.begin(); it != framesNeeded.end(); ++it) {
         int inputNb = it->first;
         bool inputIsMask = effect->isInputMask(inputNb);
         ImagePlaneDesc maskComps;
         int channelForAlphaInput;
+
         // if (inputIsMask) {
-        if ( !effect->isMaskEnabled(inputNb) ) {
+        if (!effect->isMaskEnabled(inputNb)) {
             continue;
         }
 
@@ -89,15 +91,17 @@ EffectInstance::treeRecurseFunctor(bool isRenderFunctor,
         //}
 
         //No mask
-        if ( inputIsMask && ( (channelForAlphaInput == -1) || (maskComps.getNumComponents() == 0) ) ) {
+        if (inputIsMask && ((channelForAlphaInput == -1) || (maskComps.getNumComponents() == 0))) {
             continue;
         }
 
         //Redirect for transforms if needed
         EffectInstancePtr inputEffect;
+
         if (reroutesMap) {
             InputMatrixMap::const_iterator foundReroute = reroutesMap->find(inputNb);
-            if ( foundReroute != reroutesMap->end() ) {
+
+            if (foundReroute != reroutesMap->end()) {
                 inputEffect = foundReroute->second.newInputEffect->getInput(foundReroute->second.newInputNbToFetchFrom);
             }
         }
@@ -107,18 +111,19 @@ EffectInstance::treeRecurseFunctor(bool isRenderFunctor,
         }
 
         //Never pre-render the mask if we are rendering a node of the rotopaint tree
-        if ( node->getAttachedRotoItem() && inputEffect && inputEffect->isRotoPaintNode() ) {
+        if (node->getAttachedRotoItem() && inputEffect && inputEffect->isRotoPaintNode()) {
             continue;
         }
 
         if (inputEffect) {
-            framesToRender[inputEffect] = std::make_pair(inputNb, it->second);
+            framesToRender.emplace(inputEffect, std::make_pair(inputNb, it->second));
         }
     }
 
     if (isRoto && !isRenderFunctor) {
         //Also add internal rotopaint tree RoIs
         NodePtr btmMerge = effect->getNode()->getRotoContext()->getRotoPaintBottomMergeNode();
+
         if (btmMerge) {
             FrameRangesMap frames;
             std::vector<OfxRangeD> vec;
@@ -126,7 +131,7 @@ EffectInstance::treeRecurseFunctor(bool isRenderFunctor,
             r.min = r.max = time;
             vec.push_back(r);
             frames[view] = vec;
-            framesToRender[btmMerge->getEffectInstance()] = std::make_pair(-1, frames);
+            framesToRender.emplace(btmMerge->getEffectInstance(), std::make_pair(-1, frames));
         }
     }
 
@@ -136,7 +141,8 @@ EffectInstance::treeRecurseFunctor(bool isRenderFunctor,
         assert(inputNode);
 
         int inputNb = it->second.first;
-        if ( (inputNb == -1) && isRenderFunctor ) {
+
+        if ((inputNb == -1) && isRenderFunctor) {
             /*
                We use inputNb=-1 for the RotoPaint node to recurse the RoI computations on the internal rotopaint tree.
                Note that when we are in the render functor, we do not pre-render the rotopaint tree, instead we wait for
@@ -146,10 +152,12 @@ EffectInstance::treeRecurseFunctor(bool isRenderFunctor,
         }
 
         ImageList* inputImagesList = 0;
+
         if (isRenderFunctor) {
             EffectInstance::InputImagesMap::iterator foundInputImages = inputImages->find(inputNb);
-            if ( foundInputImages == inputImages->end() ) {
-                std::pair<InputImagesMap::iterator, bool> ret = inputImages->insert( std::make_pair( inputNb, ImageList() ) );
+
+            if (foundInputImages == inputImages->end()) {
+                std::pair<InputImagesMap::iterator, bool> ret = inputImages->insert(std::make_pair(inputNb, ImageList()));
                 inputImagesList = &ret.first->second;
                 assert(ret.second);
             }
@@ -159,8 +167,10 @@ EffectInstance::treeRecurseFunctor(bool isRenderFunctor,
         RectD roi;
         bool roiIsInRequestPass = false;
         ParallelRenderArgsPtr frameArgs;
+
         if (isRenderFunctor) {
             frameArgs = inputEffect->getParallelRenderArgsTLS();
+
             if (frameArgs && frameArgs->request) {
                 roiIsInRequestPass = true;
             }
@@ -168,9 +178,11 @@ EffectInstance::treeRecurseFunctor(bool isRenderFunctor,
 
         if (!roiIsInRequestPass) {
             RoIMap::const_iterator foundInputRoI = inputRois.find(inputEffect);
-            if ( foundInputRoI == inputRois.end() ) {
+
+            if (foundInputRoI == inputRois.end()) {
                 continue;
             }
+
             // It's OK to have an infinite RoI, since we intersect with the source RoD in the end,
             // and it actually happens quite often when composing Transforms,
             // see getInputsRoIsFunctor(),
@@ -186,18 +198,20 @@ EffectInstance::treeRecurseFunctor(bool isRenderFunctor,
             }
             */
 
-            if ( foundInputRoI->second.isNull() ) {
+            if (foundInputRoI->second.isNull()) {
                 continue;
             }
+
             roi = foundInputRoI->second;
         }
 
         ///There cannot be frames needed without components needed.
-        const std::list<ImagePlaneDesc>* compsNeeded = 0;
+        const std::list<ImagePlaneDesc> *compsNeeded = 0;
 
         if (neededComps) {
             EffectInstance::ComponentsNeededMap::const_iterator foundCompsNeeded = neededComps->find(inputNb);
-            if ( foundCompsNeeded == neededComps->end() ) {
+
+            if (foundCompsNeeded == neededComps->end()) {
                 continue;
             } else {
                 compsNeeded = &foundCompsNeeded->second;
@@ -211,9 +225,10 @@ EffectInstance::treeRecurseFunctor(bool isRenderFunctor,
         {
             ///Notify the node that we're going to render something with the input
             EffectInstance::NotifyInputNRenderingStarted_RAIIPtr inputNIsRendering_RAII;
+
             if (isRenderFunctor) {
                 assert(it->second.first != -1); //< see getInputNumber
-                inputNIsRendering_RAII.reset( new EffectInstance::NotifyInputNRenderingStarted_RAII(node.get(), inputNb) );
+                inputNIsRendering_RAII.reset(new EffectInstance::NotifyInputNRenderingStarted_RAII(node.get(), inputNb));
             }
 
             ///For all views requested in input
@@ -223,21 +238,21 @@ EffectInstance::treeRecurseFunctor(bool isRenderFunctor,
                     int nbFramesPreFetched = 0;
 
                     // if the range bounds are not ints, the fetched images will probably anywhere within this range - no need to pre-render
-                    if ( (viewIt->second[range].min == (int)viewIt->second[range].min) &&
-                         ( viewIt->second[range].max == (int)viewIt->second[range].max) ) {
+                    if ((viewIt->second[range].min == (int)viewIt->second[range].min) &&
+                        (viewIt->second[range].max == (int)viewIt->second[range].max)) {
                         for (double f = viewIt->second[range].min;
                              f <= viewIt->second[range].max  && nbFramesPreFetched < NATRON_MAX_FRAMES_NEEDED_PRE_FETCHING;
                              f += 1.) {
                             if (!isRenderFunctor) {
                                 StatusEnum stat = EffectInstance::getInputsRoIsFunctor(useTransforms,
-                                                                                       f,
-                                                                                       viewIt->first,
-                                                                                       originalMipmapLevel,
-                                                                                       inputNode,
-                                                                                       node,
-                                                                                       treeRoot,
-                                                                                       roi,
-                                                                                       *requests);
+                                                  f,
+                                                  viewIt->first,
+                                                  originalMipmapLevel,
+                                                  inputNode,
+                                                  node,
+                                                  treeRoot,
+                                                  roi,
+                                                  *requests);
 
                                 if (stat == eStatusFailed) {
                                     return EffectInstance::eRenderRoIRetCodeFailed;
@@ -249,7 +264,7 @@ EffectInstance::treeRecurseFunctor(bool isRenderFunctor,
                                 ///Render the input image with the bit depth of its preference
                                 ImageBitDepthEnum inputPrefDepth = inputEffect->getBitDepth(-1);
 
-                                if ( !compsNeeded || compsNeeded->empty() ) {
+                                if (!compsNeeded || compsNeeded->empty()) {
                                     continue;
                                 }
 
@@ -262,39 +277,59 @@ EffectInstance::treeRecurseFunctor(bool isRenderFunctor,
                                 const RectI inputRoIPixelCoords = roi.toPixelEnclosing(upstreamMipmapLevel, inputPar);
 
                                 std::map<ImagePlaneDesc, ImagePtr> inputImgs;
+                                StorageModeEnum upstreamStorage = renderStorageMode;
+
+                                // Alpha mask clips still use CPU storage. Do not
+                                // prefetch them as RGBA Vulkan images only to
+                                // download and extract Alpha at clipGetImage.
+                                if (upstreamStorage == eStorageModeVulkan && effect->isInputMask(inputNb)) {
+                                    upstreamStorage = eStorageModeRAM;
+                                }
+
+                                if (upstreamStorage == eStorageModeVulkan) {
+                                    for (const auto& plane : *compsNeeded) {
+                                        if (plane.getNumComponents() != 4 || inputPrefDepth != eImageBitDepthFloat) {
+                                            upstreamStorage = eStorageModeRAM;
+                                            break;
+                                        }
+                                    }
+                                }
+
                                 {
                                     std::unique_ptr<EffectInstance::RenderRoIArgs> renderArgs;
-                                    renderArgs.reset( new EffectInstance::RenderRoIArgs( f, //< time
-                                                                                         upstreamScale, //< scale
-                                                                                         upstreamMipmapLevel, //< mipmapLevel (redundant with the scale)
-                                                                                         viewIt->first, //< view
-                                                                                         byPassCache,
-                                                                                         inputRoIPixelCoords, //< roi in pixel coordinates
-                                                                                         RectD(), // < did we precompute any RoD to speed-up the call ?
-                                                                                         *compsNeeded, //< requested comps
-                                                                                         inputPrefDepth,
-                                                                                         false,
-                                                                                         effect.get(),
-                                                                                         renderStorageMode /*returnStorage*/,
-                                                                                         time /*callerRenderTime*/) );
+                                    renderArgs.reset(new EffectInstance::RenderRoIArgs(f,   //< time
+                                                     upstreamScale, //< scale
+                                                     upstreamMipmapLevel, //< mipmapLevel (redundant with the scale)
+                                                     viewIt->first, //< view
+                                                     byPassCache,
+                                                     inputRoIPixelCoords, //< roi in pixel coordinates
+                                                     RectD(), // < did we precompute any RoD to speed-up the call ?
+                                                     *compsNeeded, //< requested comps
+                                                     inputPrefDepth,
+                                                     false,
+                                                     effect.get(),
+                                                     upstreamStorage /*returnStorage*/,
+                                                     time /*callerRenderTime*/));
 
                                     EffectInstance::RenderRoIRetCode ret;
                                     ret = inputEffect->renderRoI(*renderArgs, &inputImgs); //< requested bitdepth
+
                                     if (ret != EffectInstance::eRenderRoIRetCodeOk) {
                                         return ret;
                                     }
                                 }
+
                                 for (std::map<ImagePlaneDesc, ImagePtr>::iterator it3 = inputImgs.begin(); it3 != inputImgs.end(); ++it3) {
                                     if (inputImagesList && it3->second) {
                                         inputImagesList->push_back(it3->second);
                                     }
                                 }
 
-                                if ( effect->aborted() ) {
+                                if (effect->aborted()) {
                                     return EffectInstance::eRenderRoIRetCodeAborted;
                                 }
 
-                                if ( !inputImgs.empty() ) {
+                                if (!inputImgs.empty()) {
                                     ++nbFramesPreFetched;
                                 }
                             } // if (!isRenderFunctor) {
@@ -304,6 +339,7 @@ EffectInstance::treeRecurseFunctor(bool isRenderFunctor,
             } // for all views
         } // EffectInstance::NotifyInputNRenderingStarted_RAII
     } // for all inputs
+
     return EffectInstance::eRenderRoIRetCodeOk;
 } // EffectInstance::treeRecurseFunctor
 
@@ -313,7 +349,7 @@ EffectInstance::getInputsRoIsFunctor(bool useTransforms,
                                      ViewIdx view,
                                      unsigned originalMipmapLevel,
                                      const NodePtr& node,
-                                     const NodePtr& /*callerNode*/,
+                                     const NodePtr & /*callerNode*/,
                                      const NodePtr& treeRoot,
                                      const RectD& canonicalRenderWindow,
                                      FrameRequestMap& requests)
@@ -330,12 +366,14 @@ EffectInstance::getInputsRoIsFunctor(bool useTransforms,
          */
         return eStatusFailed;
     }
+
     assert(effect->supportsRenderScaleMaybe() == EffectInstance::eSupportsNo ||
            effect->supportsRenderScaleMaybe() == EffectInstance::eSupportsYes);
     bool supportsRs = effect->supportsRenderScale();
     unsigned int mappedLevel = supportsRs ? originalMipmapLevel : 0;
     FrameRequestMap::iterator foundNode = requests.find(node);
-    if ( foundNode != requests.end() ) {
+
+    if (foundNode != requests.end()) {
         nodeRequest = foundNode->second;
     } else {
         ///Setup global data for the node for the whole frame render
@@ -344,10 +382,11 @@ EffectInstance::getInputsRoIsFunctor(bool useTransforms,
         tmp->mappedScale = RenderScale::fromMipmapLevel(mappedLevel);
         tmp->nodeHash = effect->getRenderHash();
 
-        std::pair<FrameRequestMap::iterator, bool> ret = requests.insert( std::make_pair(node, tmp) );
+        std::pair<FrameRequestMap::iterator, bool> ret = requests.insert(std::make_pair(node, tmp));
         assert(ret.second);
         nodeRequest = ret.first->second;
     }
+
     assert(nodeRequest);
 
     ///Okay now we concentrate on this particular frame/view pair
@@ -362,7 +401,7 @@ EffectInstance::getInputsRoIsFunctor(bool useTransforms,
     ViewInvarianceLevel viewInvariance = effect->isViewInvariant();
 
 
-    if ( foundFrameView != nodeRequest->frames.end() ) {
+    if (foundFrameView != nodeRequest->frames.end()) {
         fvRequest = &foundFrameView->second;
     } else {
         ///Set up global data specific for this frame view, this is the first time it has been requested so far
@@ -379,7 +418,7 @@ EffectInstance::getInputsRoIsFunctor(bool useTransforms,
 
         const RectI identityRegionPixel = canonicalRenderWindow.toPixelEnclosing(mappedLevel, par);
 
-        if ( (view != 0) && (viewInvariance == eViewInvarianceAllViewsInvariant) ) {
+        if ((view != 0) && (viewInvariance == eViewInvarianceAllViewsInvariant)) {
             fvRequest->globalData.isIdentity = true;
             fvRequest->globalData.identityInputNb = -2;
             fvRequest->globalData.inputIdentityTime = time;
@@ -400,8 +439,9 @@ EffectInstance::getInputsRoIsFunctor(bool useTransforms,
 
         ///Get the RoD
         StatusEnum stat = effect->getRegionOfDefinition_public(nodeRequest->nodeHash, rodTime, nodeRequest->mappedScale, rodView, &fvRequest->globalData.rod, &fvRequest->globalData.isProjectFormat);
+
         //If failed it should have failed earlier
-        if ( (stat == eStatusFailed) && !fvRequest->globalData.rod.isNull() ) {
+        if ((stat == eStatusFailed) && !fvRequest->globalData.rod.isNull()) {
             return stat;
         }
 
@@ -410,7 +450,7 @@ EffectInstance::getInputsRoIsFunctor(bool useTransforms,
         if (useTransforms) {
             fvRequest->globalData.transforms = std::make_shared<InputMatrixMap>();
 //#pragma message WARN("TODO: can set draftRender properly here?")
-            effect->tryConcatenateTransforms( time, /*draftRender=*/false, view, nodeRequest->mappedScale, fvRequest->globalData.transforms.get() );
+            effect->tryConcatenateTransforms(time, /*draftRender=*/false, view, nodeRequest->mappedScale, fvRequest->globalData.transforms.get());
         }
 
         ///Get the frame/views needed for this frame/view
@@ -421,10 +461,12 @@ EffectInstance::getInputsRoIsFunctor(bool useTransforms,
 
 
     bool finalRoIEmpty = fvRequest->finalData.finalRoi.isNull();
+
     if (!finalRoIEmpty && fvRequest->finalData.finalRoi.contains(canonicalRenderWindow)) {
         // Do not recurse if the roi did not add anything new to render
         return eStatusOK;
     }
+
     if (finalRoIEmpty) {
         fvRequest->finalData.finalRoi = canonicalRenderWindow;
     } else {
@@ -433,8 +475,9 @@ EffectInstance::getInputsRoIsFunctor(bool useTransforms,
 
     if (fvRequest->globalData.identityInputNb == -2) {
         assert(fvRequest->globalData.inputIdentityTime != time || viewInvariance == eViewInvarianceAllViewsInvariant);
+
         // be safe in release mode otherwise we hit an infinite recursion
-        if ( (fvRequest->globalData.inputIdentityTime != time) || (viewInvariance == eViewInvarianceAllViewsInvariant) ) {
+        if ((fvRequest->globalData.inputIdentityTime != time) || (viewInvariance == eViewInvarianceAllViewsInvariant)) {
             //fvRequest->requests.push_back( std::make_pair( canonicalRenderWindow, FrameViewPerRequestData() ) );
 
             ViewIdx inputView = (view != 0 && viewInvariance == eViewInvarianceAllViewsInvariant) ? ViewIdx(0) : view;
@@ -455,6 +498,7 @@ EffectInstance::getInputsRoIsFunctor(bool useTransforms,
         return eStatusFailed;
     } else if (fvRequest->globalData.identityInputNb != -1) {
         EffectInstancePtr inputEffectIdentity = effect->getInput(fvRequest->globalData.identityInputNb);
+
         if (inputEffectIdentity) {
             //fvRequest->requests.push_back( std::make_pair( canonicalRenderWindow, FrameViewPerRequestData() ) );
 
@@ -497,8 +541,8 @@ EffectInstance::getInputsRoIsFunctor(bool useTransforms,
     ///Transform Rois and get the reroutes map
     if (useTransforms) {
         if (fvRequest->globalData.transforms) {
-            fvRequest->globalData.reroutesMap.reset( new std::map<int, EffectInstancePtr>() );
-            transformInputRois( effect.get(), fvRequest->globalData.transforms, par, nodeRequest->mappedScale, &fvPerRequestData.inputsRoi, fvRequest->globalData.reroutesMap.get() );
+            fvRequest->globalData.reroutesMap.reset(new std::map<int, EffectInstancePtr>());
+            transformInputRois(effect.get(), fvRequest->globalData.transforms, par, nodeRequest->mappedScale, &fvPerRequestData.inputsRoi, fvRequest->globalData.reroutesMap.get());
         }
     }
 
@@ -509,26 +553,26 @@ EffectInstance::getInputsRoIsFunctor(bool useTransforms,
        }*/
 
 
-
     // Append the request
     //fvRequest->requests.push_back( std::make_pair(canonicalRenderWindow, fvPerRequestData) );
 
     EffectInstance::RenderRoIRetCode ret = treeRecurseFunctor(false,
-                                                              node,
-                                                              fvRequest->globalData.frameViewsNeeded,
-                                                              fvPerRequestData.inputsRoi,
-                                                              fvRequest->globalData.transforms,
-                                                              useTransforms,
-                                                              eStorageModeRAM /*returnStorage*/,
-                                                              originalMipmapLevel,
-                                                              time,
-                                                              view,
-                                                              treeRoot,
-                                                              &requests,
-                                                              0,
-                                                              0,
-                                                              false,
-                                                              false);
+                                           node,
+                                           fvRequest->globalData.frameViewsNeeded,
+                                           fvPerRequestData.inputsRoi,
+                                           fvRequest->globalData.transforms,
+                                           useTransforms,
+                                           eStorageModeRAM /*returnStorage*/,
+                                           originalMipmapLevel,
+                                           time,
+                                           view,
+                                           treeRoot,
+                                           &requests,
+                                           0,
+                                           0,
+                                           false,
+                                           false);
+
     if (ret == EffectInstance::eRenderRoIRetCodeFailed) {
         return eStatusFailed;
     }
@@ -582,13 +626,13 @@ EffectInstance::computeRequestPass(double time,
     return eStatusOK;
 }
 
-const FrameViewRequest*
+const FrameViewRequest *
 NodeFrameRequest::getFrameViewRequest(double time,
                                       ViewIdx view) const
 {
     for (NodeFrameViewRequestData::const_iterator it = frames.begin(); it != frames.end(); ++it) {
         if (it->first.time == time) {
-            if ( (it->first.view == -1) || (it->first.view == view) ) {
+            if ((it->first.view == -1) || (it->first.view == view)) {
                 return &it->second;
             }
         }
@@ -599,21 +643,21 @@ NodeFrameRequest::getFrameViewRequest(double time,
 
 bool
 NodeFrameRequest::getFrameViewCanonicalRoI(double time,
-                                           ViewIdx view,
-                                           RectD* roi) const
+        ViewIdx view,
+        RectD* roi) const
 {
     const FrameViewRequest* fv = getFrameViewRequest(time, view);
 
     if (!fv) {
         return false;
     }
+
     *roi = fv->finalData.finalRoi;
 
     return true;
 }
 
-struct FindDependenciesNode
-{
+struct FindDependenciesNode {
     bool recursed;
     int visitCounter;
 
@@ -622,7 +666,7 @@ struct FindDependenciesNode
 };
 
 
-typedef std::map<NodePtr,FindDependenciesNode> FindDependenciesMap;
+typedef std::map<NodePtr, FindDependenciesNode> FindDependenciesMap;
 
 
 /**
@@ -631,18 +675,19 @@ typedef std::map<NodePtr,FindDependenciesNode> FindDependenciesMap;
  **/
 static void
 getAllUpstreamNodesRecursiveWithDependencies_internal(const NodePtr& node,
-                                                      FindDependenciesMap& finalNodes)
+        FindDependenciesMap& finalNodes)
 {
     //There may be cases where nodes gets added to the finalNodes in getAllExpressionDependenciesRecursive(), but we still
     //want to recurse upstream for them too
     bool foundButDidntRecursivelyCallUpstream = false;
 
-    if ( !node || !node->isNodeCreated() ) {
+    if (!node || !node->isNodeCreated()) {
         return;
     }
 
     {
         FindDependenciesMap::iterator found = finalNodes.find(node);
+
         if (found != finalNodes.end()) {
             if (found->second.recursed) {
                 ++found->second.visitCounter;
@@ -656,13 +701,13 @@ getAllUpstreamNodesRecursiveWithDependencies_internal(const NodePtr& node,
 
         }
     }
-    
+
     {
         //Add this node to the set
         FindDependenciesNode n;
         n.recursed = true;
         n.visitCounter = 1;
-        finalNodes.insert(std::make_pair(node,n));
+        finalNodes.insert(std::make_pair(node, n));
     }
 
     //If we already called it, don't do it again
@@ -680,8 +725,10 @@ getAllUpstreamNodesRecursiveWithDependencies_internal(const NodePtr& node,
     }
 
     int maxInputs = node->getNInputs();
+
     for (int i = 0; i < maxInputs; ++i) {
         NodePtr inputNode = node->getInput(i);
+
         if (inputNode) {
             getAllUpstreamNodesRecursiveWithDependencies_internal(inputNode, finalNodes);
         }
@@ -690,30 +737,20 @@ getAllUpstreamNodesRecursiveWithDependencies_internal(const NodePtr& node,
 
 
 ParallelRenderArgsSetter::ParallelRenderArgsSetter(double time,
-                                                   ViewIdx view,
-                                                   bool isRenderUserInteraction,
-                                                   bool isSequential,
-                                                   const AbortableRenderInfoPtr& abortInfo,
-                                                   const NodePtr& treeRoot,
-                                                   int textureIndex,
-                                                   const TimeLine* timeline,
-                                                   const NodePtr& activeRotoPaintNode,
-                                                   bool isAnalysis,
-                                                   bool draftMode,
-                                                   const RenderStatsPtr& stats)
+        ViewIdx view,
+        bool isRenderUserInteraction,
+        bool isSequential,
+        const AbortableRenderInfoPtr& abortInfo,
+        const NodePtr& treeRoot,
+        int textureIndex,
+        const TimeLine* timeline,
+        const NodePtr& activeRotoPaintNode,
+        bool isAnalysis,
+        bool draftMode,
+        const RenderStatsPtr& stats)
     :  argsMap()
 {
     assert(treeRoot);
-
-    // Ensure this thread gets an OpenGL context for the render of the frame
-    OSGLContextPtr glContext;
-    try {
-        glContext = appPTR->getGPUContextPool()->attachGLContextToRender();
-    } catch (const std::exception& /*e*/) {
-
-    }
-
-    _openGLContext = glContext;
 
 
     bool doNanHandling = appPTR->getCurrentSettings()->isNaNHandlingEnabled();
@@ -731,9 +768,9 @@ ParallelRenderArgsSetter::ParallelRenderArgsSetter(double time,
         assert(liveInstance);
         bool duringPaintStrokeCreation = activeRotoPaintNode && node->isDuringPaintStrokeCreation();
         RenderSafetyEnum safety = node->getCurrentRenderThreadSafety();
-        PluginOpenGLRenderSupport glSupport = node->getCurrentOpenGLRenderSupport();
         NodesList rotoPaintNodes;
         RotoContextPtr roto = node->getRotoContext();
+
         if (roto) {
             roto->getRotoPaintTreeNodes(&rotoPaintNodes);
         }
@@ -741,8 +778,9 @@ ParallelRenderArgsSetter::ParallelRenderArgsSetter(double time,
         {
             U64 nodeHash = node->getHashValue();
             liveInstance->setParallelRenderArgsTLS(time, view, isRenderUserInteraction, isSequential, nodeHash,
-                                                   abortInfo, treeRoot, it->second.visitCounter, NodeFrameRequestPtr(), glContext,  textureIndex, timeline, isAnalysis, duringPaintStrokeCreation, rotoPaintNodes, safety, glSupport, doNanHandling, draftMode, stats);
+                                                   abortInfo, treeRoot, it->second.visitCounter, NodeFrameRequestPtr(),  textureIndex, timeline, isAnalysis, duringPaintStrokeCreation, rotoPaintNodes, safety, doNanHandling, draftMode, stats);
         }
+
         for (NodesList::iterator it2 = rotoPaintNodes.begin(); it2 != rotoPaintNodes.end(); ++it2) {
             U64 nodeHash = (*it2)->getHashValue();
 
@@ -751,14 +789,15 @@ ParallelRenderArgsSetter::ParallelRenderArgsSetter(double time,
             (*it2)->getOutputs_mt_safe(outputs);
             int visitsCounter = (int)outputs.size();
 
-            (*it2)->getEffectInstance()->setParallelRenderArgsTLS(time, view, isRenderUserInteraction, isSequential, nodeHash, abortInfo, treeRoot, visitsCounter, NodeFrameRequestPtr(), glContext, textureIndex, timeline, isAnalysis, activeRotoPaintNode && (*it2)->isDuringPaintStrokeCreation(), NodesList(), (*it2)->getCurrentRenderThreadSafety(),  (*it2)->getCurrentOpenGLRenderSupport(),doNanHandling, draftMode, stats);
+            (*it2)->getEffectInstance()->setParallelRenderArgsTLS(time, view, isRenderUserInteraction, isSequential, nodeHash, abortInfo, treeRoot, visitsCounter, NodeFrameRequestPtr(), textureIndex, timeline, isAnalysis, activeRotoPaintNode && (*it2)->isDuringPaintStrokeCreation(), NodesList(), (*it2)->getCurrentRenderThreadSafety(), doNanHandling, draftMode, stats);
         }
 
-        if ( node->isMultiInstance() ) {
+        if (node->isMultiInstance()) {
             ///If the node has children, set the thread-local storage on them too, even if they do not render, it can be useful for expressions
             ///on parameters.
             NodesList children;
             node->getChildrenMultiInstance(&children);
+
             for (NodesList::iterator it2 = children.begin(); it2 != children.end(); ++it2) {
                 U64 nodeHash = (*it2)->getHashValue();
 
@@ -766,8 +805,7 @@ ParallelRenderArgsSetter::ParallelRenderArgsSetter(double time,
                 EffectInstancePtr childLiveInstance = (*it2)->getEffectInstance();
                 assert(childLiveInstance);
                 RenderSafetyEnum childSafety = (*it2)->getCurrentRenderThreadSafety();
-                PluginOpenGLRenderSupport childGlSupport = (*it2)->getCurrentOpenGLRenderSupport();
-                childLiveInstance->setParallelRenderArgsTLS(time, view, isRenderUserInteraction, isSequential, nodeHash, abortInfo, treeRoot, 1, NodeFrameRequestPtr(), glContext, textureIndex, timeline, isAnalysis, false, NodesList(), childSafety, childGlSupport, doNanHandling, draftMode, stats);
+                childLiveInstance->setParallelRenderArgsTLS(time, view, isRenderUserInteraction, isSequential, nodeHash, abortInfo, treeRoot, 1, NodeFrameRequestPtr(), textureIndex, timeline, isAnalysis, false, NodesList(), childSafety, doNanHandling, draftMode, stats);
             }
         }
 
@@ -785,32 +823,37 @@ ParallelRenderArgsSetter::updateNodesRequest(const FrameRequestMap& request)
     for (NodesList::iterator it = nodes.begin(); it != nodes.end(); ++it) {
         {
             FrameRequestMap::const_iterator foundRequest = request.find(*it);
-            if ( foundRequest != request.end() ) {
+
+            if (foundRequest != request.end()) {
                 (*it)->getEffectInstance()->setNodeRequestThreadLocal(foundRequest->second);
             }
         }
 
         NodesList rotoPaintNodes;
         RotoContextPtr roto = (*it)->getRotoContext();
+
         if (roto) {
             roto->getRotoPaintTreeNodes(&rotoPaintNodes);
         }
 
         for (NodesList::iterator it2 = rotoPaintNodes.begin(); it2 != rotoPaintNodes.end(); ++it2) {
             FrameRequestMap::const_iterator foundRequest = request.find(*it2);
-            if ( foundRequest != request.end() ) {
+
+            if (foundRequest != request.end()) {
                 (*it2)->getEffectInstance()->setNodeRequestThreadLocal(foundRequest->second);
             }
         }
 
-        if ( (*it)->isMultiInstance() ) {
+        if ((*it)->isMultiInstance()) {
             ///If the node has children, set the thread-local storage on them too, even if they do not render, it can be useful for expressions
             ///on parameters.
             NodesList children;
             (*it)->getChildrenMultiInstance(&children);
+
             for (NodesList::iterator it2 = children.begin(); it2 != children.end(); ++it2) {
                 FrameRequestMap::const_iterator foundRequest = request.find(*it2);
-                if ( foundRequest != request.end() ) {
+
+                if (foundRequest != request.end()) {
                     (*it2)->getEffectInstance()->setNodeRequestThreadLocal(foundRequest->second);
                 }
             }
@@ -818,21 +861,12 @@ ParallelRenderArgsSetter::updateNodesRequest(const FrameRequestMap& request)
     }
 }
 
-ParallelRenderArgsSetter::ParallelRenderArgsSetter(const std::shared_ptr<std::map<NodePtr, ParallelRenderArgsPtr> >& args)
+ParallelRenderArgsSetter::ParallelRenderArgsSetter(const std::shared_ptr<std::map<NodePtr, ParallelRenderArgsPtr> > &args)
     : argsMap(args)
 {
-    // Ensure this thread gets an OpenGL context for the render of the frame
-    OSGLContextPtr glContext;
-
-    try {
-        glContext = appPTR->getGPUContextPool()->attachGLContextToRender();
-        _openGLContext = glContext;
-    } catch (...) {
-    }
 
     if (args) {
         for (std::map<NodePtr, ParallelRenderArgsPtr>::iterator it = argsMap->begin(); it != argsMap->end(); ++it) {
-            it->second->openGLContext = glContext;
             it->first->getEffectInstance()->setParallelRenderArgsTLS(it->second);
         }
     }
@@ -841,16 +875,18 @@ ParallelRenderArgsSetter::ParallelRenderArgsSetter(const std::shared_ptr<std::ma
 ParallelRenderArgsSetter::~ParallelRenderArgsSetter()
 {
     for (NodesList::iterator it = nodes.begin(); it != nodes.end(); ++it) {
-        if ( !(*it) || !(*it)->getEffectInstance() ) {
+        if (!(*it) || !(*it)->getEffectInstance()) {
             continue;
         }
+
         (*it)->getEffectInstance()->invalidateParallelRenderArgsTLS();
 
-        if ( (*it)->isMultiInstance() ) {
+        if ((*it)->isMultiInstance()) {
             ///If the node has children, set the thread-local storage on them too, even if they do not render, it can be useful for expressions
             ///on parameters.
             NodesList children;
             (*it)->getChildrenMultiInstance(&children);
+
             for (NodesList::iterator it2 = children.begin(); it2 != children.end(); ++it2) {
                 (*it2)->getEffectInstance()->invalidateParallelRenderArgsTLS();
             }
@@ -868,11 +904,6 @@ ParallelRenderArgsSetter::~ParallelRenderArgsSetter()
         }
     }
 
-    OSGLContextPtr glContext = _openGLContext.lock();
-    if (glContext) {
-        // This render is going to end, release the OpenGL context so that another frame render may use it
-        appPTR->getGPUContextPool()->releaseGLContextFromRender(glContext);
-    }
 }
 
 ParallelRenderArgs::ParallelRenderArgs()
@@ -886,10 +917,8 @@ ParallelRenderArgs::ParallelRenderArgs()
     , visitsCount(0)
     , rotoPaintNodes()
     , stats()
-    , openGLContext()
     , textureIndex(0)
     , currentThreadSafety(eRenderSafetyInstanceSafe)
-    , currentOpenglSupport(ePluginOpenGLRenderSupportNone)
     , isRenderResponseToUserInteraction(false)
     , isSequentialRender(false)
     , isAnalysis(false)
@@ -905,7 +934,7 @@ ParallelRenderArgs::isCurrentFrameRenderNotAbortable() const
 {
     AbortableRenderInfoPtr info = abortInfo.lock();
 
-    return isRenderResponseToUserInteraction && ( !info || !info->canAbort() );
+    return isRenderResponseToUserInteraction && (!info || !info->canAbort());
 }
 
 NATRON_NAMESPACE_EXIT

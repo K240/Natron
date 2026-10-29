@@ -1,0 +1,51 @@
+#usda 1.0
+(
+    defaultPrim = "Asset"
+)
+def Xform "Asset" (
+    variants = { string look = "blue" }
+    prepend variantSets = "look"
+)
+{
+    def Material "Surface"
+    {
+        token outputs:surface.connect = </Asset/Surface/Shader.outputs:surface>
+        def Shader "Shader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            token outputs:surface
+        }
+    }
+    def Mesh "Panel" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        point3f[] points = [(-0.8,-0.8,0),(0.8,-0.8,0),(0.8,0.8,0),(-0.8,0.8,0)]
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0,1,2,3]
+        uniform token subdivisionScheme = "none"
+        normal3f[] normals = [(0,0,1)] ( interpolation = "constant" )
+        texCoord2f[] primvars:st = [(0,0),(1,0),(1,1),(0,1)] ( interpolation = "faceVarying" )
+        int[] primvars:st:indices = [0,1,2,3]
+        rel material:binding = </Asset/Surface>
+    }
+    variantSet "look" = {
+        "blue" {
+            over "Surface" {
+                over "Shader" {
+                    color3f inputs:diffuseColor = (0.2,0.5,1)
+                    float inputs:roughness = 0.7
+                }
+            }
+        }
+        "gold" {
+            over "Surface" {
+                over "Shader" {
+                    color3f inputs:diffuseColor = (1,0.7,0.2)
+                    float inputs:metallic = 1
+                    float inputs:roughness = 0.45
+                }
+            }
+        }
+    }
+}

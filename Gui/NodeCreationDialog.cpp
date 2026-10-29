@@ -36,9 +36,8 @@ CLANG_DIAG_OFF(uninitialized)
 #include <QTimer>
 #include <QApplication>
 #include <QListView>
-#include <QSettings>
-#include <QDesktopWidget>
-#include <QRegExp>
+#include "Global/AppSettings.h"
+#include <QRegularExpression>
 #include <QApplication>
 #include <QStringListModel>
 CLANG_DIAG_ON(deprecated)
@@ -151,13 +150,13 @@ CompleterLineEdit::filterText(const QString & txt)
             pattern.push_back(txt[i]);
         }
         pattern.push_back( QLatin1Char('*') );
-        QRegExp expr(pattern, Qt::CaseInsensitive, QRegExp::WildcardUnix);
+        QRegularExpression expr(QRegularExpression::wildcardToRegularExpression(pattern, QRegularExpression::NonPathWildcardConversion), QRegularExpression::CaseInsensitiveOption);
 
 #ifdef NODE_TAB_DIALOG_USE_MATCHED_LENGTH
         std::map<int, QStringList> matchOrdered;
         for (PluginsNamesMap::iterator it = _imp->names.begin(); it != _imp->names.end(); ++it) {
-            if ( expr.exactMatch(it->second.first) ) {
-                QStringList& matchedForLength =  matchOrdered[expr.matchedLength()];
+            if ( expr.match(it->second.first).hasMatch() ) {
+                QStringList& matchedForLength =  matchOrdered[expr.match(it->second.first).capturedLength()];
                 matchedForLength.push_front(it->second.second);
             }
         }
@@ -167,7 +166,7 @@ CompleterLineEdit::filterText(const QString & txt)
 #else
 
         for (PluginsNamesMap::iterator it = _imp->names.begin(); it != _imp->names.end(); ++it) {
-            if ( it->second.first.contains(expr) ) {
+            if ( expr.match(it->second.first).hasMatch() ) {
                 sl.push_front(it->second.second);
             }
         }
@@ -345,7 +344,7 @@ static int
 getPluginWeight(const QString& pluginID,
                 int majVersion)
 {
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+    AppSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
     QString propName( pluginID + QString::number(majVersion) + QString::fromUtf8("_tab_weight") );
     int curValue = settings.value( propName, QVariant(0) ).toInt();
 
@@ -356,7 +355,7 @@ static void
 incrementPluginWeight(const QString& pluginID,
                       int majVersion)
 {
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+    AppSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
     QString propName( pluginID + QString::number(majVersion) + QString::fromUtf8("_tab_weight") );
     int curValue = settings.value( propName, QVariant(0) ).toInt();
 

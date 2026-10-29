@@ -32,11 +32,13 @@
 #include <vector>
 #include <utility>
 
-#include "Global/GLIncludes.h" //!<must be included before QGlWidget because of gl.h and glew.h
 
 #include <QSize>
 
-#include <QOpenGLWidget>
+#include <QWidget>
+#include <QImage>
+#include <QRectF>
+#include <QVariantMap>
 
 #include "Global/QtCompat.h"
 
@@ -49,33 +51,72 @@
 
 NATRON_NAMESPACE_ENTER
 
+namespace Gpu
+{
+class VulkanImage;
+}
+
 /**
  *@class ViewerGL
  *@brief The main viewport. This class is part of the ViewerTab GUI and handles all
- * OpenGL related code as well as user events.
+ * Vulkan presentation and user events.
  **/
 class ViewerGL
-    : public QOpenGLWidget, public OpenGLViewerI
+    : public QWidget, public OpenGLViewerI
 {
-GCC_DIAG_SUGGEST_OVERRIDE_OFF
+    GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
-GCC_DIAG_SUGGEST_OVERRIDE_ON
+    GCC_DIAG_SUGGEST_OVERRIDE_ON
+    Q_PROPERTY(QString graphicsBackend READ graphicsBackend)
+    Q_PROPERTY(QString graphicsError READ graphicsError)
+    Q_PROPERTY(QString gpuDeviceName READ gpuDeviceName)
+    Q_PROPERTY(qulonglong presentedFrames READ presentedFrames)
+    Q_PROPERTY(qulonglong sharedDeviceId READ sharedDeviceId)
+    Q_PROPERTY(qulonglong engineDeviceId READ engineDeviceId)
+    Q_PROPERTY(qulonglong nativeImageTransfers READ nativeImageTransfers)
+    Q_PROPERTY(uint validationErrors READ validationErrors)
+    Q_PROPERTY(bool nodeOverlaysAvailable READ supportsNodeOverlays)
+    Q_PROPERTY(qulonglong nodeOverlayCommandCount READ nodeOverlayCommandCount)
+    Q_PROPERTY(QStringList nodeOverlayStatus READ nodeOverlayStatus)
+    Q_PROPERTY(double zoomFactor READ getZoomFactor)
+    Q_PROPERTY(QRectF canonicalViewport READ canonicalViewport)
+    Q_PROPERTY(QVariantMap lastPresentation READ lastPresentation)
 
 public:
 
 
-    /*3 different constructors, that all take a different parameter related to OpenGL or Qt widget parenting.
-       When constructing a viewer for the 1st time in the app, you must pass a NULL shareWidget. Otherwise,you
-       can pass a pointer to the 1st viewer you created. It allows the viewers to share the same OpenGL context.
-     */
+    // Viewer instances share the same Vulkan device.
     explicit ViewerGL(ViewerTab* parent,
-                      const QOpenGLWidget* shareWidget = NULL);
+                      const QWidget* shareWidget = NULL);
 
 
     virtual ~ViewerGL() OVERRIDE;
+    bool supportsNativeImageTransfer() const OVERRIDE FINAL;
+    QString graphicsBackend() const;
+    QString graphicsError() const;
+    QString gpuDeviceName() const;
+    qulonglong presentedFrames() const;
+    qulonglong engineDeviceId() const;
+    qulonglong nativeImageTransfers() const;
+    qulonglong sharedDeviceId() const;
+    uint validationErrors() const;
+    QRectF canonicalViewport() const;
+    QVariantMap lastPresentation() const;
+    bool supportsNodeOverlays() const
+    {
+        return true;
+    }
+    qulonglong nodeOverlayCommandCount() const;
+    QStringList nodeOverlayStatus() const;
+    bool supportsOverlayDrawList() const OVERRIDE FINAL
+    {
+        return true;
+    }
+    OverlayDrawList *overlayDrawList() OVERRIDE FINAL;
+    Q_INVOKABLE QImage grabFrame();
 
     virtual QSize sizeHint() const OVERRIDE FINAL;
-    const QFont & textFont() const;
+    const QFont &textFont() const;
 
     /**
      *@returns Returns true if the viewer is displaying something.
@@ -87,7 +128,7 @@ public:
      *@returns Returns a const reference to the dataWindow of the currentFrame(BBOX) in canonical coordinates
      **/
     // MT-SAFE: used only by the main-thread, can return a const ref
-    const RectD& getRoD(int textureIndex) const;
+    const RectD &getRoD(int textureIndex) const;
 
 
     /**
@@ -104,7 +145,7 @@ public:
 
     /**
      *@brief Hack to allow the resizeEvent to be publicly used elsewhere.
-     * It calls QOpenGLWidget::resizeEvent(QResizeEvent*).
+     * It calls QWidget::resizeEvent(QResizeEvent*).
      **/
     virtual void resizeEvent(QResizeEvent* e) OVERRIDE FINAL;
 
@@ -128,7 +169,7 @@ public:
      **/
     virtual RectI getImageRectangleDisplayed(const RectI & imageRoD, const double par, unsigned int mipmapLevel) OVERRIDE FINAL;
     virtual RectI getExactImageRectangleDisplayed(int texIndex, const RectD & rod, const double par, unsigned int mipmapLevel) OVERRIDE FINAL;
-    virtual RectI getImageRectangleDisplayedRoundedToTileSize(int texIndex, const RectD & rod, const double par, unsigned int mipmapLevel, std::vector<RectI>* tiles, std::vector<RectI>* tilesRounded, int *tileSize, RectI* roiNotRounded) OVERRIDE FINAL WARN_UNUSED_RETURN;
+    virtual RectI getImageRectangleDisplayedRoundedToTileSize(int texIndex, const RectD & rod, const double par, unsigned int mipmapLevel, std::vector<RectI> *tiles, std::vector<RectI> *tilesRounded, int *tileSize, RectI* roiNotRounded) OVERRIDE FINAL WARN_UNUSED_RETURN;
     /**
      *@brief Set the pointer to the InfoViewerWidget. This is called once after creation
      * of the ViewerGL.
@@ -157,11 +198,7 @@ public:
     /**
      *@brief Copies the data stored in the  RAM buffer into the currently
      * used texture.
-     * It does:
-     * 1) glMapBuffer
-     * 2) memcpy to copy data from RAM to GPU
-     * 3) glUnmapBuffer
-     * 4) glTexSubImage2D or glTexImage2D depending whether we resize the texture or not.
+     * Tiles are uploaded through Vulkan staging buffers.
      **/
     virtual void transferBufferFromRAMtoGPU(const unsigned char* ramBuffer,
                                             size_t bytesCount,
@@ -171,23 +208,25 @@ public:
                                             int textureIndex,
                                             bool isPartialRect,
                                             bool isFirstTile,
-                                            TexturePtr* texture) OVERRIDE FINAL;
+                                            ViewerFrameTexturePtr* texture) OVERRIDE FINAL;
+    virtual bool transferImageFromGPU(const UpdateViewerParams& params,
+                                      ViewerFrameTexturePtr* texture) OVERRIDE FINAL;
     virtual void endTransferBufferFromRAMToGPU(int textureIndex,
-                                               const TexturePtr& texture,
-                                               const ImagePtr& image,
-                                               int time,
-                                               const RectD& rod,
-                                               double par,
-                                               ImageBitDepthEnum depth,
-                                               unsigned int mipmapLevel,
-                                               ImagePremultiplicationEnum premult,
-                                               double gain,
-                                               double gamma,
-                                               double offset,
-                                               int lut,
-                                               bool recenterViewer,
-                                               const Point& viewportCenter,
-                                               bool isPartialRect) OVERRIDE FINAL;
+            const ViewerFrameTexturePtr& texture,
+            const ImagePtr& image,
+            int time,
+            const RectD& rod,
+            double par,
+            ImageBitDepthEnum depth,
+            unsigned int mipmapLevel,
+            ImagePremultiplicationEnum premult,
+            double gain,
+            double gamma,
+            double offset,
+            int lut,
+            bool recenterViewer,
+            const Point& viewportCenter,
+            bool isPartialRect) OVERRIDE FINAL;
     virtual void clearLastRenderedImage() OVERRIDE FINAL;
     virtual void disconnectInputTexture(int textureIndex, bool clearRoD) OVERRIDE FINAL;
 
@@ -226,6 +265,7 @@ public:
     }
 
 public Q_SLOTS:
+    void update();
 
 
     /**
@@ -328,7 +368,7 @@ public:
     /**
      * @brief Returns the pixel scale of the viewport.
      **/
-    virtual void getPixelScale(double & xScale, double & yScale) const OVERRIDE FINAL;
+    virtual void getPixelScale(double &xScale, double &yScale) const OVERRIDE FINAL;
 
 #ifdef OFX_EXTENSIONS_NATRON
     virtual double getScreenPixelRatio() const OVERRIDE FINAL;
@@ -346,7 +386,7 @@ public:
     virtual void toWidgetCoordinates(double *x,
                                      double *y) const OVERRIDE FINAL
     {
-        QPointF p = toWidgetCoordinates( QPointF(*x, *y) );
+        QPointF p = toWidgetCoordinates(QPointF(*x, *y));
 
         *x = p.x();
         *y = p.y();
@@ -358,7 +398,7 @@ public:
     virtual void toCanonicalCoordinates(double *x,
                                         double *y) const OVERRIDE FINAL
     {
-        QPointF p = toZoomCoordinates( QPointF(*x, *y) );
+        QPointF p = toZoomCoordinates(QPointF(*x, *y));
 
         *x = p.x();
         *y = p.y();
@@ -373,8 +413,8 @@ public:
      * @brief Returns for a string the estimated pixel size it would take on the widget
      **/
     virtual int getStringWidthForCurrentFont(const std::string& string) const OVERRIDE FINAL WARN_UNUSED_RETURN;
-    ViewerInstance* getInternalNode() const;
-    ViewerTab* getViewerTab() const;
+    ViewerInstance *getInternalNode() const;
+    ViewerTab *getViewerTab() const;
 
     /**
      * @brief Returns the viewport visible portion in canonical coordinates
@@ -384,8 +424,8 @@ public:
     /**
      * @brief Returns the cursor position in canonical coordinates
      **/
-    virtual void getCursorPosition(double& x, double& y) const OVERRIDE FINAL;
-    virtual ViewerInstance* getInternalViewerNode() const OVERRIDE FINAL;
+    virtual void getCursorPosition(double &x, double &y) const OVERRIDE FINAL;
+    virtual ViewerInstance *getInternalViewerNode() const OVERRIDE FINAL;
 
     /**
      * @brief can only be called on the main-thread
@@ -435,11 +475,11 @@ public:
      * @return true if the point is inside the image and colors were set
      **/
     bool getColorAt(double x, double y, bool forceLinear, int textureIndex, float* r,
-                    float* g, float* b, float* a, unsigned int* mipmapLevel) WARN_UNUSED_RETURN;
+                    float *g, float *b, float *a, unsigned int *mipmapLevel) WARN_UNUSED_RETURN;
 
     // same as getColor, but computes the mean over a given rectangle
     bool getColorAtRect(const RectD &rect, // rectangle in canonical coordinates
-                        bool forceLinear, int textureIndex, float* r, float* g, float* b, float* a, unsigned int* mipmapLevel);
+                        bool forceLinear, int textureIndex, float *r, float *g, float *b, float *a, unsigned int *mipmapLevel);
 
 
     virtual unsigned int getCurrentMipmapLevel() const OVERRIDE FINAL;
@@ -463,6 +503,10 @@ public:
     }
 
 Q_SIGNALS:
+    // Profile-only observation after the current input times reach the display
+    // render path. Native frames complete present submission/queue wait; raster
+    // frames complete QPainter drawing. Neither confirms physical scanout.
+    void framePresented(QVariantMap metadata);
 
     /**
      *@brief Signal emitted when the current zoom factor changed.
@@ -485,10 +529,19 @@ Q_SIGNALS:
     void selectionCleared();
 
 private:
+    void flushOverlayFocusNotifications();
+
     /**
      *@brief The paint function. That's where all the drawing is done.
      **/
-    virtual void paintGL() OVERRIDE FINAL;
+    virtual void paintEvent(QPaintEvent* e) OVERRIDE FINAL;
+    virtual bool eventFilter(QObject* watched, QEvent* e) OVERRIDE FINAL;
+    void initializeVulkan();
+    void activateRasterDisplay(const QString& reason);
+    void recoverVulkanDisplay(const QString& reason);
+    void renderVulkanFrame(Gpu::VulkanImage& destination);
+    void renderViewerFrame(Gpu::VulkanImage* destination);
+    void drawRasterOverlays(QImage& image);
     virtual void mousePressEvent(QMouseEvent* e) OVERRIDE FINAL;
     virtual void mouseDoubleClickEvent(QMouseEvent* e) OVERRIDE FINAL;
     virtual void mouseReleaseEvent(QMouseEvent* e) OVERRIDE FINAL;
@@ -501,14 +554,9 @@ private:
     virtual void tabletEvent(QTabletEvent* e) OVERRIDE FINAL;
 
     /**
-     *@brief initializes OpenGL context related stuff. This is called once after widget creation.
-     **/
-    virtual void initializeGL() OVERRIDE FINAL;
-
-    /**
      *@brief Handles the resizing of the viewer
      **/
-    virtual void resizeGL(int width, int height) OVERRIDE FINAL;
+    void resizeViewport(int width, int height);
 
 private:
 
@@ -518,65 +566,12 @@ private:
 
     bool penMotionInternal(int x, int y, double pressure, double timestamp, QInputEvent* event);
 
-    /**
-     * @brief Returns the OpenGL handle of the PBO at the given index.
-     * If PBO at the given index doesn't exist, this function will create it.
-     **/
-    GLuint getPboID(int index);
-
-
     void populateMenu();
-
-    /**
-     *@brief Prints a message if the current frame buffer is incomplete.
-     * where will be printed to indicate a function. If silent is off,
-     * this function will report even when the frame buffer is complete.
-     **/
-    void checkFrameBufferCompleteness(const char where[], bool silent = true);
-
-    /**
-     *@brief Initialises shaders. If they were initialized ,returns instantly.
-     **/
-    void initShaderGLSL(); // init shaders
-
-
-    enum DrawPolygonModeEnum
-    {
-        eDrawPolygonModeWhole = 0,
-        eDrawPolygonModeWipeLeft,
-        eDrawPolygonModeWipeRight
-    };
 
     /**
      *@brief Makes the viewer display black only.
      **/
     void clearViewer();
-
-    /**
-     *@brief Returns !=0 if the extension given by its name is supported by this OpenGL version.
-     **/
-    int isExtensionSupported(const char* extension);
-
-    /**
-     *@brief Called inside paintGL(). It will draw all the overlays.
-     **/
-    void drawOverlay(unsigned int mipmapLevel);
-
-    /**
-     * @brief Called by drawOverlay to draw the user region of interest.
-     **/
-    void drawUserRoI(double screenPixelRatio);
-
-    void drawPickerRectangle(double screenPixelRatio);
-
-    void drawPickerPixel(double screenPixelRatio);
-
-    void drawWipeControl(double screenPixelRatio);
-
-    /**
-     *@brief Draws the persistent message if it is on.
-     **/
-    void drawPersistentMessage();
 
     bool isNearByUserRoITopEdge(const RectD & roi,
                                 const QPointF & zoomPos,
@@ -609,12 +604,12 @@ private:
                                      const QPoint & widgetPos);
 
     void updateInfoWidgetColorPickerInternal(const QPointF & imgPos,
-                                             const QPoint & widgetPos,
-                                             int width,
-                                             int height,
-                                             const RectD & rod, // in canonical coordinates
-                                             const RectD & dispW, // in canonical coordinates
-                                             int texIndex);
+            const QPoint & widgetPos,
+            int width,
+            int height,
+            const RectD & rod, // in canonical coordinates
+            const RectD & dispW, // in canonical coordinates
+            int texIndex);
     void updateRectangleColorPicker();
     void updateRectangleColorPickerInternal();
 
@@ -630,6 +625,7 @@ private:
 
 private:
     struct Implementation;
+    void recordPresentation(qulonglong serial);
     std::unique_ptr<Implementation> _imp; // PIMPL: hide implementation details
 };
 

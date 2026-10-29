@@ -39,6 +39,8 @@ CLANG_DIAG_ON(uninitialized)
 
 NATRON_NAMESPACE_ENTER
 
+class OverlayDrawList;
+
 /**
  * @class An abstract interface for overlay holders. Any OpenGL widget capable of drawing overlays should
  * implement this interface.
@@ -47,6 +49,9 @@ NATRON_NAMESPACE_ENTER
 class OverlaySupport
 {
 public:
+
+    virtual bool supportsOverlayDrawList() const { return false; }
+    virtual OverlayDrawList* overlayDrawList() { return nullptr; }
 
     OverlaySupport()
     {

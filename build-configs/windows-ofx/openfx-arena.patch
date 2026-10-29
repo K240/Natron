@@ -1,0 +1,515 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 88fa919..0745ee7 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -24,7 +24,7 @@ ENDIF(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
+ ########################################################################
+ # Project setup
+ ########################################################################
+-CMAKE_MINIMUM_REQUIRED(VERSION 3.1)
++CMAKE_MINIMUM_REQUIRED(VERSION 3.24)
+ PROJECT(Arena CXX)
+ ENABLE_TESTING()
+ 
+@@ -36,14 +36,6 @@ option(BUNDLE_FONTS_CONF "Bundle fonts.conf" OFF)
+ option(READMISC_LEGACY "Enable legacy file formats in ReadMisc" OFF)
+ set(MAGICK_PKG_CONFIG "Magick++" CACHE STRING "ImageMagick pkg-config name")
+ 
+-# Require OpenGL
+-if(POLICY CMP0072)
+-    # prefer GLVND ABI. We use the compatibility via OPENGL_LIBRARIES variable
+-    # see https://cmake.org/cmake/help/v3.11/policy/CMP0072.html
+-    # see https://cmake.org/cmake/help/v3.11/module/FindOpenGL.html#linux-specific
+-    cmake_policy(SET CMP0072 NEW)
+-endif()
+-include(FindOpenGL REQUIRED)
+ 
+ # not super portable, but will do for now:
+ find_package(PkgConfig REQUIRED)
+@@ -79,7 +71,7 @@ if(${HALDCLUT})
+     pkg_search_module(CURL REQUIRED libcurl)
+ endif()
+ 
+-set (CMAKE_CXX_STANDARD 11)
++set (CMAKE_CXX_STANDARD 17)
+ 
+ # Use -Ofast when applicable (implies -ffast-math)
+ if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
+@@ -268,12 +260,10 @@ TARGET_COMPILE_DEFINITIONS(
+     OFX_EXTENSIONS_NUKE
+     OFX_EXTENSIONS_NATRON
+     OFX_EXTENSIONS_TUTTLE
+-    OFX_SUPPORTS_OPENGLRENDER
++   
+     NOMINMAX
+ )
+ # use compatibiltiy/legacy ABI also on systems based on GLVND
+-TARGET_LINK_LIBRARIES(${PROJECT_NAME} ${OPENGL_LIBRARIES})
+-#TARGET_LINK_LIBRARIES(${PROJECT_NAME} ${OPENGL_gl_LIBRARY})
+ 
+ include_directories(
+     ${MAGICK_INCLUDE_DIRS}
+diff --git a/Magick/Text.cpp b/Magick/Text.cpp
+index 5528b7b..415f87f 100644
+--- a/Magick/Text.cpp
++++ b/Magick/Text.cpp
+@@ -16,6 +16,7 @@
+  * along with openfx-arena.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ */
+ 
++#include "NatronOverlayInteract.h"
+ #include "MagickCommon.h"
+ 
+ #include "ofxsPositionInteract.h"
+@@ -646,7 +647,7 @@ void TextPluginFactory::describe(OFX::ImageEffectDescriptor &desc)
+     desc.setSupportsMultiResolution(kSupportsMultiResolution);
+     desc.setRenderThreadSafety(kRenderThreadSafety);
+     desc.setHostFrameThreading(kHostFrameThreading);
+-    desc.setOverlayInteractDescriptor(new PositionOverlayDescriptor<PositionInteractParam>);
++    NatronOFX::setOverlay(desc, new PositionOverlayDescriptor<PositionInteractParam>);
+ 
+     desc.setIsDeprecated(true);
+ }
+diff --git a/OCL/Bulge/Bulge.cpp b/OCL/Bulge/Bulge.cpp
+index abc3100..ed0c291 100644
+--- a/OCL/Bulge/Bulge.cpp
++++ b/OCL/Bulge/Bulge.cpp
+@@ -16,6 +16,7 @@
+  * along with openfx-arena.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ */
+ 
++#include "NatronOverlayInteract.h"
+ #include "OCLPlugin.h"
+ #include "ofxsTransform3x3.h"
+ #include "ofxsTransformInteractCustom.h"
+@@ -133,7 +134,7 @@ void BulgeCLPluginFactory::describe(ImageEffectDescriptor &desc)
+     desc.setHostMixingEnabled(kHostMixing);
+ 
+     Transform3x3Describe(desc, true);
+-    desc.setOverlayInteractDescriptor(new TransformOverlayDescriptorOldParams);
++    NatronOFX::setOverlay(desc, new TransformOverlayDescriptorOldParams);
+ }
+ 
+ void BulgeCLPluginFactory::describeInContext(ImageEffectDescriptor &desc, ContextEnum context)
+diff --git a/OCL/Twirl/Twirl.cpp b/OCL/Twirl/Twirl.cpp
+index 8eaee3a..5b6f7a9 100644
+--- a/OCL/Twirl/Twirl.cpp
++++ b/OCL/Twirl/Twirl.cpp
+@@ -17,6 +17,7 @@
+  * along with openfx-arena.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ */
+ 
++#include "NatronOverlayInteract.h"
+ #include "OCLPlugin.h"
+ #include "ofxsTransform3x3.h"
+ #include "ofxsTransformInteractCustom.h"
+@@ -134,7 +135,7 @@ void TwirlCLPluginFactory::describe(ImageEffectDescriptor &desc)
+     desc.setHostMixingEnabled(kHostMixing);
+ 
+     Transform3x3Describe(desc, true);
+-    desc.setOverlayInteractDescriptor(new TransformOverlayDescriptorOldParams);
++    NatronOFX::setOverlay(desc, new TransformOverlayDescriptorOldParams);
+ }
+ 
+ void TwirlCLPluginFactory::describeInContext(ImageEffectDescriptor &desc, ContextEnum context)
+diff --git a/OCL/ofxsTransformInteractCustom.cpp b/OCL/ofxsTransformInteractCustom.cpp
+index 3c960ca..fcd0db9 100644
+--- a/OCL/ofxsTransformInteractCustom.cpp
++++ b/OCL/ofxsTransformInteractCustom.cpp
+@@ -30,11 +30,7 @@
+ #include <cfloat> // DBL_MAX
+ #include <algorithm>
+ 
+-#ifdef __APPLE__
+-#include <OpenGL/gl.h>
+-#else
+-#include <GL/gl.h>
+-#endif
++#include "NatronOverlayInteract.h"
+ 
+ #include "ofxsMatrix2D.h"
+ #include "ofxsTransform3x3.h"
+@@ -362,24 +358,24 @@ drawSquare(const OfxRGBColourD& color,
+ 
+     if (hovered) {
+         if (althovered) {
+-            glColor3f(0.f * l, 1.f * l, 0.f * l);
++            NatronOFX::overlayDrawing().colour(0.f * l, 1.f * l, 0.f * l);
+         } else {
+-            glColor3f(1.f * l, 0.f * l, 0.f * l);
++            NatronOFX::overlayDrawing().colour(1.f * l, 0.f * l, 0.f * l);
+         }
+     } else {
+-        glColor3f( (float)color.r * l, (float)color.g * l, (float)color.b * l );
++        NatronOFX::overlayDrawing().colour( (float)color.r * l, (float)color.g * l, (float)color.b * l );
+     }
+     double halfWidth = (POINT_SIZE / 2.) * meanPixelScale;
+     double halfHeight = (POINT_SIZE / 2.) * meanPixelScale;
+-    glPushMatrix();
+-    glTranslated(center.x, center.y, 0.);
+-    glBegin(GL_POLYGON);
+-    glVertex2d(-halfWidth, -halfHeight);   // bottom left
+-    glVertex2d(-halfWidth, +halfHeight);   // top left
+-    glVertex2d(+halfWidth, +halfHeight);   // bottom right
+-    glVertex2d(+halfWidth, -halfHeight);   // top right
+-    glEnd();
+-    glPopMatrix();
++    NatronOFX::overlayDrawing().pushTransform();
++    NatronOFX::overlayDrawing().translate(center.x, center.y, 0.);
++    NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Polygon);
++    NatronOFX::overlayDrawing().vertex(-halfWidth, -halfHeight);   // bottom left
++    NatronOFX::overlayDrawing().vertex(-halfWidth, +halfHeight);   // top left
++    NatronOFX::overlayDrawing().vertex(+halfWidth, +halfHeight);   // bottom right
++    NatronOFX::overlayDrawing().vertex(+halfWidth, -halfHeight);   // top right
++    NatronOFX::overlayDrawing().end();
++    NatronOFX::overlayDrawing().popTransform();
+ }
+ 
+ static void
+@@ -390,25 +386,25 @@ drawEllipse(const OfxRGBColourD& color,
+             int l)
+ {
+     if (hovered) {
+-        glColor3f(1.f * l, 0.f * l, 0.f * l);
++        NatronOFX::overlayDrawing().colour(1.f * l, 0.f * l, 0.f * l);
+     } else {
+-        glColor3f( (float)color.r * l, (float)color.g * l, (float)color.b * l );
++        NatronOFX::overlayDrawing().colour( (float)color.r * l, (float)color.g * l, (float)color.b * l );
+     }
+ 
+-    glPushMatrix();
++    NatronOFX::overlayDrawing().pushTransform();
+     //  center the oval at x_center, y_center
+-    glTranslatef( (float)center.x, (float)center.y, 0.f );
++    NatronOFX::overlayDrawing().translate( (float)center.x, (float)center.y, 0.f );
+     //  draw the oval using line segments
+-    glBegin(GL_LINE_LOOP);
++    NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::LineLoop);
+     // we don't need to be pixel-perfect here, it's just an interact!
+     // 40 segments is enough.
+     for (int i = 0; i < 40; ++i) {
+         double theta = i * 2 * OFX::ofxsPi() / 40.;
+-        glVertex2d( targetRadius.x * std::cos(theta), targetRadius.y * std::sin(theta) );
++        NatronOFX::overlayDrawing().vertex( targetRadius.x * std::cos(theta), targetRadius.y * std::sin(theta) );
+     }
+-    glEnd();
++    NatronOFX::overlayDrawing().end();
+ 
+-    glPopMatrix();
++    NatronOFX::overlayDrawing().popTransform();
+ }
+ 
+ static void
+@@ -423,16 +419,16 @@ drawRotationBar(const OfxRGBColourD& color,
+     double meanPixelScale = (pixelScale.x + pixelScale.y) / 2.;
+ 
+     if (hovered) {
+-        glColor3f(1.f * l, 0.f * l, 0.f * l);
++        NatronOFX::overlayDrawing().colour(1.f * l, 0.f * l, 0.f * l);
+     } else {
+-        glColor3f(color.r * l, color.g * l, color.b * l);
++        NatronOFX::overlayDrawing().colour(color.r * l, color.g * l, color.b * l);
+     }
+ 
+     double barExtra = 30. * meanPixelScale;
+-    glBegin(GL_LINES);
+-    glVertex2d(0., 0.);
+-    glVertex2d(0. + targetRadiusX + barExtra, 0.);
+-    glEnd();
++    NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Lines);
++    NatronOFX::overlayDrawing().vertex(0., 0.);
++    NatronOFX::overlayDrawing().vertex(0. + targetRadiusX + barExtra, 0.);
++    NatronOFX::overlayDrawing().end();
+ 
+     if (hovered) {
+         double arrowCenterX = targetRadiusX + barExtra / 2.;
+@@ -442,35 +438,35 @@ drawRotationBar(const OfxRGBColourD& color,
+         arrowRadius.x = 5. * meanPixelScale;
+         arrowRadius.y = 10. * meanPixelScale;
+ 
+-        glPushMatrix();
++        NatronOFX::overlayDrawing().pushTransform();
+         //  center the oval at x_center, y_center
+-        glTranslatef( (float)arrowCenterX, 0.f, 0 );
++        NatronOFX::overlayDrawing().translate( (float)arrowCenterX, 0.f, 0 );
+         //  draw the oval using line segments
+-        glBegin(GL_LINE_STRIP);
+-        glVertex2d(0, arrowRadius.y);
+-        glVertex2d(arrowRadius.x, 0.);
+-        glVertex2d(0, -arrowRadius.y);
+-        glEnd();
++        NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::LineStrip);
++        NatronOFX::overlayDrawing().vertex(0, arrowRadius.y);
++        NatronOFX::overlayDrawing().vertex(arrowRadius.x, 0.);
++        NatronOFX::overlayDrawing().vertex(0, -arrowRadius.y);
++        NatronOFX::overlayDrawing().end();
+ 
+ 
+-        glBegin(GL_LINES);
++        NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Lines);
+         ///draw the top head
+-        glVertex2d(0., arrowRadius.y);
+-        glVertex2d(0., arrowRadius.y - 5. * meanPixelScale);
++        NatronOFX::overlayDrawing().vertex(0., arrowRadius.y);
++        NatronOFX::overlayDrawing().vertex(0., arrowRadius.y - 5. * meanPixelScale);
+ 
+-        glVertex2d(0., arrowRadius.y);
+-        glVertex2d(4. * meanPixelScale, arrowRadius.y - 3. * meanPixelScale); // 5^2 = 3^2+4^2
++        NatronOFX::overlayDrawing().vertex(0., arrowRadius.y);
++        NatronOFX::overlayDrawing().vertex(4. * meanPixelScale, arrowRadius.y - 3. * meanPixelScale); // 5^2 = 3^2+4^2
+ 
+         ///draw the bottom head
+-        glVertex2d(0., -arrowRadius.y);
+-        glVertex2d(0., -arrowRadius.y + 5. * meanPixelScale);
++        NatronOFX::overlayDrawing().vertex(0., -arrowRadius.y);
++        NatronOFX::overlayDrawing().vertex(0., -arrowRadius.y + 5. * meanPixelScale);
+ 
+-        glVertex2d(0., -arrowRadius.y);
+-        glVertex2d(4. * meanPixelScale, -arrowRadius.y + 3. * meanPixelScale); // 5^2 = 3^2+4^2
++        NatronOFX::overlayDrawing().vertex(0., -arrowRadius.y);
++        NatronOFX::overlayDrawing().vertex(4. * meanPixelScale, -arrowRadius.y + 3. * meanPixelScale); // 5^2 = 3^2+4^2
+ 
+-        glEnd();
++        NatronOFX::overlayDrawing().end();
+ 
+-        glPopMatrix();
++        NatronOFX::overlayDrawing().popTransform();
+     }
+     if (inverted) {
+         double arrowXPosition = targetRadiusX + barExtra * 1.5;
+@@ -478,52 +474,52 @@ drawRotationBar(const OfxRGBColourD& color,
+         double arrowHeadOffsetX = 3 * meanPixelScale;
+         double arrowHeadOffsetY = 3 * meanPixelScale;
+ 
+-        glPushMatrix();
+-        glTranslatef( (float)arrowXPosition, 0, 0 );
++        NatronOFX::overlayDrawing().pushTransform();
++        NatronOFX::overlayDrawing().translate( (float)arrowXPosition, 0, 0 );
+ 
+-        glBegin(GL_LINES);
++        NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Lines);
+         ///draw the central bar
+-        glVertex2d(-arrowXHalfSize, 0.);
+-        glVertex2d(+arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize, 0.);
+ 
+         ///left triangle
+-        glVertex2d(-arrowXHalfSize, 0.);
+-        glVertex2d(-arrowXHalfSize + arrowHeadOffsetX, arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize + arrowHeadOffsetX, arrowHeadOffsetY);
+ 
+-        glVertex2d(-arrowXHalfSize, 0.);
+-        glVertex2d(-arrowXHalfSize + arrowHeadOffsetX, -arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize + arrowHeadOffsetX, -arrowHeadOffsetY);
+ 
+         ///right triangle
+-        glVertex2d(+arrowXHalfSize, 0.);
+-        glVertex2d(+arrowXHalfSize - arrowHeadOffsetX, arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize - arrowHeadOffsetX, arrowHeadOffsetY);
+ 
+-        glVertex2d(+arrowXHalfSize, 0.);
+-        glVertex2d(+arrowXHalfSize - arrowHeadOffsetX, -arrowHeadOffsetY);
+-        glEnd();
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize - arrowHeadOffsetX, -arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().end();
+ 
+-        glRotated(90., 0., 0., 1.);
++        NatronOFX::overlayDrawing().rotate(90.);
+ 
+-        glBegin(GL_LINES);
++        NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Lines);
+         ///draw the central bar
+-        glVertex2d(-arrowXHalfSize, 0.);
+-        glVertex2d(+arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize, 0.);
+ 
+         ///left triangle
+-        glVertex2d(-arrowXHalfSize, 0.);
+-        glVertex2d(-arrowXHalfSize + arrowHeadOffsetX, arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize + arrowHeadOffsetX, arrowHeadOffsetY);
+ 
+-        glVertex2d(-arrowXHalfSize, 0.);
+-        glVertex2d(-arrowXHalfSize + arrowHeadOffsetX, -arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize + arrowHeadOffsetX, -arrowHeadOffsetY);
+ 
+         ///right triangle
+-        glVertex2d(+arrowXHalfSize, 0.);
+-        glVertex2d(+arrowXHalfSize - arrowHeadOffsetX, arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize - arrowHeadOffsetX, arrowHeadOffsetY);
+ 
+-        glVertex2d(+arrowXHalfSize, 0.);
+-        glVertex2d(+arrowXHalfSize - arrowHeadOffsetX, -arrowHeadOffsetY);
+-        glEnd();
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize - arrowHeadOffsetX, -arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().end();
+ 
+-        glPopMatrix();
++        NatronOFX::overlayDrawing().popTransform();
+     }
+ } // drawRotationBar
+ 
+@@ -538,13 +534,7 @@ TransformInteractCustomHelper::draw(const OFX::DrawArgs &args)
+     const double time = args.time;
+     OfxRGBColourD color = { 0.8, 0.8, 0.8 };
+     _interact->getSuggestedColour(color);
+-    GLdouble projection[16];
+-    glGetDoublev( GL_PROJECTION_MATRIX, projection);
+-    GLint viewport[4];
+-    glGetIntegerv(GL_VIEWPORT, viewport);
+-    OfxPointD shadow; // how much to translate GL_PROJECTION to get exactly one pixel on screen
+-    shadow.x = 2. / (projection[0] * viewport[2]);
+-    shadow.y = 2. / (projection[5] * viewport[3]);
++    const OfxPointD shadow = args.pixelScale;
+ 
+     OfxPointD center = { 0., 0. };
+     OfxPointD translate = { 0., 0. };
+@@ -593,44 +583,43 @@ TransformInteractCustomHelper::draw(const OFX::DrawArgs &args)
+     OfxPointD left, right, bottom, top;
+     getTargetPoints(targetCenter, targetRadius, &left, &bottom, &top, &right);
+ 
+-    //glPushAttrib(GL_ALL_ATTRIB_BITS); // caller is responsible for protecting attribs
+ 
+-    glDisable(GL_LINE_STIPPLE);
+-    glEnable(GL_LINE_SMOOTH);
+-    glDisable(GL_POINT_SMOOTH);
+-    glEnable(GL_BLEND);
+-    glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE);
+-    glLineWidth(1.5f);
+-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
++    NatronOFX::overlayDrawing().dashed(false);
++    NatronOFX::overlayDrawing().smoothLines(true);
++    NatronOFX::overlayDrawing().roundPoints(false);
++
++
++    NatronOFX::overlayDrawing().lineWidth(1.5f);
++
+ 
+     // Draw everything twice
+     // l = 0: shadow
+     // l = 1: drawing
+     for (int l = 0; l < 2; ++l) {
+         // shadow (uses GL_PROJECTION)
+-        glMatrixMode(GL_PROJECTION);
++
+         int direction = (l == 0) ? 1 : -1;
+         // translate (1,-1) pixels
+-        glTranslated(direction * shadow.x, -direction * shadow.y, 0);
+-        glMatrixMode(GL_MODELVIEW); // Modelview should be used on Nuke
++        NatronOFX::overlayDrawing().offsetShadow(direction * shadow.x, -direction * shadow.y);
++
+ 
+-        glColor3f(color.r * l, color.g * l, color.b * l);
++        NatronOFX::overlayDrawing().colour(color.r * l, color.g * l, color.b * l);
+ 
+-        glPushMatrix();
+-        glTranslated(targetCenter.x, targetCenter.y, 0.);
++        NatronOFX::overlayDrawing().pushTransform();
++        NatronOFX::overlayDrawing().translate(targetCenter.x, targetCenter.y, 0.);
+ 
+-        glRotated(rotate, 0, 0., 1.);
++        NatronOFX::overlayDrawing().rotate(rotate);
+         drawRotationBar(color, pscale, targetRadius.x, _mouseState == eDraggingRotationBar || _drawState == eRotationBarHovered, inverted, l);
+-        //glMultMatrixd(skewMatrix);
+-        glTranslated(-targetCenter.x, -targetCenter.y, 0.);
++        //NatronOFX::overlayDrawing().affine(skewMatrix);
++        NatronOFX::overlayDrawing().translate(-targetCenter.x, -targetCenter.y, 0.);
+ 
+         drawEllipse(color, targetCenter, targetRadius, _mouseState == eDraggingCircle || _drawState == eCircleHovered, l);
+ 
+         drawSquare(color, targetCenter, pscale, _mouseState == eDraggingTranslation || _mouseState == eDraggingCenter || _drawState == eCenterPointHovered, (!_translate || _modifierStateCtrl), l);
+ 
+-        glPopMatrix();
++        NatronOFX::overlayDrawing().popTransform();
+     }
+-    //glPopAttrib();
++
+ 
+     return true;
+ } // TransformInteractCustomHelper::draw
+diff --git a/OCL/ofxsTransformInteractCustom.h b/OCL/ofxsTransformInteractCustom.h
+index 7bfb471..208e246 100644
+--- a/OCL/ofxsTransformInteractCustom.h
++++ b/OCL/ofxsTransformInteractCustom.h
+@@ -23,6 +23,7 @@
+ #ifndef openfx_supportext_ofxsTransformInteractCustom_h
+ #define openfx_supportext_ofxsTransformInteractCustom_h
+ 
++#include "NatronOverlayInteract.h"
+ #include <cmath>
+ 
+ #include "ofxsImageEffect.h"
+@@ -173,7 +174,7 @@ private:
+ typedef OverlayInteractFromHelper<TransformInteractCustomHelper> TransformInteractCustom;
+ 
+ class TransformOverlayDescriptor
+-    : public DefaultEffectOverlayDescriptor<TransformOverlayDescriptor, TransformInteractCustom>
++    : public NatronOFX::OverlayDescriptor<TransformOverlayDescriptor, TransformInteractCustom>
+ {
+ };
+ 
+@@ -189,7 +190,7 @@ public:
+ typedef OverlayInteractFromHelper<TransformInteractCustomHelperOldParams> TransformInteractCustomOldParams;
+ 
+ class TransformOverlayDescriptorOldParams
+-    : public DefaultEffectOverlayDescriptor<TransformOverlayDescriptorOldParams, TransformInteractCustomOldParams>
++    : public NatronOFX::OverlayDescriptor<TransformOverlayDescriptorOldParams, TransformInteractCustomOldParams>
+ {
+ };
+ } // namespace OFX
+diff --git a/Text/TextOFX.cpp b/Text/TextOFX.cpp
+index 59a082c..f864663 100644
+--- a/Text/TextOFX.cpp
++++ b/Text/TextOFX.cpp
+@@ -16,6 +16,7 @@
+  * along with openfx-arena.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
+ */
+ 
++#include "NatronOverlayInteract.h"
+ #include <pango/pangocairo.h>
+ #include <pango/pangofc-fontmap.h>
+ #include <fontconfig/fontconfig.h>
+@@ -27,6 +28,7 @@
+ #include "ofxsTransformInteract.h"
+ 
+ #include <iostream>
++#include <numbers>
+ #include <cmath>
+ #include <cstring>
+ #include <algorithm>
+@@ -1052,7 +1054,7 @@ void TextFXPlugin::render(const OFX::RenderArguments &args)
+             rotateY = ytext;
+         }
+         cairo_translate(cr, rotateX, rotateY);
+-        cairo_rotate(cr, -rotate * (M_PI/180.0));
++        cairo_rotate(cr, -rotate * (std::numbers::pi/180.0));
+         cairo_translate(cr, -rotateX, -rotateY);
+     }
+ 
+@@ -1112,7 +1114,7 @@ void TextFXPlugin::render(const OFX::RenderArguments &args)
+                     arcX = xtext;
+                     arcY = ytext;
+                 }
+-                cairo_arc(cr, arcX, arcY, std::floor(arcRadius * args.renderScale.x + 0.5), 0.0, arcAngle * (M_PI/180.0));
++                cairo_arc(cr, arcX, arcY, std::floor(arcRadius * args.renderScale.x + 0.5), 0.0, arcAngle * (std::numbers::pi/180.0));
+                 cairo_path_t *path;
+                 cairo_save(cr);
+                 path = cairo_copy_path_flat(cr);
+@@ -1443,7 +1445,7 @@ void TextFXPluginFactory::describe(OFX::ImageEffectDescriptor &desc)
+     desc.setRenderThreadSafety(kRenderThreadSafety);
+ 
+     Transform3x3Describe(desc, true);
+-    desc.setOverlayInteractDescriptor(new TransformOverlayDescriptorOldParams);
++    NatronOFX::setOverlay(desc, new TransformOverlayDescriptorOldParams);
+ }
+ 
+ /** @brief The describe in context function, passed a plugin descriptor and a context */

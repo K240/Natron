@@ -44,7 +44,6 @@
 #include "Engine/Image.h"
 #include "Engine/TLSHolder.h"
 #include "Engine/NodeMetadata.h"
-#include "Engine/OSGLContext.h"
 #include "Engine/ViewIdx.h"
 #include "Engine/EngineFwd.h"
 
@@ -224,13 +223,9 @@ public:
     bool runningClipPreferences; //only used on main thread
 
     // set during interact actions on main-thread
-    OverlaySupport* overlaysViewport;
-    mutable QRecursiveMutex attachedContextsMutex;
+    OverlaySupport *overlaysViewport;
 
-    // A list of context that are currently attached (i.e attachOpenGLContext() has been called on them but not yet dettachOpenGLContext).
-    // If a plug-in returns false to supportsConcurrentOpenGLRenders() then whenever trying to attach a context, we take a lock in attachOpenGLContext
     // that is released in dettachOpenGLContext so that there can only be a single attached OpenGL context at any time.
-    EffectInstance::OpenGLContextEffectsMap attachedContexts;
 
     // Render clones are very small copies holding just pointers to Knobs that are used to render plug-ins that are only
     // eRenderSafetyInstanceSafe or lower
@@ -303,8 +298,7 @@ public:
                          const EffectInstance::InputImagesMap& inputImages,
                          const RoIMap & roiMap,
                          int firstFrame,
-                         int lastFrame,
-                         bool isDoingOpenGLRender);
+                         int lastFrame);
 
         ScopedRenderArgs(const EffectTLSDataPtr& tlsData,
                          const EffectTLSDataPtr& otherThreadData);

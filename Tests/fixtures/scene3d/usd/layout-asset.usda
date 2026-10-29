@@ -1,0 +1,27 @@
+#usda 1.0
+(
+    defaultPrim = "Asset"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+def Xform "Asset" {
+    def Mesh "Box" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+    ) {
+        point3f[] points = [(-0.5, 0, -0.5), (0.5, 0, -0.5), (0.5, 1, -0.5), (-0.5, 1, -0.5), (-0.5, 0, 0.5), (0.5, 0, 0.5), (0.5, 1, 0.5), (-0.5, 1, 0.5)]
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 3, 2, 1, 4, 5, 6, 7, 0, 4, 7, 3, 1, 2, 6, 5, 3, 7, 6, 2, 0, 1, 5, 4]
+        uniform token subdivisionScheme = "none"
+        color3f[] primvars:displayColor = [(0.8, 0.12, 0.035)]
+        rel material:binding = </Asset/Material>
+    }
+    def Material "Material" {
+        token outputs:surface.connect = </Asset/Material/Surface.outputs:surface>
+        def Shader "Surface" {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.8, 0.12, 0.035)
+            float inputs:roughness = 0.45
+            token outputs:surface
+        }
+    }
+}

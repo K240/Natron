@@ -1,0 +1,170 @@
+; SPDX-License-Identifier: GPL-2.0-or-later
+; Natron-authored camera-only FBX: centimeter units, parent motion,
+; camera rotation/lens animation, orthographic and horizontal-FOV cameras.
+FBXHeaderExtension: {
+    FBXHeaderVersion: 1003
+    FBXVersion: 7400
+}
+GlobalSettings: {
+    Version: 1000
+    Properties70: {
+        P: "UpAxis", "int", "Integer", "",1
+        P: "UpAxisSign", "int", "Integer", "",1
+        P: "FrontAxis", "int", "Integer", "",2
+        P: "FrontAxisSign", "int", "Integer", "",1
+        P: "CoordAxis", "int", "Integer", "",0
+        P: "CoordAxisSign", "int", "Integer", "",1
+        P: "TimeMode", "enum", "", "",11
+        P: "UnitScaleFactor", "double", "Number", "",1
+    }
+}
+Objects: {
+    Model: 100, "Model::Rig", "Null" {
+        Version: 232
+        Properties70: {
+            P: "Lcl Translation", "Lcl Translation", "", "A",0,0,600
+            P: "Lcl Rotation", "Lcl Rotation", "", "A",0,0,0
+            P: "Lcl Scaling", "Lcl Scaling", "", "A",1,1,1
+        }
+    }
+    Model: 101, "Model::MainCamera", "Camera" {
+        Version: 232
+        Properties70: {
+            P: "Lcl Translation", "Lcl Translation", "", "A",0,0,0
+            P: "Lcl Rotation", "Lcl Rotation", "", "A",0,90,0
+            P: "Lcl Scaling", "Lcl Scaling", "", "A",1,1,1
+        }
+    }
+    NodeAttribute: 201, "NodeAttribute::MainCamera", "Camera" {
+        TypeFlags: "Camera"
+        Properties70: {
+            P: "CameraProjectionType", "enum", "", "",0
+            P: "AspectRatioMode", "enum", "", "",2
+            P: "AspectWidth", "double", "Number", "",96
+            P: "AspectHeight", "double", "Number", "",64
+            P: "ApertureMode", "enum", "", "",3
+            P: "GateFit", "enum", "", "",2
+            P: "FilmWidth", "double", "Number", "",1.417322834645669
+            P: "FilmHeight", "double", "Number", "",0.9448818897637795
+            P: "FocalLength", "double", "Number", "A",35
+            P: "NearPlane", "double", "Number", "",10
+            P: "FarPlane", "double", "Number", "",100000
+        }
+    }
+    Model: 102, "Model::OrthoCamera", "Camera" {
+        Version: 232
+        Properties70: {
+            P: "Lcl Translation", "Lcl Translation", "", "A",200,0,0
+            P: "Lcl Rotation", "Lcl Rotation", "", "A",0,90,0
+            P: "Lcl Scaling", "Lcl Scaling", "", "A",1,1,1
+        }
+    }
+    NodeAttribute: 202, "NodeAttribute::OrthoCamera", "Camera" {
+        TypeFlags: "Camera"
+        Properties70: {
+            P: "CameraProjectionType", "enum", "", "",1
+            P: "AspectRatioMode", "enum", "", "",2
+            P: "AspectWidth", "double", "Number", "",96
+            P: "AspectHeight", "double", "Number", "",64
+            P: "GateFit", "enum", "", "",2
+            P: "FilmWidth", "double", "Number", "",1.417322834645669
+            P: "FilmHeight", "double", "Number", "",0.9448818897637795
+            P: "OrthoZoom", "double", "Number", "A",13.333333333333333
+            P: "NearPlane", "double", "Number", "",10
+            P: "FarPlane", "double", "Number", "",100000
+        }
+    }
+    Model: 103, "Model::FovCamera", "Camera" {
+        Version: 232
+        Properties70: {
+            P: "Lcl Translation", "Lcl Translation", "", "A",0,0,0
+            P: "Lcl Rotation", "Lcl Rotation", "", "A",0,90,0
+            P: "Lcl Scaling", "Lcl Scaling", "", "A",1,1,1
+        }
+    }
+    NodeAttribute: 203, "NodeAttribute::FovCamera", "Camera" {
+        TypeFlags: "Camera"
+        Properties70: {
+            P: "ApertureMode", "enum", "", "",1
+            P: "FieldOfView", "double", "Number", "A",60
+            P: "FocalLength", "double", "Number", "",0
+            P: "NearPlane", "double", "Number", "",10
+            P: "FarPlane", "double", "Number", "",100000
+        }
+    }
+    AnimationStack: 400, "AnimStack::CameraMove", "" {
+        Properties70: {
+            P: "LocalStart", "KTime", "Time", "",46186158000
+            P: "LocalStop", "KTime", "Time", "",92372316000
+        }
+    }
+    AnimationLayer: 401, "AnimLayer::Base", "" {}
+    AnimationCurveNode: 402, "AnimCurveNode::T", "" {
+        Properties70: {
+            P: "d|X", "Number", "", "A",0
+            P: "d|Y", "Number", "", "A",0
+            P: "d|Z", "Number", "", "A",600
+        }
+    }
+    AnimationCurve: 403, "AnimCurve::Move", "" {
+        KeyVer: 4008
+        KeyTime: *2 { a: 46186158000,92372316000 }
+        KeyValueFloat: *2 { a: 0,60 }
+        KeyAttrFlags: *1 { a: 24836 }
+        KeyAttrDataFloat: *4 { a: 0,0,0,0 }
+        KeyAttrRefCount: *1 { a: 2 }
+    }
+    AnimationCurveNode: 404, "AnimCurveNode::R", "" {
+        Properties70: {
+            P: "d|X", "Number", "", "A",0
+            P: "d|Y", "Number", "", "A",90
+            P: "d|Z", "Number", "", "A",0
+        }
+    }
+    AnimationCurve: 405, "AnimCurve::Rotate", "" {
+        KeyVer: 4008
+        KeyTime: *2 { a: 46186158000,92372316000 }
+        KeyValueFloat: *2 { a: 90,102 }
+        KeyAttrFlags: *1 { a: 24836 }
+        KeyAttrDataFloat: *4 { a: 0,0,0,0 }
+        KeyAttrRefCount: *1 { a: 2 }
+    }
+    AnimationCurveNode: 406, "AnimCurveNode::FocalLength", "" {
+        Properties70: { P: "d|X", "Number", "", "A",35 }
+    }
+    AnimationCurve: 407, "AnimCurve::Lens", "" {
+        KeyVer: 4008
+        KeyTime: *2 { a: 46186158000,92372316000 }
+        KeyValueFloat: *2 { a: 35,70 }
+        KeyAttrFlags: *1 { a: 24836 }
+        KeyAttrDataFloat: *4 { a: 0,0,0,0 }
+        KeyAttrRefCount: *1 { a: 2 }
+    }
+    AnimationStack: 500, "AnimStack::Hold", "" {
+        Properties70: {
+            P: "LocalStart", "KTime", "Time", "",0
+            P: "LocalStop", "KTime", "Time", "",46186158000
+        }
+    }
+    AnimationLayer: 501, "AnimLayer::Hold", "" {}
+}
+Connections: {
+    C: "OO",100,0
+    C: "OO",101,100
+    C: "OO",201,101
+    C: "OO",102,100
+    C: "OO",202,102
+    C: "OO",103,100
+    C: "OO",203,103
+    C: "OO",401,400
+    C: "OO",402,401
+    C: "OP",402,100,"Lcl Translation"
+    C: "OP",403,402,"d|X"
+    C: "OO",404,401
+    C: "OP",404,101,"Lcl Rotation"
+    C: "OP",405,404,"d|Y"
+    C: "OO",406,401
+    C: "OP",406,201,"FocalLength"
+    C: "OP",407,406,"d|X"
+    C: "OO",501,500
+}

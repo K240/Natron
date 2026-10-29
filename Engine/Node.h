@@ -177,7 +177,6 @@ public:
 
     bool isNodeCreated() const;
 
-    bool isGLFinishRequiredBeforeRender() const;
 
     void refreshAcceptedBitDepths();
 
@@ -547,6 +546,7 @@ public:
         eCanConnectInput_differentPars,
         eCanConnectInput_differentFPS,
         eCanConnectInput_multiResNotSupported,
+        eCanConnectInput_incompatibleDataType,
     };
 
     /**

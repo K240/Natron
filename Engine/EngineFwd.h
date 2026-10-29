@@ -48,6 +48,8 @@ class access;
 
 // Qt
 
+#include <QStringList>
+
 class QByteArray;
 class QChar;
 class QDateTime;
@@ -61,7 +63,6 @@ class QNetworkRequest;
 class QProcess;
 class QSettings;
 class QString;
-class QStringList;
 class QThread;
 class QTimer;
 class QUrl;
@@ -145,9 +146,6 @@ class FrameEntry;
 class FrameKey;
 class FrameParams;
 class FramebufferConfig;
-class GLRendererID;
-class GLShader;
-class GPUContextPool;
 class GenericAccess;
 class GenericSchedulerThread;
 class GenericSchedulerThreadWatcher;
@@ -203,8 +201,6 @@ class NodeMetadata;
 class NodeRenderWatcher;
 class NodeSerialization;
 class NodeSettingsPanel;
-class OSGLContext;
-class OSGLContextAttacher;
 class OfxClipInstance;
 class OfxEffectInstance;
 class OfxHost;
@@ -214,7 +210,6 @@ class OfxOverlayInteract;
 class OfxParamOverlayInteract;
 class OfxParamToKnob;
 class OfxStringInstance;
-class OpenGLRendererInfo;
 class OpenGLViewerI;
 class OutputEffectInstance;
 class OutputSchedulerThreadStartArgs;
@@ -250,7 +245,6 @@ class RotoStrokeItemSerialization;
 class Settings;
 class StringAnimationManager;
 class TLSHolderBase;
-class Texture;
 class TextureRect;
 class TileCacheFile;
 class TimeLapse;
@@ -280,11 +274,8 @@ typedef std::shared_ptr<Matrix3x3> Matrix3x3Ptr;
 }
 
 #ifdef __NATRON_WIN32__
-struct OSGLContext_wgl_data;
 #endif
 #ifdef __NATRON_LINUX__
-class OSGLContext_egl_data;
-class OSGLContext_glx_data;
 #endif
 
 NATRON_PYTHON_NAMESPACE_ENTER
@@ -339,7 +330,6 @@ typedef std::shared_ptr<FileSystemItem> FileSystemItemPtr;
 typedef std::shared_ptr<FileSystemModel> FileSystemModelPtr;
 typedef std::shared_ptr<FrameEntry> FrameEntryPtr;
 typedef std::shared_ptr<FrameParams> FrameParamsPtr;
-typedef std::shared_ptr<GLShader> GLShaderPtr;
 typedef std::shared_ptr<GenericAccess> GenericAccessPtr;
 typedef std::shared_ptr<GenericThreadExecOnMainThreadArgs> GenericThreadExecOnMainThreadArgsPtr;
 typedef std::shared_ptr<GenericThreadStartArgs> GenericThreadStartArgsPtr;
@@ -387,8 +377,6 @@ typedef std::shared_ptr<NodeGroup> NodeGroupPtr;
 typedef std::shared_ptr<NodeGuiI> NodeGuiIPtr;
 typedef std::shared_ptr<NodeRenderWatcher> NodeRenderWatcherPtr;
 typedef std::shared_ptr<NodeSerialization> NodeSerializationPtr;
-typedef std::shared_ptr<OSGLContext> OSGLContextPtr;
-typedef std::shared_ptr<OSGLContextAttacher> OSGLContextAttacherPtr;
 typedef std::shared_ptr<OfxEffectInstance> OfxEffectInstancePtr;
 typedef std::shared_ptr<OfxParamOverlayInteract> OfxParamOverlayInteractPtr;
 typedef std::shared_ptr<OutputEffectInstance> OutputEffectInstancePtr;
@@ -415,8 +403,6 @@ typedef std::shared_ptr<RotoStrokeItem> RotoStrokeItemPtr;
 typedef std::shared_ptr<RotoStrokeItemSerialization> RotoStrokeItemSerializationPtr;
 typedef std::shared_ptr<Settings> SettingsPtr;
 typedef std::shared_ptr<TLSHolderBase const> TLSHolderBaseConstPtr;
-typedef std::shared_ptr<Texture> GLTexturePtr;
-typedef std::shared_ptr<Texture> TexturePtr;
 typedef std::shared_ptr<TileCacheFile> TileCacheFilePtr;
 typedef std::shared_ptr<TimeLapse> TimeLapsePtr;
 typedef std::shared_ptr<TimeLine> TimeLinePtr;
@@ -464,8 +450,6 @@ typedef std::weak_ptr<KnobTable> KnobTableWPtr;
 typedef std::weak_ptr<Node> NodeWPtr;
 typedef std::weak_ptr<NodeCollection> NodeCollectionWPtr;
 typedef std::weak_ptr<NodeGuiI> NodeGuiIWPtr;
-typedef std::weak_ptr<OSGLContext> OSGLContextWPtr;
-typedef std::weak_ptr<OSGLContextAttacher> OSGLContextAttacherWPtr;
 typedef std::weak_ptr<OfxEffectInstance> OfxEffectInstanceWPtr;
 typedef std::weak_ptr<OfxParamOverlayInteract> OfxParamOverlayInteractWPtr;
 typedef std::weak_ptr<OutputEffectInstance> OutputEffectInstanceWPtr;

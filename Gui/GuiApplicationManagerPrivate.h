@@ -35,6 +35,7 @@
 CLANG_DIAG_OFF(deprecated)
 CLANG_DIAG_OFF(uninitialized)
 #include <QFutureWatcher>
+#include <QCursor>
 #include <QString>
 #include <QTimer>
 CLANG_DIAG_ON(deprecated)

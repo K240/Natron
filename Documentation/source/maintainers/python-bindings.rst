@@ -28,25 +28,19 @@ The pieces
   to rename, and what to skip. When you add or change a ``Py*`` class, you edit
   the matching typesystem file.
 - **The generated wrappers** — ``natronengine_*`` and ``natrongui_*`` wrapper
-  sources produced into the build directory (referenced from ``Engine.pro`` /
-  ``Gui.pro`` and the CMake files). They are build artifacts, not hand-edited.
+  sources produced into the build directory by the Engine and Gui CMake
+  targets. They are build artifacts, not hand-edited.
 - **The PySide module glue** — ``Pyside_*_Python.h`` and the version-specific
-  ``PySide2_*_Python.h`` / ``PySide6_*_Python.h`` headers select the right
-  PySide headers for the Qt version in use.
+  ``PySide6_*_Python.h`` headers provide the matching Qt 6 bindings.
 
-Qt 5 vs Qt 6: two toolchains
-----------------------------
+Qt 6 binding toolchain
+----------------------
 
-The binding toolchain is tied to the Qt version:
-
-- Qt 5 builds use **Shiboken2 / PySide2**.
-- Qt 6 builds use **Shiboken6 / PySide6**.
-
-The CMake build already selects between them from the ``NATRON_QT6`` option (see
-:ref:`maint-building`), and the presence of both ``PySide2_*`` and ``PySide6_*``
-headers shows the port is under way. The bindings must be **regenerated** with
-the matching Shiboken when switching Qt major versions; a mismatch is a common
-source of the "``Qt.Alignment`` flags unrecognized" class of errors (issue
+The CMake build requires **Shiboken6 / PySide6**; Qt 5 / PySide2 and the
+``NATRON_QT6`` selection switch have been retired (see :ref:`maint-building`).
+Match the Qt SDK, PySide6 and Shiboken6 versions and regenerate the bindings
+when changing that toolchain. A mismatch can cause the
+"``Qt.Alignment`` flags unrecognized" class of errors (issue
 `#854 <https://github.com/NatronGitHub/Natron/issues/854>`_). See
 :ref:`maint-qt6`.
 

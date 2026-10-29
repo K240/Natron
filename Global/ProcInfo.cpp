@@ -80,10 +80,12 @@ applicationFileName()
     wchar_t *b = 0;
     int i = 1;
     size_t size;
+
     do {
         ++i;
         size = MAX_PATH * i;
-        b = reinterpret_cast<wchar_t *>( realloc( b, (size + 1) * sizeof(wchar_t) ) );
+        b = reinterpret_cast<wchar_t *>(realloc(b, (size + 1) * sizeof(wchar_t)));
+
         if (b) {
             v = GetModuleFileNameW(NULL, b, size);
         }
@@ -92,6 +94,7 @@ applicationFileName()
     if (b) {
         *(b + size) = 0;
     }
+
     std::wstring wideRet(b);
     std::string ret = StrUtils::utf16_to_utf8(wideRet);
     free(b);
@@ -117,7 +120,7 @@ applicationFileName()
 
 static
 char *
-rpl_getcwd (char *buf, size_t size)
+rpl_getcwd(char *buf, size_t size)
 {
     char *ptr;
     char *result;
@@ -128,21 +131,26 @@ rpl_getcwd (char *buf, size_t size)
             errno = EINVAL;
             return NULL;
         }
+
         return ::getcwd(buf, size);
     }
 
     if (size) {
         buf = (char*)std::malloc(size);
+
         if (!buf) {
             errno = ENOMEM;
             return NULL;
         }
+
         result = ::getcwd(buf, size);
+
         if (!result) {
             int saved_errno = errno;
             std::free(buf);
             errno = saved_errno;
         }
+
         return result;
     }
 
@@ -152,14 +160,18 @@ rpl_getcwd (char *buf, size_t size)
     {
         char tmp[4032];
         size = sizeof tmp;
-        ptr = ::getcwd (tmp, size);
+        ptr = ::getcwd(tmp, size);
+
         if (ptr) {
             result = ::strdup(ptr);
+
             if (!result) {
                 errno = ENOMEM;
             }
+
             return result;
         }
+
         if (errno != ERANGE) {
             return NULL;
         }
@@ -169,11 +181,13 @@ rpl_getcwd (char *buf, size_t size)
     do {
         size <<= 1;
         ptr = (char*)std::realloc(buf, size);
+
         if (ptr == NULL) {
             std::free(buf);
             errno = ENOMEM;
             return NULL;
         }
+
         buf = ptr;
         result = ::getcwd(buf, size);
     } while (!result && errno == ERANGE);
@@ -185,10 +199,12 @@ rpl_getcwd (char *buf, size_t size)
     } else {
         /* Trim to fit, if possible.  */
         result = (char*)std::realloc(buf, std::strlen(buf) + 1);
+
         if (!result) {
             result = buf;
         }
     }
+
     return result;
 }
 
@@ -200,23 +216,25 @@ static std::string
 applicationFilePath_fromArgv(const char* argv0Param)
 {
     std::string argv0;
+
     if (argv0Param) {
         argv0 = std::string(argv0Param);
     }
+
     std::string absPath;
 
-    if ( !argv0.empty() && ( argv0[0] == '/' ) ) {
+    if (!argv0.empty() && (argv0[0] == '/')) {
         /*
            If argv0 starts with a slash, it is already an absolute
            file path.
          */
         absPath = argv0;
-    } else if ( argv0.find_first_of("/") != std::string::npos ) {
+    } else if (argv0.find_first_of("/") != std::string::npos) {
         /*
            If argv0 contains one or more slashes, it is a file path
            relative to the current directory.
          */
-        char* cwd = rpl_getcwd(NULL, 0);
+        char *cwd = rpl_getcwd(NULL, 0);
         absPath = cwd;
         std::free(cwd);
         absPath.append(argv0);
@@ -226,22 +244,26 @@ applicationFilePath_fromArgv(const char* argv0Param)
            PATH environment variable.
          */
         std::string pEnv = getenv("PATH");
-        char* cwd = rpl_getcwd(NULL, 0);
+        char *cwd = rpl_getcwd(NULL, 0);
         std::string currentDirPath = cwd;
         std::free(cwd);
         std::vector<std::string> paths = StrUtils::split(pEnv, ':');
+
         for (std::vector<std::string>::const_iterator it = paths.begin(); it != paths.end(); ++it) {
             if (it->empty()) {
                 continue;
             }
+
             std::string candidate = currentDirPath;
             candidate.append(*it + '/' + argv0);
 
             struct stat _s;
+
             if (stat(candidate.c_str(), &_s) == -1) {
                 continue;
             }
-            if ( S_ISDIR(_s.st_mode) ) {
+
+            if (S_ISDIR(_s.st_mode)) {
                 continue;
             }
 
@@ -284,28 +306,37 @@ class NatronCFType
 {
 public:
     inline NatronCFType(const T &t = 0)
-    : type(t) {}
+        : type(t) {}
 
     inline NatronCFType(const NatronCFType &helper)
-    : type(helper.type)
+        : type(helper.type)
     {
-        if (type) {CFRetain(type); }
+        if (type) {
+            CFRetain(type);
+        }
     }
 
     inline ~NatronCFType()
     {
-        if (type) {CFRelease(type); }
+        if (type) {
+            CFRelease(type);
+        }
     }
 
-    inline operator T() { return type; }
+    inline operator T()
+    {
+        return type;
+    }
 
     inline NatronCFType operator =(const NatronCFType &helper)
     {
         if (helper.type) {
             CFRetain(helper.type);
         }
+
         CFTypeRef type2 = type;
         type = helper.type;
+
         if (type2) {
             CFRelease(type2);
         }
@@ -313,10 +344,16 @@ public:
         return *this;
     }
 
-    inline T *operator&() { return &type; }
+    inline T *operator&()
+    {
+        return &type;
+    }
 
     template <typename X>
-    X as() const { return reinterpret_cast<X>(type); }
+    X as() const
+    {
+        return reinterpret_cast<X>(type);
+    }
 
     static NatronCFType constructFromGet(const T &t)
     {
@@ -331,17 +368,17 @@ protected:
 
 
 class NatronCFString
-: public NatronCFType<CFStringRef>
+    : public NatronCFType<CFStringRef>
 {
 public:
     inline NatronCFString(const std::string &str)
-    : NatronCFType<CFStringRef>(0), string(str) {}
+        : NatronCFType<CFStringRef>(0), string(str) {}
 
     inline NatronCFString(const CFStringRef cfstr = 0)
-    : NatronCFType<CFStringRef>(cfstr) {}
+        : NatronCFType<CFStringRef>(cfstr) {}
 
     inline NatronCFString(const NatronCFType<CFStringRef> &other)
-    : NatronCFType<CFStringRef>(other) {}
+        : NatronCFType<CFStringRef>(other) {}
 
     operator std::string() const;
     operator CFStringRef() const;
@@ -360,6 +397,7 @@ NatronCFString::toStdString(CFStringRef str)
     }
 
     CFIndex length = CFStringGetLength(str) + 1;
+
     if (length == 0) {
         return std::string();
     }
@@ -378,7 +416,7 @@ NatronCFString::toStdString(CFStringRef str)
 NatronCFString::operator std::string() const
 {
     if (string.empty() && type) {
-        const_cast<NatronCFString*>(this)->string = toStdString(type);
+        const_cast<NatronCFString *>(this)->string = toStdString(type);
     }
 
     return string;
@@ -387,20 +425,20 @@ NatronCFString::operator std::string() const
 CFStringRef
 NatronCFString::toCFStringRef(const std::string &string)
 {
-    return CFStringCreateWithCharacters( 0, reinterpret_cast<const UniChar *>( string.c_str() ),
-                                        string.length() );
+    return CFStringCreateWithCharacters(0, reinterpret_cast<const UniChar *>(string.c_str()),
+                                        string.length());
 }
 
 NatronCFString::operator CFStringRef() const
 {
     if (!type) {
-        const_cast<NatronCFString*>(this)->type =
-        CFStringCreateWithCharactersNoCopy(0,
-                                           reinterpret_cast<const UniChar *>( string.c_str() ),
-                                           string.length(),
-                                           kCFAllocatorNull);
+        const_cast<NatronCFString *>(this)->type =
+            CFStringCreateWithCharactersNoCopy(0,
+                                               reinterpret_cast<const UniChar *>(string.c_str()),
+                                               string.length(),
+                                               kCFAllocatorNull);
     }
-    
+
     return type;
 }
 
@@ -414,27 +452,31 @@ ProcInfo::applicationFilePath(const char* argv0Param)
 {
 #if defined(__NATRON_WIN32__)
     (void)argv0Param;
-    
+
     //The only viable solution
     return applicationFileName();
 #elif defined(__NATRON_OSX__)
     //First guess this way, then use the fallback solution
     static std::string appFileName;
 
-    if ( appFileName.empty() ) {
-        NatronCFType<CFURLRef> bundleURL( CFBundleCopyExecutableURL( CFBundleGetMainBundle() ) );
+    if (appFileName.empty()) {
+        NatronCFType<CFURLRef> bundleURL(CFBundleCopyExecutableURL(CFBundleGetMainBundle()));
+
         if (bundleURL) {
-            NatronCFString cfPath( CFURLCopyFileSystemPath(bundleURL, kCFURLPOSIXPathStyle) );
+            NatronCFString cfPath(CFURLCopyFileSystemPath(bundleURL, kCFURLPOSIXPathStyle));
+
             if (cfPath) {
                 appFileName = cfPath;
             }
         }
     }
-    if ( !appFileName.empty() ) {
+
+    if (!appFileName.empty()) {
         return appFileName;
     } else {
         return applicationFilePath_fromArgv(argv0Param);
     }
+
 #elif defined(__NATRON_LINUX__)
     // Try looking for a /proc/<pid>/exe symlink first which points to
     // the absolute path of the executable
@@ -444,13 +486,15 @@ ProcInfo::applicationFilePath(const char* argv0Param)
     char buf[2048] = {0};
     ssize_t sizeofbuf = sizeof(char) * 2048;
     ssize_t size = readlink(filename.c_str(), buf, sizeofbuf);
-    if ( (size != 0) && (size != sizeofbuf) ) {
+
+    if ((size != 0) && (size != sizeofbuf)) {
         //detected symlink
         std::string ret(buf);
         return ret;
     } else {
         return applicationFilePath_fromArgv(argv0Param);
     }
+
 #endif
 }
 
@@ -464,9 +508,11 @@ ProcInfo::applicationDirPath(const char* argv0Param)
     if (foundSlash == std::string::npos) {
 #ifdef __NATRON_WIN32__
         foundSlash = filePath.find_last_of('\\');
+
         if (foundSlash == std::string::npos) {
             return std::string();
         }
+
 #else
         return std::string();
 #endif
@@ -480,17 +526,22 @@ bool
 ProcInfo::putenv_wrapper(const char *varName, const std::string& value)
 {
 #if defined(_MSC_VER) && _MSC_VER >= 1400
-    return _putenv_s(varName, value.c_str()) == 0;
+    // Natron strings are UTF-8. The narrow CRT environment API interprets
+    // them using the Windows code page and corrupts non-ASCII paths.
+    return _wputenv_s(StrUtils::utf8_to_utf16(varName).c_str(),
+                      StrUtils::utf8_to_utf16(value).c_str()) == 0;
 #else
     std::string buffer(varName);
     buffer += '=';
     buffer += value;
-    char* envVar = strdup(buffer.c_str());
+    char *envVar = strdup(buffer.c_str());
     int result = putenv(envVar);
+
     if (result != 0) {
         // error. we have to delete the string.
         free(envVar);
     }
+
     return result == 0;
 #endif
 }
@@ -500,23 +551,28 @@ ProcInfo::getenv_wrapper(const char *varName)
 {
 #if defined(_MSC_VER) && _MSC_VER >= 1400
     size_t requiredSize = 0;
-    std::vector<char> buffer;
-    getenv_s(&requiredSize, 0, 0, varName);
-    if (requiredSize == 0)
+    const std::wstring name = StrUtils::utf8_to_utf16(varName);
+    std::vector<wchar_t> buffer;
+    _wgetenv_s(&requiredSize, 0, 0, name.c_str());
+
+    if (requiredSize == 0) {
         return std::string();
+    }
+
     buffer.resize(requiredSize);
-    getenv_s(&requiredSize, &buffer[0], requiredSize, varName);
+    _wgetenv_s(&requiredSize, &buffer[0], requiredSize, name.c_str());
     // requiredSize includes the terminating null, which we don't want.
-    assert(buffer[requiredSize - 1] == '\0');
-    std::string ret(&buffer[0]);
-    return ret;
+    assert(buffer[requiredSize - 1] == L'\0');
+    return StrUtils::utf16_to_utf8(std::wstring(buffer.data()));
 #else
-    char* v = ::getenv(varName);
+    char *v = ::getenv(varName);
+
     if (!v) {
         return std::string();
     } else {
         return std::string(v);
     }
+
 #endif
 }
 
@@ -526,44 +582,50 @@ ProcInfo::getenv_wrapper(const char *varName)
  * the command line arguments must be processed to be safe.
  **/
 void
-ProcInfo::ensureCommandLineArgsUtf8(int argc, char **argv, std::vector<std::string>* utf8Args)
+ProcInfo::ensureCommandLineArgsUtf8(int argc, char **argv, std::vector<std::string> *utf8Args)
 {
     assert(utf8Args);
 #ifndef __NATRON_WIN32__
     // On Unix, command line args are Utf8
     assert(!argc || argv);
+
     for (int i = 0; i < argc; ++i) {
         std::string str(argv[i]);
         assert(StrUtils::is_utf8(str.c_str()));
         utf8Args->push_back(str);
     }
+
 #else
     // On Windows, it must be converted: http://stackoverflow.com/questions/5408730/what-is-the-encoding-of-argv
     (void)argc;
     (void)argv;
 
     int nArgsOut;
-    wchar_t** argList = CommandLineToArgvW(GetCommandLineW(), &nArgsOut);
+    wchar_t **argList = CommandLineToArgvW(GetCommandLineW(), &nArgsOut);
+
     for (int i = 0; i < nArgsOut; ++i) {
         std::wstring wide(argList[i]);
         std::string utf8Str = StrUtils::utf16_to_utf8(wide);
         assert(StrUtils::is_utf8(utf8Str.c_str()));
         utf8Args->push_back(utf8Str);
+
         if (argv) {
             std::cout << "Non UTF-8 arg: " <<  argv[i] << std::endl;
         }
+
         std::cout << "UTF-8 arg: " <<  utf8Args->back() << std::endl;
     }
+
     // Free memory allocated for CommandLineToArgvW arguments.
     LocalFree(argList);
 
 
 #endif
-    
+
 }
 
 void
-ProcInfo::ensureCommandLineArgsUtf8(int argc, wchar_t **argv, std::vector<std::string>* utf8Args)
+ProcInfo::ensureCommandLineArgsUtf8(int argc, wchar_t **argv, std::vector<std::string> *utf8Args)
 {
     for (int i = 0; i < argc; ++i) {
         std::wstring ws(argv[i]);
@@ -590,17 +652,20 @@ ProcInfo::checkIfProcessIsRunning(const char* processAbsoluteFilePath,
 #if defined(__NATRON_WIN32__)
     (void)processAbsoluteFilePath;
     HANDLE processHandle = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
+
     if (!processHandle) {
 #ifdef DEBUG
         std::cerr << "checkIfProcessIsRunning: process " << pid << " is not running." << std::endl;
 #endif
         return false;
     }
+
     DWORD dwExitCode = 9999;
     //See https://login.live.com/login.srf?wa=wsignin1.0&rpsnv=12&checkda=1&ct=1451385015&rver=6.0.5276.0&wp=MCMBI&wlcxt=msdn%24msdn%24msdn&wreply=https%3a%2f%2fmsdn.microsoft.com%2fen-us%2flibrary%2fwindows%2fdesktop%2fms683189%2528v%3dvs.85%2529.aspx&lc=1033&id=254354&mkt=en-US
 
     bool caughtExitCode = GetExitCodeProcess(processHandle, &dwExitCode);
     CloseHandle(processHandle);
+
     if (caughtExitCode) {
 
         if (dwExitCode == STILL_ACTIVE) {
@@ -614,12 +679,14 @@ ProcInfo::checkIfProcessIsRunning(const char* processAbsoluteFilePath,
 #endif
         return false;
     }
+
 #elif defined(__NATRON_LINUX__)
     std::stringstream ss;
     ss << "/proc/" << (long)pid << "/stat";
     std::string procFile = ss.str();
     char buf[2048];
     std::size_t bufSize = sizeof(char) * 2048;
+
     if (readlink(procFile.c_str(), buf, bufSize) != -1) {
         //the file in /proc/ exists for the given PID
         //check that the path is the same than the given file path
@@ -634,14 +701,16 @@ ProcInfo::checkIfProcessIsRunning(const char* processAbsoluteFilePath,
     //Open the /proc/ file and check that the process is running
     FILE *fp = 0;
     fp = fopen(procFile.c_str(), "r");
+
     if (!fp) {
         return false;
     }
 
     char pname[512] = {0, };
     char state;
+
     //See http://man7.org/linux/man-pages/man5/proc.5.html
-    if ( ( fscanf(fp, "%lld (%[^)]) %c", &pid, pname, &state) ) != 3 ) {
+    if ((fscanf(fp, "%lld (%[^)]) %c", &pid, pname, &state)) != 3) {
 #ifdef DEBUG
         std::cerr << "ProcInfo::checkIfProcessIsRunning(): fscanf call on " << procFile << " failed";
 #endif
@@ -649,6 +718,7 @@ ProcInfo::checkIfProcessIsRunning(const char* processAbsoluteFilePath,
 
         return false;
     }
+
     //If the process is running, return true
     bool ret = state == 'R';
     fclose(fp);
@@ -678,15 +748,17 @@ ProcInfo::checkIfProcessIsRunning(const char* processAbsoluteFilePath,
 
     result = NULL;
     done = false;
+
     do {
         assert(result == NULL);
 
         // Call sysctl with a NULL buffer.
 
         length = 0;
-        err = sysctl( (int *) name, (sizeof(name) / sizeof(*name)) - 1,
+        err = sysctl((int *) name, (sizeof(name) / sizeof(*name)) - 1,
                      NULL, &length,
                      NULL, 0);
+
         if (err == -1) {
             err = errno;
         }
@@ -696,6 +768,7 @@ ProcInfo::checkIfProcessIsRunning(const char* processAbsoluteFilePath,
 
         if (err == 0) {
             result = (struct kinfo_proc *)malloc(length);
+
             if (result == NULL) {
                 err = ENOMEM;
             }
@@ -705,12 +778,14 @@ ProcInfo::checkIfProcessIsRunning(const char* processAbsoluteFilePath,
         // error, toss away our buffer and start again.
 
         if (err == 0) {
-            err = sysctl( (int *) name, (sizeof(name) / sizeof(*name)) - 1,
+            err = sysctl((int *) name, (sizeof(name) / sizeof(*name)) - 1,
                          result, &length,
                          NULL, 0);
+
             if (err == -1) {
                 err = errno;
             }
+
             if (err == 0) {
                 done = true;
             } else if (err == ENOMEM) {
@@ -724,19 +799,21 @@ ProcInfo::checkIfProcessIsRunning(const char* processAbsoluteFilePath,
 
     bool retval = false;
 
-    if ( (err == 0) && (length != 0) ) {
+    if ((err == 0) && (length != 0)) {
         //Process exist and is running, now check that it's actual path is the given one
         char pathbuf[PROC_PIDPATHINFO_MAXSIZE];
-        int len = proc_pidpath ( pid, pathbuf, sizeof(pathbuf));
+        int len = proc_pidpath(pid, pathbuf, sizeof(pathbuf));
+
         if (len > 0) {
             retval = !std::strcmp(pathbuf, processAbsoluteFilePath);
-        } else if ( (result->kp_proc.p_stat != SRUN) && (result->kp_proc.p_stat != SIDL) ) {
+        } else if ((result->kp_proc.p_stat != SRUN) && (result->kp_proc.p_stat != SIDL)) {
             //Process is not running
             retval = false;
         } else {
             retval = true;
         }
     }
+
     if (err != 0 && result != NULL) {
         free(result);
         result = NULL;

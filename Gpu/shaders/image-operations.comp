@@ -1,0 +1,97 @@
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(binding = 0, rgba32f) uniform readonly image2D processedImage;
+layout(binding = 1, rgba32f) uniform readonly image2D originalImage;
+layout(binding = 2, rgba32f) uniform readonly image2D maskImage;
+layout(binding = 3, rgba32f) uniform writeonly image2D outputImage;
+layout(binding = 4, std430) buffer Diagnostics { uint nanFlag; } diagnostics;
+layout(push_constant) uniform Parameters {
+    uvec4 region;
+    vec4 gain;
+    vec4 offset;
+    uint operation;
+    uint flags;
+    uint channels;
+    float amount;
+    ivec4 sampleOffset;
+} p;
+float decodeColor(float v, uint space)
+{
+    if (space == 1u) return v < .04045 ? (v < 0 ? 0 : v * (1. / 12.92)) : pow((v + .055) * (1. / 1.055), 2.4);
+    if (space == 2u) return v < .08145 ? (v < 0 ? 0 : v * (1. / 4.5)) : pow((v + .0993) * (1. / 1.0993), 1. / .45);
+    if (space == 3u) return v < 0 ? uintBitsToFloat(0x7fc00000u) : pow(v, 2.4);
+    return v;
+}
+float encodeColor(float v, uint space)
+{
+    if (space == 1u) return v < .0031308 ? (v < 0 ? 0 : v * 12.92) : 1.055 * pow(v, 1. / 2.4) - .055;
+    if (space == 2u) return v < .0181 ? (v < 0 ? 0 : v * 4.5) : 1.0993 * pow(v, .45) - .0993;
+    if (space == 3u) return v < 0 ? uintBitsToFloat(0x7fc00000u) : pow(v, 1. / 2.4);
+    return v;
+}
+void main()
+{
+    uvec2 local = gl_GlobalInvocationID.xy;
+    if (any(greaterThanEqual(local, p.region.zw))) return;
+    ivec2 position = ivec2(local + p.region.xy);
+    vec4 value;
+    if (p.operation == 3) {
+        imageStore(outputImage, position, p.offset);
+        return;
+    }
+    if (p.operation == 6) {
+        ivec2 first = 2 * position + p.sampleOffset.xy;
+        ivec2 size = imageSize(processedImage);
+        vec4 samples[4];
+        int count = 0;
+        for (int y = 0; y < 2; ++y) for (int x = 0; x < 2; ++x) {
+            ivec2 at = first + ivec2(x, y);
+            bool available = all(greaterThanEqual(at, ivec2(0))) && all(lessThan(at, size));
+            samples[y * 2 + x] = available ? imageLoad(processedImage, at) : vec4(0);
+            if (available) ++count;
+        }
+        precise vec4 average = (samples[0] + samples[1] + samples[2] + samples[3]) / float(count);
+        imageStore(outputImage, position, average);
+        return;
+    }
+    if (p.operation == 7) {
+        ivec2 source = (position + p.sampleOffset.xy) / p.sampleOffset.z;
+        imageStore(outputImage, position, imageLoad(processedImage, source));
+        return;
+    }
+    value = imageLoad(processedImage, position);
+    if (p.operation == 0) {
+        value = value * p.gain + p.offset;
+    } else if (p.operation == 8) {
+        value.a = 1;
+    } else if (p.operation == 4) {
+        if (p.flags != p.channels) {
+            for (uint c = 0; c < 3; ++c) value[c] = encodeColor(decodeColor(value[c], p.flags), p.channels);
+        }
+    } else if (p.operation == 5) {
+        bvec4 invalid = isnan(value);
+        if (any(invalid)) {
+            atomicOr(diagnostics.nanFlag, 1u);
+            if (p.flags != 0u) value = mix(value, vec4(1), invalid);
+        }
+        if (p.flags == 0u) return;
+    } else {
+        vec4 original = (p.flags & 1u) != 0u ? imageLoad(originalImage, position) : vec4(0);
+        if (p.operation == 1) {
+            float weight = 1;
+            if ((p.flags & 2u) != 0u) {
+                weight = (p.flags & 4u) != 0u ? imageLoad(maskImage, position).a : 0;
+                if ((p.flags & 8u) != 0u) weight = 1 - weight;
+            }
+            float alpha = p.amount * weight;
+            // Match CPU mask/mix endpoints without multiplying NaNs by zero.
+            if (alpha == 0) value = original;
+            else if (alpha != 1) value = value * alpha + original * (1 - alpha);
+        } else {
+            for (uint c = 0; c < 4; ++c) {
+                if ((p.channels & (1u << c)) != 0u) value[c] = original[c];
+            }
+        }
+    }
+    imageStore(outputImage, position, value);
+}

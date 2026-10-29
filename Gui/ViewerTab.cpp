@@ -35,6 +35,8 @@
 #include <QAction>
 #include <QVBoxLayout>
 #include <QCheckBox>
+#include <QToolButton>
+#include <QSignalBlocker>
 #include <QPalette>
 
 #include "Engine/Node.h"
@@ -60,6 +62,8 @@
 #include "Gui/SpinBox.h"
 #include "Gui/TimeLineGui.h"
 #include "Gui/ViewerGL.h"
+#include "Gui/Scene3DViewer.h"
+#include "Gui/StageOutline.h"
 
 
 NATRON_NAMESPACE_ENTER
@@ -134,6 +138,7 @@ ViewerTab::ViewerTab(const std::list<NodeGuiPtr> & existingNodesContext,
     QFontMetrics fm(font(), 0);
 
     _imp->firstSettingsRow = new QWidget(this);
+    _imp->firstSettingsRow->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     _imp->firstRowLayout = new QHBoxLayout(_imp->firstSettingsRow);
     _imp->firstSettingsRow->setLayout(_imp->firstRowLayout);
     _imp->firstRowLayout->setContentsMargins(0, 0, 0, 0);
@@ -319,7 +324,7 @@ ViewerTab::ViewerTab(const std::list<NodeGuiPtr> & existingNodesContext,
     _imp->refreshButton->setFixedSize(buttonSize);
     _imp->refreshButton->setIconSize(buttonIconSize);
     {
-        QKeySequence seq(Qt::CTRL + Qt::SHIFT);
+        QKeySequence seq(Qt::CTRL | Qt::SHIFT);
         std::list<std::string> refreshActions;
         refreshActions.push_back(kShortcutIDActionRefresh);
         refreshActions.push_back(kShortcutIDActionRefreshWithStats);
@@ -338,7 +343,7 @@ ViewerTab::ViewerTab(const std::list<NodeGuiPtr> & existingNodesContext,
     _imp->pauseButton->setChecked(false);
     _imp->pauseButton->setDown(false);
     {
-        QKeySequence seq(Qt::CTRL + Qt::SHIFT);
+        QKeySequence seq(Qt::CTRL | Qt::SHIFT);
         std::list<std::string> actions;
         actions.push_back(kShortcutIDActionPauseViewerInputA);
         actions.push_back(kShortcutIDActionPauseViewer);
@@ -409,6 +414,9 @@ ViewerTab::ViewerTab(const std::list<NodeGuiPtr> & existingNodesContext,
 
     /*2nd row of buttons*/
     _imp->secondSettingsRow = new QWidget(this);
+    // Gain/gamma sliders expand vertically by default. A toolbar row must
+    // keep its natural height when either the 2D or 3D viewport is resized.
+    _imp->secondSettingsRow->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     _imp->secondRowLayout = new QHBoxLayout(_imp->secondSettingsRow);
     _imp->secondSettingsRow->setLayout(_imp->secondRowLayout);
     _imp->secondRowLayout->setSpacing(0);
@@ -589,7 +597,36 @@ ViewerTab::ViewerTab(const std::list<NodeGuiPtr> & existingNodesContext,
         _imp->viewer->resetWipeControls();
     }
 
-    _imp->viewerSubContainerLayout->addWidget(_imp->viewer);
+    _imp->viewerSubContainerLayout->addWidget(_imp->viewer, 1);
+    auto sceneViewer = new Scene3DViewer(this);
+    sceneViewer->hide();
+    _imp->viewerSubContainerLayout->addWidget(sceneViewer, 1);
+    getGui()->getStageOutline()->registerViewer(sceneViewer);
+    auto threeD = new QToolButton(_imp->firstSettingsRow);
+    threeD->setObjectName("Viewer3DToggle");
+    threeD->setText(tr("3D")); threeD->setCheckable(true);
+    threeD->setToolTip(tr("Switch between the 2D image and 3D scene"));
+    _imp->firstRowLayout->addWidget(threeD);
+    auto cameraView = new QToolButton(_imp->firstSettingsRow);
+    cameraView->setObjectName("Viewer3DCamera");cameraView->setText(tr("Camera"));cameraView->setCheckable(true);cameraView->hide();
+    _imp->firstRowLayout->addWidget(cameraView);
+    auto gizmoTool = new ComboBox(_imp->firstSettingsRow);
+    gizmoTool->setObjectName("Viewer3DGizmo");gizmoTool->addItem(tr("Move (W)"));gizmoTool->addItem(tr("Rotate (E)"));gizmoTool->addItem(tr("Scale (R)"));gizmoTool->hide();
+    _imp->firstRowLayout->addWidget(gizmoTool);
+    auto points=new QToolButton(_imp->firstSettingsRow);points->setObjectName("Viewer3DPoints");points->setText(tr("Points"));points->setCheckable(true);points->hide();
+    points->setToolTip(tr("Select reconstruction landmarks (P). Shift-click adds/removes; SceneSetup controls set ground, scale and placement."));_imp->firstRowLayout->addWidget(points);
+    connect(points,&QToolButton::toggled,sceneViewer,&Scene3DViewer::setPointSelectionMode);
+    connect(sceneViewer,&Scene3DViewer::pointSelectionModeChanged,points,[points](bool enabled){QSignalBlocker block(points);points->setChecked(enabled);});
+    auto outlineToggle=new QToolButton(_imp->firstSettingsRow);outlineToggle->setObjectName("Viewer3DOutline");outlineToggle->setText(tr("Outline"));outlineToggle->setToolTip(tr("Open or focus the dockable Stage Outline panel"));_imp->firstRowLayout->addWidget(outlineToggle);
+    connect(outlineToggle,&QToolButton::clicked,this,[this]{getGui()->setActiveViewer(this);getGui()->showStageOutline();});
+    connect(threeD, &QToolButton::toggled, this, [this, sceneViewer, cameraView, gizmoTool,points](bool on) {
+        _imp->viewer->setVisible(!on);sceneViewer->setVisible(on);cameraView->setVisible(on);gizmoTool->setVisible(on);points->setVisible(on);
+        if(on){sceneViewer->refreshScene();sceneViewer->setFocus();}
+    });
+    connect(cameraView, &QToolButton::toggled, sceneViewer, &Scene3DViewer::setLookThroughCamera);
+    connect(sceneViewer, &Scene3DViewer::lookThroughCameraChanged, cameraView, [cameraView](bool checked){QSignalBlocker blocker(cameraView);cameraView->setChecked(checked);});
+    connect(gizmoTool, qOverload<int>(&ComboBox::currentIndexChanged), sceneViewer, [sceneViewer](int mode){sceneViewer->setGizmoMode(mode);sceneViewer->setFocus();});
+    connect(sceneViewer, &Scene3DViewer::gizmoModeChanged, gizmoTool, &ComboBox::setCurrentIndex);
     for (int i = 0; i < 2; ++i) {
         _imp->viewerSubContainerLayout->addWidget(_imp->infoWidget[i]);
         if (i == 1) {
@@ -600,7 +637,7 @@ ViewerTab::ViewerTab(const std::list<NodeGuiPtr> & existingNodesContext,
 
     _imp->viewerLayout->addWidget(_imp->viewerSubContainer);
 
-    _imp->mainLayout->addWidget(_imp->viewerContainer);
+    _imp->mainLayout->addWidget(_imp->viewerContainer, 1);
     /*=============================================*/
 
     /*=============================================*/

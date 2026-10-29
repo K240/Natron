@@ -1,0 +1,187 @@
+; SPDX-License-Identifier: GPL-2.0-or-later
+; Natron authored FBX 7.4 animation: parent/child translation, two takes.
+FBXHeaderExtension: {
+    FBXHeaderVersion: 1003
+    FBXVersion: 7400
+}
+GlobalSettings: {
+    Version: 1000
+    Properties70: {
+        P: "UpAxis", "int", "Integer", "",1
+        P: "UpAxisSign", "int", "Integer", "",1
+        P: "FrontAxis", "int", "Integer", "",2
+        P: "FrontAxisSign", "int", "Integer", "",1
+        P: "CoordAxis", "int", "Integer", "",0
+        P: "CoordAxisSign", "int", "Integer", "",1
+        P: "TimeMode", "enum", "", "",11
+        P: "UnitScaleFactor", "double", "Number", "",1
+    }
+}
+Objects: {
+    Geometry: 100, "Geometry::Cube", "Mesh" {
+        Vertices: *24 {
+            a: -100,-100,-100,100,-100,-100,100,100,-100,-100,100,-100,-100,-100,100,100,-100,100,100,100,100,-100,100,100
+        }
+        PolygonVertexIndex: *24 {
+            a: 4,5,6,-8,1,0,3,-3,0,4,7,-4,5,1,2,-7,7,6,2,-4,0,1,5,-5
+        }
+        LayerElementUV: 0 {
+            Version: 101
+            Name: "UVMap"
+            MappingInformationType: "ByPolygonVertex"
+            ReferenceInformationType: "IndexToDirect"
+            UV: *8 { a: 0,0,1,0,1,1,0,1 }
+            UVIndex: *24 { a: 0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3,0,1,2,3 }
+        }
+        LayerElementMaterial: 0 {
+            Version: 101
+            Name: ""
+            MappingInformationType: "ByPolygon"
+            ReferenceInformationType: "IndexToDirect"
+            Materials: *6 { a: 0,1,1,0,1,0 }
+        }
+        Layer: 0 {
+            Version: 100
+            LayerElement: { Type: "LayerElementUV" TypedIndex: 0 }
+            LayerElement: { Type: "LayerElementMaterial" TypedIndex: 0 }
+        }
+    }
+    Model: 200, "Model::Cube", "Mesh" {
+        Version: 232
+        Properties70: {
+            P: "Lcl Translation", "Lcl Translation", "", "A",0,0,0
+            P: "Lcl Rotation", "Lcl Rotation", "", "A",0,0,0
+            P: "Lcl Scaling", "Lcl Scaling", "", "A",1,1,1
+        }
+        Shading: T
+        Culling: "CullingOff"
+    }
+    Material: 300, "Material::Warm", "" {
+        Version: 102
+        ShadingModel: "phong"
+        Properties70: {
+            P: "DiffuseColor", "Color", "", "A",0.8,0.2,0.06
+            P: "DiffuseFactor", "Number", "", "A",1
+        }
+    }
+    Material: 301, "Material::Cool", "" {
+        Version: 102
+        ShadingModel: "phong"
+        Properties70: {
+            P: "DiffuseColor", "Color", "", "A",0.05,0.35,0.8
+            P: "DiffuseFactor", "Number", "", "A",1
+        }
+    }
+    Model: 201, "Model::Parent", "Null" {
+        Version: 232
+        Properties70: {
+            P: "Visibility", "Visibility", "", "A",1
+            P: "Lcl Translation", "Lcl Translation", "", "A",0,0,0
+            P: "Lcl Rotation", "Lcl Rotation", "", "A",0,0,0
+            P: "Lcl Scaling", "Lcl Scaling", "", "A",1,1,1
+        }
+    }
+    AnimationStack: 400, "AnimStack::Move", "" {
+        Properties70: {
+            P: "LocalStart", "KTime", "Time", "",46186158000
+            P: "LocalStop", "KTime", "Time", "",92372316000
+        }
+    }
+    AnimationLayer: 401, "AnimLayer::Base", "" {}
+    AnimationCurveNode: 402, "AnimCurveNode::T", "" {
+        Properties70: {
+            P: "d|X", "Number", "", "A",0
+            P: "d|Y", "Number", "", "A",0
+            P: "d|Z", "Number", "", "A",0
+        }
+    }
+    AnimationCurve: 403, "AnimCurve::Curve", "" {
+        Default: 0
+        KeyVer: 4008
+        KeyTime: *2 { a: 46186158000,92372316000 }
+        KeyValueFloat: *2 { a: 0,100 }
+        KeyAttrFlags: *1 { a: 24836 }
+        KeyAttrDataFloat: *4 { a: 0,0,0,0 }
+        KeyAttrRefCount: *1 { a: 2 }
+    }
+    AnimationCurveNode: 404, "AnimCurveNode::T", "" {
+        Properties70: {
+            P: "d|X", "Number", "", "A",0
+            P: "d|Y", "Number", "", "A",0
+            P: "d|Z", "Number", "", "A",0
+        }
+    }
+    AnimationCurve: 405, "AnimCurve::Curve", "" {
+        Default: 0
+        KeyVer: 4008
+        KeyTime: *2 { a: 46186158000,92372316000 }
+        KeyValueFloat: *2 { a: 0,100 }
+        KeyAttrFlags: *1 { a: 24836 }
+        KeyAttrDataFloat: *4 { a: 0,0,0,0 }
+        KeyAttrRefCount: *1 { a: 2 }
+    }
+    AnimationStack: 500, "AnimStack::Scale", "" {
+        Properties70: {
+            P: "LocalStart", "KTime", "Time", "",0
+            P: "LocalStop", "KTime", "Time", "",46186158000
+        }
+    }
+    AnimationLayer: 501, "AnimLayer::Base", "" {}
+    AnimationCurveNode: 502, "AnimCurveNode::T", "" {
+        Properties70: {
+            P: "d|X", "Number", "", "A",1
+            P: "d|Y", "Number", "", "A",1
+            P: "d|Z", "Number", "", "A",1
+        }
+    }
+    AnimationCurve: 503, "AnimCurve::Curve", "" {
+        Default: 1
+        KeyVer: 4008
+        KeyTime: *2 { a: 0,46186158000 }
+        KeyValueFloat: *2 { a: 1,2 }
+        KeyAttrFlags: *1 { a: 24836 }
+        KeyAttrDataFloat: *4 { a: 0,0,0,0 }
+        KeyAttrRefCount: *1 { a: 2 }
+    }
+    AnimationStack: 600, "AnimStack::Hide", "" {
+        Properties70: {
+            P: "LocalStart", "KTime", "Time", "",0
+            P: "LocalStop", "KTime", "Time", "",46186158000
+        }
+    }
+    AnimationLayer: 601, "AnimLayer::Base", "" {}
+    AnimationCurveNode: 602, "AnimCurveNode::Visibility", "" {
+        Properties70: { P: "d|X", "Number", "", "A",1 }
+    }
+    AnimationCurve: 603, "AnimCurve::Visibility", "" {
+        Default: 1
+        KeyVer: 4008
+        KeyTime: *2 { a: 0,46186158000 }
+        KeyValueFloat: *2 { a: 1,0 }
+        KeyAttrFlags: *1 { a: 24836 }
+        KeyAttrDataFloat: *4 { a: 0,0,0,0 }
+        KeyAttrRefCount: *1 { a: 2 }
+    }
+}
+Connections: {
+    C: "OO",100,200
+    C: "OO",200,201
+    C: "OO",300,200
+    C: "OO",301,200
+    C: "OO",201,0
+    C: "OO",401,400
+    C: "OO",402,401
+    C: "OP",402,201,"Lcl Translation"
+    C: "OP",403,402,"d|X"
+    C: "OO",404,401
+    C: "OP",404,200,"Lcl Translation"
+    C: "OP",405,404,"d|Z"
+    C: "OO",501,500
+    C: "OO",502,501
+    C: "OP",502,200,"Lcl Scaling"
+    C: "OP",503,502,"d|Y"
+    C: "OO",601,600
+    C: "OO",602,601
+    C: "OP",602,201,"Visibility"
+    C: "OP",603,602,"d|X"
+}

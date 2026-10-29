@@ -1,0 +1,43 @@
+#usda 1.0
+(
+    subLayers = [@textured.usda@]
+    defaultPrim = "World"
+    metersPerUnit = 1
+    upAxis = "Y"
+    startTimeCode = 10
+    endTimeCode = 58
+    timeCodesPerSecond = 48
+    framesPerSecond = 24
+)
+over "World" {
+    over "Animated" {
+        over "Surface" {
+            over "Shader" {
+                normal3f inputs:normal.connect = </World/Animated/Surface/Normal.outputs:rgb>
+                float inputs:roughness.connect = </World/Animated/Surface/ORM.outputs:g>
+                float inputs:metallic.connect = </World/Animated/Surface/ORM.outputs:b>
+            }
+            def Shader "Normal" {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @textures/normal.png@
+                token inputs:sourceColorSpace = "raw"
+                token inputs:wrapS = "repeat"
+                token inputs:wrapT = "repeat"
+                float4 inputs:scale = (2,2,2,1)
+                float4 inputs:bias = (-1,-1,-1,0)
+                float2 inputs:st.connect = </World/Animated/Surface/Transform.outputs:result>
+                float3 outputs:rgb
+            }
+            def Shader "ORM" {
+                uniform token info:id = "UsdUVTexture"
+                asset inputs:file = @textures/orm.png@
+                token inputs:sourceColorSpace = "raw"
+                token inputs:wrapS = "repeat"
+                token inputs:wrapT = "repeat"
+                float2 inputs:st.connect = </World/Animated/Surface/UV.outputs:result>
+                float outputs:g
+                float outputs:b
+            }
+        }
+    }
+}

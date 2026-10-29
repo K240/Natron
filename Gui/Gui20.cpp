@@ -34,7 +34,7 @@
 #include <stdexcept>
 
 #include <QTextStream>
-#include <QSettings>
+#include "Global/AppSettings.h"
 #include <QFile>
 #include <QFileInfo>
 
@@ -56,10 +56,12 @@
 #include "Gui/GuiApplicationManager.h" // appPTR
 #include "Gui/GuiPrivate.h"
 #include "Gui/Histogram.h"
+#include "Gui/StageOutline.h"
 #include "Gui/Menu.h"
 #include "Gui/NodeGraph.h"
 #include "Gui/NodeGui.h"
 #include "Gui/ProjectGui.h"
+#include "Gui/PropertiesBinWrapper.h"
 #include "Gui/SequenceFileDialog.h"
 #include "Gui/Splitter.h"
 #include "Gui/TabWidget.h"
@@ -442,6 +444,36 @@ Gui::registerTab(PanelWidget* tab,
     if ( registeredTab == _imp->_registeredTabs.end() ) {
         _imp->_registeredTabs.insert( std::make_pair( name, std::make_pair(tab, obj) ) );
     }
+}
+
+StageOutline*
+Gui::getStageOutline() const
+{
+    return _imp->_stageOutline;
+}
+
+void
+Gui::showStageOutline()
+{
+    auto outline = getStageOutline();
+    auto pane = outline->getParentPane();
+    if (!pane) {
+        // Start beside the Viewer; subsequent opens retain the user's placement.
+        pane = _imp->_propertiesBin->getParentPane();
+        if (pane) {
+            TabWidget::moveTab(outline, outline, pane);
+        } else {
+            appendTabToDefaultViewerPane(outline, outline);
+            pane = outline->getParentPane();
+        }
+    }
+    if (pane) {
+        const auto names = pane->getTabScriptNames();
+        pane->makeCurrentTab(names.indexOf(QStringLiteral("stageOutline")));
+        pane->window()->raise();
+    }
+    outline->refreshSource();
+    getApp()->triggerAutoSave();
 }
 
 void
@@ -1091,7 +1123,7 @@ Gui::openProjectInternal(const std::string & absoluteFileName,
         }
     }
 
-    QSettings settings;
+    AppSettings settings;
     QStringList recentFiles = settings.value( QString::fromUtf8("recentFileList") ).toStringList();
     recentFiles.removeAll( QString::fromUtf8( absoluteFileName.c_str() ) );
     recentFiles.prepend( QString::fromUtf8( absoluteFileName.c_str() ) );
@@ -1108,7 +1140,7 @@ Gui::openProjectInternal(const std::string & absoluteFileName,
 static void
 updateRecentFiles(const QString & filename)
 {
-    QSettings settings;
+    AppSettings settings;
     QStringList recentFiles = settings.value( QString::fromUtf8("recentFileList") ).toStringList();
 
     recentFiles.removeAll(filename);

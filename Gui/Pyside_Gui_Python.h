@@ -31,11 +31,7 @@
 
 #include "Global/Macros.h"
 
-#ifdef SBK2_RUN
-#include <pyside2_global.h>
-#else
 #include <pyside6_global.h>
-#endif
 
 #include <QSize>
 #include <QObject>

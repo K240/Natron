@@ -28,12 +28,11 @@
 
 #include "Global/Macros.h"
 
-#include "Global/GLIncludes.h" //!<must be included before QGlWidget because of gl.h and glew.h
+#include "Engine/OverlayDrawList.h"
 
 #include "Gui/CurveEditorUndoRedo.h" // MoveTangentCommand
 #include "Gui/CurveGui.h"
 #include "Gui/Menu.h"
-#include "Gui/TextRenderer.h"
 #include "Gui/ZoomContext.h"
 #include "Gui/GuiFwd.h"
 #include "Engine/OfxOverlayInteract.h"
@@ -47,8 +46,7 @@ NATRON_NAMESPACE_ENTER
 
 /*****************************CURVE WIDGET***********************************************/
 
-enum EventStateEnum
-{
+enum EventStateEnum {
     eEventStateDraggingView = 0,
     eEventStateDraggingKeys,
     eEventStateSelecting,
@@ -80,16 +78,16 @@ public:
 
     ~CurveWidgetPrivate();
 
-    void drawSelectionRectangle(double screenPixelRatio);
+    void drawSelectionRectangle();
 
     void refreshTimelinePositions();
 
-    void drawTimelineMarkers(double screenPixelRatio);
+    void drawTimelineMarkers();
 
-    void drawCurves(double screenPixelRatio);
+    void drawCurves();
 
-    void drawScale(double screenPixelRatio);
-    void drawSelectedKeyFramesBbox(double screenPixelRatio);
+    void drawScale();
+    void drawSelectedKeyFramesBbox();
 
     /**
      * @brief Returns whether the click at position pt is nearby the curve.
@@ -152,11 +150,11 @@ public:
     QPoint _lastMousePos; /// the last click pressed, in widget coordinates [ (0,0) == top left corner ]
     ZoomContext zoomCtx;
     EventStateEnum _state;
-    Menu* _rightClickMenu;
+    Menu *_rightClickMenu;
     QColor _selectedCurveColor;
     QColor _nextCurveAddedColor;
-    TextRenderer textRenderer;
-    double _screenPixelRatio;
+    OverlayDrawList commands;
+    bool backgroundDispatching = false;
     std::unique_ptr<QFont> _textFont;
     Curves _curves;
     SelectedKeys _selectedKeyFrames;
@@ -176,8 +174,7 @@ public:
     bool _evaluateOnPenUp; //< true if we must re-evaluate the nodes associated to the selected keyframes on penup
     QPointF _keyDragLastMovement;
     std::unique_ptr<QUndoStack> _undoStack;
-    Gui* _gui;
-    GLuint savedTexture;
+    Gui *_gui;
     QSize sizeH;
     bool zoomOrPannedSinceLastFit;
 
@@ -185,11 +182,11 @@ private:
 
     QPolygonF _timelineTopPoly;
     QPolygonF _timelineBtmPoly;
-    CurveWidget* _widget;
+    CurveWidget *_widget;
 
 public:
 
-    CurveSelection* _selectionModel;
+    CurveSelection *_selectionModel;
 };
 
 NATRON_NAMESPACE_EXIT

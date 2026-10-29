@@ -137,12 +137,8 @@ public:
     /// @see OfxDialogSuiteV1.NotifyRedrawPending()
     virtual OfxStatus notifyRedrawPending(OfxImageEffectHandle instance, OfxPropertySetHandle inArgs) OVERRIDE;
 #endif
-#ifdef OFX_SUPPORTS_OPENGLRENDER
-    /// @see OfxImageEffectOpenGLRenderSuiteV1.flushResources()
-    virtual OfxStatus flushOpenGLResources() const OVERRIDE;
-#endif
 
-    virtual OFX::Host::Memory::Instance* newMemoryInstance(size_t nBytes) OVERRIDE FINAL WARN_UNUSED_RETURN;
+    virtual OFX::Host::Memory::Instance *newMemoryInstance(size_t nBytes) OVERRIDE FINAL WARN_UNUSED_RETURN;
     AbstractOfxEffectInstancePtr createOfxEffect(NodePtr node,
                                                                  const CreateNodeArgs& args
 #ifndef NATRON_ENABLE_IO_META_NODES

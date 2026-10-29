@@ -24,7 +24,7 @@ CLANG_DIAG_OFF(uninitialized)
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QMargins>
-#include <QSettings>
+#include "Global/AppSettings.h"
 #include <QShortcut>
 #include <QKeySequence>
 #include <QPixmap>
@@ -53,10 +53,10 @@ ColorSelectorPaletteButton::ColorSelectorPaletteButton(QWidget *parent)
 }
 
 ColorSelectorPaletteButton::ColorSelectorPaletteButton(float r,
-                                                       float g,
-                                                       float b,
-                                                       float a,
-                                                       QWidget *parent)
+        float g,
+        float b,
+        float a,
+        QWidget *parent)
     : Button(parent)
     , _r(r)
     , _g(g)
@@ -127,13 +127,13 @@ ColorSelectorPaletteButton::updateColor(bool signal)
     QPixmap pixColor(COLOR_SELECTOR_PALETTE_ICON_SIZE,
                      COLOR_SELECTOR_PALETTE_ICON_SIZE);
     pixColor.fill(color);
-    setIcon( QIcon(pixColor) );
-    setToolTip( QString::fromUtf8("R: %1\nG: %2\nB: %3\nA: %4\n\n%5")
-                .arg(_r)
-                .arg(_g)
-                .arg(_b)
-                .arg(_a)
-                .arg( tr("Clear color with right-click.") ) );
+    setIcon(QIcon(pixColor));
+    setToolTip(QString::fromUtf8("R: %1\nG: %2\nB: %3\nA: %4\n\n%5")
+               .arg(_r)
+               .arg(_g)
+               .arg(_b)
+               .arg(_a)
+               .arg(tr("Clear color with right-click.")));
 
     if (signal) {
         Q_EMIT colorChanged(_r, _g, _b, _a);
@@ -143,12 +143,12 @@ ColorSelectorPaletteButton::updateColor(bool signal)
 void
 ColorSelectorPaletteButton::initButton()
 {
-    setIconSize( QSize(COLOR_SELECTOR_PALETTE_ICON_SIZE,
-                       COLOR_SELECTOR_PALETTE_ICON_SIZE) );
-    setStyleSheet( QString::fromUtf8("QPushButton { border: 0; background-color: transparent; }") );
+    setIconSize(QSize(COLOR_SELECTOR_PALETTE_ICON_SIZE,
+                      COLOR_SELECTOR_PALETTE_ICON_SIZE));
+    setStyleSheet(QString::fromUtf8("QPushButton { border: 0; background-color: transparent; }"));
 
-    QObject::connect( this, SIGNAL( clicked() ),
-                      this, SLOT( buttonClicked() ) );
+    QObject::connect(this, SIGNAL(clicked()),
+                     this, SLOT(buttonClicked()));
 
     updateColor(false);
 }
@@ -165,36 +165,37 @@ ColorSelectorPaletteButton::mouseReleaseEvent(QMouseEvent *e)
     if (e->button() == Qt::RightButton) {
         clearColor();
     }
+
     Button::mouseReleaseEvent(e);
 }
 
 ColorSelectorWidget::ColorSelectorWidget(bool withAlpha, QWidget *parent)
-  : QWidget(parent)
-  , _spinR(0)
-  , _spinG(0)
-  , _spinB(0)
-  , _spinH(0)
-  , _spinS(0)
-  , _spinV(0)
-  , _spinA(0)
-  , _slideR(0)
-  , _slideG(0)
-  , _slideB(0)
-  , _slideH(0)
-  , _slideS(0)
-  , _slideV(0)
-  , _slideA(0)
-  , _triangle(0)
-  , _hex(0)
-  , _buttonColorGroup(0)
-  , _stack(0)
+    : QWidget(parent)
+    , _spinR(0)
+    , _spinG(0)
+    , _spinB(0)
+    , _spinH(0)
+    , _spinS(0)
+    , _spinV(0)
+    , _spinA(0)
+    , _slideR(0)
+    , _slideG(0)
+    , _slideB(0)
+    , _slideH(0)
+    , _slideS(0)
+    , _slideV(0)
+    , _slideA(0)
+    , _triangle(0)
+    , _hex(0)
+    , _buttonColorGroup(0)
+    , _stack(0)
 {
     QVBoxLayout *mainLayout = new QVBoxLayout(this);
 
     // colortriangle
     _triangle = new QtColorTriangle(this);
     // position the triangle properly before usage
-    _triangle->setColor( QColor::fromHsvF(0.0, 0.0, 0.0, 1.0) );
+    _triangle->setColor(QColor::fromHsvF(0.0, 0.0, 0.0, 1.0));
     _triangle->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
     // sliders
@@ -246,6 +247,7 @@ ColorSelectorWidget::ColorSelectorWidget(bool withAlpha, QWidget *parent)
                                      NULL,
                                      eScaleTypeLinear,
                                      this);
+
     if (withAlpha) {
         _slideA = new ScaleSliderQWidget(0.,
                                          1.,
@@ -256,12 +258,14 @@ ColorSelectorWidget::ColorSelectorWidget(bool withAlpha, QWidget *parent)
                                          eScaleTypeLinear,
                                          this);
     }
+
     _slideR->setMinimumAndMaximum(0., 1.);
     _slideG->setMinimumAndMaximum(0., 1.);
     _slideB->setMinimumAndMaximum(0., 1.);
     _slideH->setMinimumAndMaximum(0., 1.);
     _slideS->setMinimumAndMaximum(0., 1.);
     _slideV->setMinimumAndMaximum(0., 1.);
+
     if (_slideA) {
         _slideA->setMinimumAndMaximum(0., 1.);
     }
@@ -272,16 +276,18 @@ ColorSelectorWidget::ColorSelectorWidget(bool withAlpha, QWidget *parent)
     _slideH->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     _slideS->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     _slideV->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
     if (_slideA) {
         _slideA->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     }
 
     // set line color to match channel (R/G/B/A)
-    _slideR->setUseLineColor(true, QColor(200, 70, 70) );
-    _slideG->setUseLineColor(true, QColor(86, 166, 66) );
-    _slideB->setUseLineColor(true, QColor(83, 121, 180) );
+    _slideR->setUseLineColor(true, QColor(200, 70, 70));
+    _slideG->setUseLineColor(true, QColor(86, 166, 66));
+    _slideB->setUseLineColor(true, QColor(83, 121, 180));
+
     if (_slideA) {
-        _slideA->setUseLineColor(true, QColor(215, 215, 215) );
+        _slideA->setUseLineColor(true, QColor(215, 215, 215));
     }
 
     // override "knob" color on sliders
@@ -291,6 +297,7 @@ ColorSelectorWidget::ColorSelectorWidget(bool withAlpha, QWidget *parent)
     _slideH->setUseSliderColor(true, Qt::white);
     _slideS->setUseSliderColor(true, Qt::white);
     _slideV->setUseSliderColor(true, Qt::white);
+
     if (_slideA) {
         _slideA->setUseSliderColor(true, Qt::white);
     }
@@ -302,6 +309,7 @@ ColorSelectorWidget::ColorSelectorWidget(bool withAlpha, QWidget *parent)
     _spinH = new SpinBox(this, SpinBox::eSpinBoxTypeDouble);
     _spinS = new SpinBox(this, SpinBox::eSpinBoxTypeDouble);
     _spinV = new SpinBox(this, SpinBox::eSpinBoxTypeDouble);
+
     if (_slideA) {
         _spinA = new SpinBox(this, SpinBox::eSpinBoxTypeDouble);
     }
@@ -312,6 +320,7 @@ ColorSelectorWidget::ColorSelectorWidget(bool withAlpha, QWidget *parent)
     _spinH->decimals(3);
     _spinS->decimals(3);
     _spinV->decimals(3);
+
     if (_slideA) {
         _spinA->decimals(3);
     }
@@ -322,6 +331,7 @@ ColorSelectorWidget::ColorSelectorWidget(bool withAlpha, QWidget *parent)
     _spinH->setIncrement(0.01);
     _spinS->setIncrement(0.01);
     _spinV->setIncrement(0.01);
+
     if (_slideA) {
         _spinA->setIncrement(0.01);
     }
@@ -338,17 +348,19 @@ ColorSelectorWidget::ColorSelectorWidget(bool withAlpha, QWidget *parent)
     _spinS->setMinimum(0.);
     _spinV->setMaximum(1.);
     _spinV->setMinimum(0.);
+
     if (_slideA) {
         _spinA->setMaximum(1.);
         _spinA->setMinimum(0.);
     }
 
     // set color to match channel (R/G/B/A)
-    _spinR->setUseLineColor(true, QColor(200, 70, 70) );
-    _spinG->setUseLineColor(true, QColor(86, 166, 66) );
-    _spinB->setUseLineColor(true, QColor(83, 121, 180) );
+    _spinR->setUseLineColor(true, QColor(200, 70, 70));
+    _spinG->setUseLineColor(true, QColor(86, 166, 66));
+    _spinB->setUseLineColor(true, QColor(83, 121, 180));
+
     if (_slideA) {
-        _spinA->setUseLineColor(true, QColor(215, 215, 215) );
+        _spinA->setUseLineColor(true, QColor(215, 215, 215));
     }
 
     // hex
@@ -381,32 +393,36 @@ ColorSelectorWidget::ColorSelectorWidget(bool withAlpha, QWidget *parent)
     Button *paletteAddColorButton = new Button(QObject::tr("Add"), this);
     Button *paletteClearButton = new Button(QObject::tr("Clear"), this);
 
-    QShortcut *addPaletteColorShortcut = new QShortcut(QKeySequence( QObject::tr("Shift+A") ), this);
-    QShortcut *clearPaletteColorsShortcut = new QShortcut(QKeySequence( QObject::tr("Shift+C") ), this);
+    QShortcut *addPaletteColorShortcut = new QShortcut(QKeySequence(QObject::tr("Shift+A")), this);
+    QShortcut *clearPaletteColorsShortcut = new QShortcut(QKeySequence(QObject::tr("Shift+C")), this);
 
     // set triangle size
     setTriangleSize();
 
     // set object names (for stylesheet)
-    _spinR->setObjectName( QString::fromUtf8("ColorSelectorRed") );
-    _spinG->setObjectName( QString::fromUtf8("ColorSelectorGreen") );
-    _spinB->setObjectName( QString::fromUtf8("ColorSelectorBlue") );
+    _spinR->setObjectName(QString::fromUtf8("ColorSelectorRed"));
+    _spinG->setObjectName(QString::fromUtf8("ColorSelectorGreen"));
+    _spinB->setObjectName(QString::fromUtf8("ColorSelectorBlue"));
+
     if (_slideA) {
-        _spinA->setObjectName( QString::fromUtf8("ColorSelectorAlpha") );
+        _spinA->setObjectName(QString::fromUtf8("ColorSelectorAlpha"));
     }
-    _spinH->setObjectName( QString::fromUtf8("ColorSelectorHue") );
-    _spinS->setObjectName( QString::fromUtf8("ColorSelectorSat") );
-    _spinV->setObjectName( QString::fromUtf8("ColorSelectorVal") );
-    _hex->setObjectName( QString::fromUtf8("ColorSelectorHex") );
+
+    _spinH->setObjectName(QString::fromUtf8("ColorSelectorHue"));
+    _spinS->setObjectName(QString::fromUtf8("ColorSelectorSat"));
+    _spinV->setObjectName(QString::fromUtf8("ColorSelectorVal"));
+    _hex->setObjectName(QString::fromUtf8("ColorSelectorHex"));
 
     // labels
     Label *labelR = new Label(QString::fromUtf8("R"), this);
     Label *labelG = new Label(QString::fromUtf8("G"), this);
     Label *labelB = new Label(QString::fromUtf8("B"), this);
     Label *labelA;
+
     if (_slideA) {
         labelA = new Label(QString::fromUtf8("A"), this);
     }
+
     Label *labelH = new Label(QString::fromUtf8("H"), this);
     Label *labelS = new Label(QString::fromUtf8("S"), this);
     Label *labelV = new Label(QString::fromUtf8("V"), this);
@@ -415,9 +431,11 @@ ColorSelectorWidget::ColorSelectorWidget(bool withAlpha, QWidget *parent)
     labelR->setMinimumWidth(10);
     labelG->setMinimumWidth(10);
     labelB->setMinimumWidth(10);
+
     if (_slideA) {
         labelA->setMinimumWidth(10);
     }
+
     labelH->setMinimumWidth(10);
     labelS->setMinimumWidth(10);
     labelV->setMinimumWidth(10);
@@ -425,26 +443,30 @@ ColorSelectorWidget::ColorSelectorWidget(bool withAlpha, QWidget *parent)
     labelR->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     labelG->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     labelB->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
     if (_slideA) {
         labelA->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     }
+
     labelH->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     labelS->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     labelV->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
     // tooltips
-    _spinR->setToolTip( QObject::tr("Red color value") );
-    _spinG->setToolTip( QObject::tr("Green color value") );
-    _spinB->setToolTip( QObject::tr("Blue color value") );
+    _spinR->setToolTip(QObject::tr("Red color value"));
+    _spinG->setToolTip(QObject::tr("Green color value"));
+    _spinB->setToolTip(QObject::tr("Blue color value"));
+
     if (_slideA) {
-        _spinA->setToolTip( QObject::tr("Alpha value") );
+        _spinA->setToolTip(QObject::tr("Alpha value"));
     }
-    _spinH->setToolTip( QObject::tr("Hue color value") );
-    _spinS->setToolTip( QObject::tr("Saturation value") );
-    _spinV->setToolTip( QObject::tr("Brightness/Intensity value") );
-    _hex->setToolTip( QObject::tr("A HTML hexadecimal color is specified with: #RRGGBB, where the RR (red), GG (green) and BB (blue) hexadecimal integers specify the components of the color.") );
-    paletteAddColorButton->setToolTip( QObject::tr("Add current color to palette (Shift+A)") );
-    paletteClearButton->setToolTip( QObject::tr("Clear colors in palette (Shift+C)") );
+
+    _spinH->setToolTip(QObject::tr("Hue color value"));
+    _spinS->setToolTip(QObject::tr("Saturation value"));
+    _spinV->setToolTip(QObject::tr("Brightness/Intensity value"));
+    _hex->setToolTip(QObject::tr("A HTML hexadecimal color is specified with: #RRGGBB, where the RR (red), GG (green) and BB (blue) hexadecimal integers specify the components of the color."));
+    paletteAddColorButton->setToolTip(QObject::tr("Add current color to palette (Shift+A)"));
+    paletteClearButton->setToolTip(QObject::tr("Clear colors in palette (Shift+C)"));
 
     // layout
     _stack = new QStackedWidget(this);
@@ -469,6 +491,7 @@ ColorSelectorWidget::ColorSelectorWidget(bool withAlpha, QWidget *parent)
 
     QWidget *aWidget;
     QHBoxLayout *aLayout;
+
     if (_slideA) {
         aWidget = new QWidget(this);
         aLayout = new QHBoxLayout(aWidget);
@@ -590,6 +613,7 @@ ColorSelectorWidget::ColorSelectorWidget(bool withAlpha, QWidget *parent)
     _stack->addWidget(hsvWidget);
 
     rightLayout->addWidget(_stack);
+
     if (_slideA) {
         rightLayout->addWidget(aWidget);
     }
@@ -606,57 +630,59 @@ ColorSelectorWidget::ColorSelectorWidget(bool withAlpha, QWidget *parent)
     rightLayout->addWidget(bottomWidget);
 
     // connect the widgets
-    QObject::connect( _triangle, SIGNAL( colorChanged(QColor) ),
-                      this, SLOT( handleTriangleColorChanged(QColor) ) );
+    QObject::connect(_triangle, SIGNAL(colorChanged(QColor)),
+                     this, SLOT(handleTriangleColorChanged(QColor)));
 
-    QObject::connect( _spinR, SIGNAL( valueChanged(double) ),
-                      this, SLOT( handleSpinRChanged(double) ) );
-    QObject::connect( _spinG, SIGNAL( valueChanged(double) ),
-                      this, SLOT( handleSpinGChanged(double) ) );
-    QObject::connect( _spinB, SIGNAL( valueChanged(double) ),
-                      this, SLOT( handleSpinBChanged(double) ) );
-    QObject::connect( _spinH, SIGNAL( valueChanged(double) ),
-                      this, SLOT( handleSpinHChanged(double) ) );
-    QObject::connect( _spinS, SIGNAL( valueChanged(double) ),
-                      this, SLOT( handleSpinSChanged(double) ) );
-    QObject::connect( _spinV, SIGNAL( valueChanged(double) ),
-                      this, SLOT( handleSpinVChanged(double) ) );
+    QObject::connect(_spinR, SIGNAL(valueChanged(double)),
+                     this, SLOT(handleSpinRChanged(double)));
+    QObject::connect(_spinG, SIGNAL(valueChanged(double)),
+                     this, SLOT(handleSpinGChanged(double)));
+    QObject::connect(_spinB, SIGNAL(valueChanged(double)),
+                     this, SLOT(handleSpinBChanged(double)));
+    QObject::connect(_spinH, SIGNAL(valueChanged(double)),
+                     this, SLOT(handleSpinHChanged(double)));
+    QObject::connect(_spinS, SIGNAL(valueChanged(double)),
+                     this, SLOT(handleSpinSChanged(double)));
+    QObject::connect(_spinV, SIGNAL(valueChanged(double)),
+                     this, SLOT(handleSpinVChanged(double)));
+
     if (_slideA) {
-        QObject::connect( _spinA, SIGNAL( valueChanged(double) ),
-                         this, SLOT( handleSpinAChanged(double) ) );
+        QObject::connect(_spinA, SIGNAL(valueChanged(double)),
+                         this, SLOT(handleSpinAChanged(double)));
     }
 
-    QObject::connect( _hex, SIGNAL( returnPressed() ),
-                      this, SLOT( handleHexChanged() ) );
+    QObject::connect(_hex, SIGNAL(returnPressed()),
+                     this, SLOT(handleHexChanged()));
 
-    QObject::connect( _slideR, SIGNAL( positionChanged(double) ),
-                      this, SLOT( handleSliderRMoved(double) ) );
-    QObject::connect( _slideG, SIGNAL( positionChanged(double) ),
-                      this, SLOT( handleSliderGMoved(double) ) );
-    QObject::connect( _slideB, SIGNAL( positionChanged(double) ),
-                      this, SLOT( handleSliderBMoved(double) ) );
-    QObject::connect( _slideH, SIGNAL( positionChanged(double) ),
-                      this, SLOT( handleSliderHMoved(double) ) );
-    QObject::connect( _slideS, SIGNAL( positionChanged(double) ),
-                      this, SLOT( handleSliderSMoved(double) ) );
-    QObject::connect( _slideV, SIGNAL( positionChanged(double) ),
-                      this, SLOT( handleSliderVMoved(double) ) );
+    QObject::connect(_slideR, SIGNAL(positionChanged(double)),
+                     this, SLOT(handleSliderRMoved(double)));
+    QObject::connect(_slideG, SIGNAL(positionChanged(double)),
+                     this, SLOT(handleSliderGMoved(double)));
+    QObject::connect(_slideB, SIGNAL(positionChanged(double)),
+                     this, SLOT(handleSliderBMoved(double)));
+    QObject::connect(_slideH, SIGNAL(positionChanged(double)),
+                     this, SLOT(handleSliderHMoved(double)));
+    QObject::connect(_slideS, SIGNAL(positionChanged(double)),
+                     this, SLOT(handleSliderSMoved(double)));
+    QObject::connect(_slideV, SIGNAL(positionChanged(double)),
+                     this, SLOT(handleSliderVMoved(double)));
+
     if (_slideA) {
-        QObject::connect( _slideA, SIGNAL( positionChanged(double) ),
-                         this, SLOT( handleSliderAMoved(double) ) );
+        QObject::connect(_slideA, SIGNAL(positionChanged(double)),
+                         this, SLOT(handleSliderAMoved(double)));
     }
 
-    QObject::connect( _buttonColorGroup, SIGNAL( buttonClicked(int) ),
-                      this, SLOT( handleButtonColorClicked(int) ) );
+    QObject::connect(_buttonColorGroup, &QButtonGroup::idClicked,
+                     this, &ColorSelectorWidget::handleButtonColorClicked);
 
-    QObject::connect( paletteAddColorButton, SIGNAL( clicked(bool) ),
-                      this, SLOT( setPaletteButtonColor(bool) ) );
-    QObject::connect( paletteClearButton, SIGNAL( clicked(bool) ),
-                      this, SLOT( clearPaletteButtons(bool) ) );
-    QObject::connect( addPaletteColorShortcut, SIGNAL( activated() ),
-                      this, SLOT( setPaletteButtonColor() ) );
-    QObject::connect( clearPaletteColorsShortcut, SIGNAL( activated() ),
-                      this, SLOT( clearPaletteButtons() ) );
+    QObject::connect(paletteAddColorButton, SIGNAL(clicked(bool)),
+                     this, SLOT(setPaletteButtonColor(bool)));
+    QObject::connect(paletteClearButton, SIGNAL(clicked(bool)),
+                     this, SLOT(clearPaletteButtons(bool)));
+    QObject::connect(addPaletteColorShortcut, SIGNAL(activated()),
+                     this, SLOT(setPaletteButtonColor()));
+    QObject::connect(clearPaletteColorsShortcut, SIGNAL(activated()),
+                     this, SLOT(clearPaletteButtons()));
 
     // setup palette
     initPaletteButtons(paletteButtonsWidget);
@@ -689,18 +715,20 @@ ColorSelectorWidget::setColor(float r,
     setHueChannel(h);
     setSaturationChannel(s);
     setValueChannel(v);
+
     if (_slideA) {
         setAlphaChannel(a);
     }
+
     setTriangle(r, g, b, _slideA ? a : 1.);
-    setHex( _triangle->color() );
+    setHex(_triangle->color());
 }
 
 void
 ColorSelectorWidget::setColorFromPalette(float r,
-                                         float g,
-                                         float b,
-                                         float a)
+        float g,
+        float b,
+        float a)
 {
     setColor(r, g, b, a);
     announceColorChange();
@@ -796,6 +824,7 @@ ColorSelectorWidget::setAlphaChannel(float value)
     if (!_slideA) {
         return;
     }
+
     _spinA->blockSignals(true);
     _slideA->blockSignals(true);
 
@@ -813,9 +842,9 @@ ColorSelectorWidget::setTriangle(float r,
                                  float a)
 {
     QColor color = _triangle->color();
-    color.setRgbF( Color::to_func_srgb(r),
-                   Color::to_func_srgb(g),
-                   Color::to_func_srgb(b) );
+    color.setRgbF(Color::to_func_srgb(r),
+                  Color::to_func_srgb(g),
+                  Color::to_func_srgb(b));
     color.setAlphaF(_slideA ? a : 1.);
 
     _triangle->blockSignals(true);
@@ -826,22 +855,22 @@ ColorSelectorWidget::setTriangle(float r,
 void
 ColorSelectorWidget::setHex(const QColor &color)
 {
-    if ( !color.isValid() ) {
+    if (!color.isValid()) {
         return;
     }
 
     _hex->blockSignals(true);
-    _hex->setText( color.name() );
+    _hex->setText(color.name());
     _hex->blockSignals(false);
 }
 
 void
 ColorSelectorWidget::announceColorChange()
 {
-    Q_EMIT colorChanged( _spinR->value(),
-                         _spinG->value(),
-                         _spinB->value(),
-                         _slideA ? _spinA->value() : 1. );
+    Q_EMIT colorChanged(_spinR->value(),
+                        _spinG->value(),
+                        _spinB->value(),
+                        _slideA ? _spinA->value() : 1.);
 }
 
 void
@@ -878,10 +907,11 @@ ColorSelectorWidget::initPaletteButtons(QWidget *widget,
         colLayout->setContentsMargins(0, 0, 0, 0);
         colLayout->setSpacing(0);
         widgetLayout->addWidget(colWidget);
+
         for (int y = 0; y < cols; ++y) {
             ColorSelectorPaletteButton *button = new ColorSelectorPaletteButton(colWidget);
-            QObject::connect( button, SIGNAL( colorPicked(float,float,float,float) ),
-                              this, SLOT( setColorFromPalette(float,float,float,float) ) );
+            QObject::connect(button, SIGNAL(colorPicked(float, float, float, float)),
+                             this, SLOT(setColorFromPalette(float, float, float, float)));
             colLayout->addWidget(button);
             _paletteButtons << button;
         }
@@ -891,20 +921,22 @@ ColorSelectorWidget::initPaletteButtons(QWidget *widget,
 void
 ColorSelectorWidget::updatePaletteButtons()
 {
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME),
-                        QString::fromUtf8(NATRON_APPLICATION_NAME) );
-    settings.beginGroup( QString::fromUtf8(COLOR_SELECTOR_PALETTE_SETTINGS) );
+    AppSettings settings(QString::fromUtf8(NATRON_ORGANIZATION_NAME),
+                         QString::fromUtf8(NATRON_APPLICATION_NAME));
+    settings.beginGroup(QString::fromUtf8(COLOR_SELECTOR_PALETTE_SETTINGS));
 
     for (int i = 0; i < _paletteButtons.size(); ++i) {
-        if ( !settings.value( QString::number(i) ).isValid() ) {
+        if (!settings.value(QString::number(i)).isValid()) {
             continue;
         }
-        QStringList colorValues = settings.value( QString::number(i) ).toStringList();
+
+        QStringList colorValues = settings.value(QString::number(i)).toStringList();
+
         if (colorValues.size() > 3) {
-            _paletteButtons.at(i)->setColor( colorValues.at(0).toFloat(),
-                                             colorValues.at(1).toFloat(),
-                                             colorValues.at(2).toFloat(),
-                                             colorValues.at(3).toFloat() );
+            _paletteButtons.at(i)->setColor(colorValues.at(0).toFloat(),
+                                            colorValues.at(1).toFloat(),
+                                            colorValues.at(2).toFloat(),
+                                            colorValues.at(3).toFloat());
         }
     }
 
@@ -918,9 +950,9 @@ ColorSelectorWidget::savePaletteButton(int id)
         return;
     }
 
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME),
-                        QString::fromUtf8(NATRON_APPLICATION_NAME) );
-    settings.beginGroup( QString::fromUtf8(COLOR_SELECTOR_PALETTE_SETTINGS) );
+    AppSettings settings(QString::fromUtf8(NATRON_ORGANIZATION_NAME),
+                         QString::fromUtf8(NATRON_APPLICATION_NAME));
+    settings.beginGroup(QString::fromUtf8(COLOR_SELECTOR_PALETTE_SETTINGS));
 
     QStringList colorValues;
     float r, g, b, a;
@@ -935,9 +967,9 @@ ColorSelectorWidget::savePaletteButton(int id)
 void
 ColorSelectorWidget::savePaletteButtons()
 {
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME),
-                        QString::fromUtf8(NATRON_APPLICATION_NAME) );
-    settings.beginGroup( QString::fromUtf8(COLOR_SELECTOR_PALETTE_SETTINGS) );
+    AppSettings settings(QString::fromUtf8(NATRON_ORGANIZATION_NAME),
+                         QString::fromUtf8(NATRON_APPLICATION_NAME));
+    settings.beginGroup(QString::fromUtf8(COLOR_SELECTOR_PALETTE_SETTINGS));
 
     for (int i = 0; i < _paletteButtons.size(); ++i) {
         QStringList colorValues;
@@ -953,14 +985,14 @@ ColorSelectorWidget::savePaletteButtons()
 
 void
 ColorSelectorWidget::handleTriangleColorChanged(const QColor &color,
-                                                bool announce)
+        bool announce)
 {
-    setRedChannel( Color::from_func_srgb( color.redF() ) );
-    setGreenChannel( Color::from_func_srgb( color.greenF() ) );
-    setBlueChannel( Color::from_func_srgb( color.blueF() ) );
-    setHueChannel( color.toHsv().hueF() );
-    setSaturationChannel( color.toHsv().saturationF() );
-    setValueChannel( color.toHsv().valueF() );
+    setRedChannel(Color::from_func_srgb(color.redF()));
+    setGreenChannel(Color::from_func_srgb(color.greenF()));
+    setBlueChannel(Color::from_func_srgb(color.blueF()));
+    setHueChannel(color.toHsv().hueF());
+    setSaturationChannel(color.toHsv().saturationF());
+    setValueChannel(color.toHsv().valueF());
     setHex(color);
 
     if (announce) {
@@ -981,7 +1013,7 @@ void ColorSelectorWidget::manageColorRGBChanged(bool announce)
     setSaturationChannel(s);
     setValueChannel(v);
     setTriangle(r, g, b, a);
-    setHex( _triangle->color() );
+    setHex(_triangle->color());
 
     if (announce) {
         announceColorChange();
@@ -1102,13 +1134,15 @@ ColorSelectorWidget::handleSpinAChanged(double value)
 void ColorSelectorWidget::handleHexChanged()
 {
     QString value = _hex->text();
-    if ( !value.startsWith( QString::fromUtf8("#") ) ) {
-        value.prepend( QString::fromUtf8("#") );
+
+    if (!value.startsWith(QString::fromUtf8("#"))) {
+        value.prepend(QString::fromUtf8("#"));
     }
 
     QColor color;
-    color.setNamedColor( _hex->text() );
-    if ( !color.isValid() ) {
+    color.setNamedColor(_hex->text());
+
+    if (!color.isValid()) {
         return;
     }
 
@@ -1190,10 +1224,10 @@ void
 ColorSelectorWidget::setSliderHColor()
 {
     QColor color;
-    color.setHsvF( _spinH->value(),
-                   1.0,
-                   1.0,
-                   1.0);
+    color.setHsvF(_spinH->value(),
+                  1.0,
+                  1.0,
+                  1.0);
     _spinH->setUseLineColor(true, color);
     _slideH->setUseLineColor(true, color);
 }
@@ -1202,10 +1236,10 @@ void
 ColorSelectorWidget::setSliderSColor()
 {
     QColor color;
-    color.setHsvF( _spinH->value(),
-                   _spinS->value(),
-                   1.0,
-                   1.0);
+    color.setHsvF(_spinH->value(),
+                  _spinS->value(),
+                  1.0,
+                  1.0);
     _spinS->setUseLineColor(true, color);
     _slideS->setUseLineColor(true, color);
 }
@@ -1214,10 +1248,10 @@ void
 ColorSelectorWidget::setSliderVColor()
 {
     QColor color;
-    color.setHsvF( _spinH->value(),
-                   _spinS->value(),
-                   _spinV->value(),
-                   1.0);
+    color.setHsvF(_spinH->value(),
+                  _spinS->value(),
+                  _spinV->value(),
+                  1.0);
     _spinV->setUseLineColor(true, color);
     _slideV->setUseLineColor(true, color);
 }
@@ -1226,8 +1260,9 @@ void
 ColorSelectorWidget::handleButtonColorClicked(int /*id*/)
 {
     QVariant var = _buttonColorGroup->checkedButton()->property(COLOR_SELECTOR_BUTTON_PROPERTY);
-    if ( var.isValid() ) {
-        _stack->setCurrentIndex( var.toInt() );
+
+    if (var.isValid()) {
+        _stack->setCurrentIndex(var.toInt());
     }
 }
 
@@ -1240,13 +1275,16 @@ ColorSelectorWidget::setPaletteButtonColor(bool /*clicked*/)
 
     int buttonID = 0;
     bool resetModified = false;
+
     for (int i = 0; i < _paletteButtons.size(); ++i) {
-        if ( _paletteButtons.at(i)->isModified() ) {
-            if (i == (_paletteButtons.size() - 1) ) {
+        if (_paletteButtons.at(i)->isModified()) {
+            if (i == (_paletteButtons.size() - 1)) {
                 resetModified = true;
             }
+
             continue;
         }
+
         buttonID = i;
         break;
     }
@@ -1257,11 +1295,11 @@ ColorSelectorWidget::setPaletteButtonColor(bool /*clicked*/)
         }
     }
 
-    if ( buttonID < _paletteButtons.size() ) {
-        _paletteButtons.at(buttonID)->setColor( _spinR->value(),
-                                                _spinG->value(),
-                                                _spinB->value(),
-                                                _spinA ? _spinA->value() : 1.0 );
+    if (buttonID < _paletteButtons.size()) {
+        _paletteButtons.at(buttonID)->setColor(_spinR->value(),
+                                               _spinG->value(),
+                                               _spinB->value(),
+                                               _spinA ? _spinA->value() : 1.0);
         savePaletteButton(buttonID);
     }
 }
@@ -1272,6 +1310,7 @@ ColorSelectorWidget::clearPaletteButtons(bool /*clicked*/)
     for (int i = 0; i < _paletteButtons.size(); ++i) {
         _paletteButtons.at(i)->clearColor();
     }
+
     savePaletteButtons();
 }
 

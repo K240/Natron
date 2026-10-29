@@ -49,6 +49,29 @@ class MockSortableView : public SortableViewI {
 
 }  // namespace
 
+TEST(FileSystemModelTest, WildcardFilters) {
+  MockSortableView sortableView;
+  auto model = std::make_shared<FileSystemModel>();
+  model->initialize(&sortableView);
+
+  model->setRegexpFilters(QString::fromUtf8("*.exr *.png"));
+  EXPECT_TRUE(model->isAcceptedByRegexps(QString::fromUtf8("shot.0001.EXR")));
+  EXPECT_TRUE(model->isAcceptedByRegexps(QString::fromUtf8("shots/日本語/shot.png")));
+  EXPECT_FALSE(model->isAcceptedByRegexps(QString::fromUtf8("shot.exr.bak")));
+  EXPECT_FALSE(model->isAcceptedByRegexps(QString::fromUtf8("shot.jpg")));
+
+  model->setRegexpFilters(QString::fromUtf8("shot.[0-9]???.exr"));
+  EXPECT_TRUE(model->isAcceptedByRegexps(QString::fromUtf8("shot.1001.exr")));
+  EXPECT_FALSE(model->isAcceptedByRegexps(QString::fromUtf8("shot.a001.exr")));
+  EXPECT_FALSE(model->isAcceptedByRegexps(QString::fromUtf8("shot.001.exr")));
+
+  model->setRegexpFilters(QString::fromUtf8("*"));
+  EXPECT_TRUE(model->isAcceptedByRegexps(QString::fromUtf8("shots/日本語/anything.mov")));
+
+  model->setRegexpFilters(QString());
+  EXPECT_TRUE(model->isAcceptedByRegexps(QString::fromUtf8("anything.mov")));
+}
+
 TEST(FileSystemModelTest, DriveName) {
   MockSortableView sortableView;
   auto model = std::make_shared<FileSystemModel>();

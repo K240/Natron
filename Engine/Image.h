@@ -69,7 +69,7 @@ class Bitmap
 public:
     Bitmap(const RectI & bounds)
         : _bounds(bounds)
-        , _map( bounds.area() )
+        , _map(bounds.area())
         , _dirtyZone()
         , _dirtyZoneSet(false)
     {
@@ -91,7 +91,7 @@ public:
     void initialize(const RectI & bounds)
     {
         _bounds = bounds;
-        _map.resize( _bounds.area() );
+        _map.resize(_bounds.area());
 
         std::fill(_map.begin(), _map.end(), 0);
     }
@@ -105,46 +105,52 @@ public:
         std::fill(_map.begin(), _map.end(), 1);
     }
 
-    const RectI & getBounds() const
+    const RectI &getBounds() const
     {
         return _bounds;
     }
 
 #if NATRON_ENABLE_TRIMAP
-    void minimalNonMarkedRects_trimap(const RectI & roi, std::list<RectI>& ret, bool* isBeingRenderedElsewhere) const;
+    void minimalNonMarkedRects_trimap(const RectI & roi, std::list<RectI> &ret, bool* isBeingRenderedElsewhere) const;
     RectI minimalNonMarkedBbox_trimap(const RectI & roi, bool* isBeingRenderedElsewhere) const;
 #endif
 
-    void minimalNonMarkedRects(const RectI & roi, std::list<RectI>& ret) const;
+    void minimalNonMarkedRects(const RectI & roi, std::list<RectI> &ret) const;
     RectI minimalNonMarkedBbox(const RectI & roi) const;
 
     // returns true if the roi only contains 0s
     bool isNonMarked(const RectI & roi) const;
 
     ///Fill with 1 the roi
-    void markForRendered(const RectI & roi) { markFor(roi, 1); }
+    void markForRendered(const RectI & roi)
+    {
+        markFor(roi, 1);
+    }
 
 #if NATRON_ENABLE_TRIMAP
     ///Fill with 2 the roi
     void markForRendering(const RectI & roi);
 #endif
 
-    void clear(const RectI& roi) { markFor(roi, 0); }
+    void clear(const RectI& roi)
+    {
+        markFor(roi, 0);
+    }
 
     void swap(Bitmap& other);
 
-    const char* getBitmap() const
+    const char *getBitmap() const
     {
         return &_map.front();
     }
 
-    char* getBitmap()
+    char *getBitmap()
     {
         return &_map.front();
     }
 
-    const char* getBitmapAt(int x, int y) const;
-    char* getBitmapAt(int x, int y);
+    const char *getBitmapAt(int x, int y) const;
+    char *getBitmapAt(int x, int y);
 
     void copyRowPortion(int x1, int x2, int y, const Bitmap& other);
 
@@ -196,7 +202,7 @@ public:
           ImageFieldingOrderEnum fielding,
           bool useBitmap = false,
           StorageModeEnum storage = eStorageModeRAM,
-          U32 textureTarget = GL_TEXTURE_2D);
+          U32 textureTarget = 0);
 
     //Same as above but parameters are in the ImageParams object
     Image(const ImageKey & key,
@@ -205,7 +211,33 @@ public:
 
     virtual ~Image();
 
-    bool usesBitMap() const { return _useBitmap; }
+    static ImageParamsPtr makeVulkanParams(const std::shared_ptr<VulkanImageContext> &context,
+                                           const RectD& rod, const RectI& bounds, double par = 1.,
+                                           unsigned int mipmapLevel = 0);
+    static ImagePtr createVulkan(const std::shared_ptr<VulkanImageContext> &context, const RectI& bounds);
+    // Explicit CPU boundary; native images on the same runtime are returned as-is.
+    static ImagePtr convertToStorage(const ImagePtr& source, StorageModeEnum storage,
+                                     const std::shared_ptr<VulkanImageContext> &context);
+
+    bool usesBitMap() const
+    {
+        return _useBitmap;
+    }
+
+private:
+    friend class ImageVulkanLocks;
+    void pasteFromVulkan(const Image& source, const RectI& roi, bool copyBitmap);
+    void fillVulkan(const RectI& roi, const std::array<float, 4> &color);
+    void halveVulkan(const RectI& roi, bool copyBitmap, Image* output) const;
+    void upscaleVulkan(const RectI& roi, unsigned int levels, Image* output) const;
+    void maskMixVulkan(const RectI& roi, const Image* mask, const Image* original, bool masked, bool inverted, float amount);
+    void restoreChannelsVulkan(const RectI& roi, const Image* original, uint32_t channels);
+    ImagePtr snapshotVulkanToRam(const RectI& roi) const;
+    // Caller holds entry access; the runtime context serializes GPU commands.
+    bool checkForNaNsVulkan(const RectI& roi, bool fix) const;
+    void convertToFormatVulkan(const RectI& roi, ViewerColorSpaceEnum sourceSpace, ViewerColorSpaceEnum destinationSpace,
+                               int channelForAlpha, bool useAlpha0, bool copyBitmap, bool requiresUnpremult, Image* destination) const;
+public:
 
     StorageModeEnum getStorageMode() const
     {
@@ -221,26 +253,26 @@ public:
                             bool draftMode,
                             bool fullScaleWithDownscaleInputs);
     static ImageParamsPtr makeParams(const RectD & rod,    // the image rod in canonical coordinates
-                                                     const double par,
-                                                     unsigned int mipmapLevel,
-                                                     bool isRoDProjectFormat,
-                                                     const ImagePlaneDesc& components,
-                                                     ImageBitDepthEnum bitdepth,
-                                                     ImagePremultiplicationEnum premult,
-                                                     ImageFieldingOrderEnum fielding,
-                                                     StorageModeEnum storage = eStorageModeRAM,
-                                                     U32 textureTarget = GL_TEXTURE_2D);
+                                     const double par,
+                                     unsigned int mipmapLevel,
+                                     bool isRoDProjectFormat,
+                                     const ImagePlaneDesc& components,
+                                     ImageBitDepthEnum bitdepth,
+                                     ImagePremultiplicationEnum premult,
+                                     ImageFieldingOrderEnum fielding,
+                                     StorageModeEnum storage = eStorageModeRAM,
+                                     U32 textureTarget = 0);
     static ImageParamsPtr makeParams(const RectD & rod,    // the image rod in canonical coordinates
-                                                     const RectI& bounds,
-                                                     const double par,
-                                                     unsigned int mipmapLevel,
-                                                     bool isRoDProjectFormat,
-                                                     const ImagePlaneDesc& components,
-                                                     ImageBitDepthEnum bitdepth,
-                                                     ImagePremultiplicationEnum premult,
-                                                     ImageFieldingOrderEnum fielding,
-                                                     StorageModeEnum storage = eStorageModeRAM,
-                                                     U32 textureTarget = GL_TEXTURE_2D);
+                                     const RectI& bounds,
+                                     const double par,
+                                     unsigned int mipmapLevel,
+                                     bool isRoDProjectFormat,
+                                     const ImagePlaneDesc& components,
+                                     ImageBitDepthEnum bitdepth,
+                                     ImagePremultiplicationEnum premult,
+                                     ImageFieldingOrderEnum fielding,
+                                     StorageModeEnum storage = eStorageModeRAM,
+                                     U32 textureTarget = 0);
 
     // ImageParamsPtr getParams() const WARN_UNUSED_RETURN;
 
@@ -256,8 +288,6 @@ public:
      **/
     bool copyAndResizeIfNeeded(const RectI& newBounds, bool fillWithBlackAndTransparent, bool setBitmapTo1, ImagePtr* output);
 
-
-    static void applyTextureMapping(const RectI& bounds, const RectI& roi);
 
 private:
 
@@ -276,7 +306,7 @@ public:
      * scale applied to it. In order to return the true pixel data window you must call getBounds()
      * WARNING: this is NOT the same definition as in OpenFX, where the Image RoD is always in pixels.
      **/
-    const RectD & getRoD() const
+    const RectD &getRoD() const
     {
         return _rod;
     };
@@ -304,6 +334,7 @@ public:
         bool got = _entryLock.tryLockForRead();
 
         dt += _bitmap.getBounds().area();
+
         if (got) {
             _entryLock.unlock();
         }
@@ -323,7 +354,7 @@ public:
     }
 
     unsigned int getComponentsCount() const;
-    const ImagePlaneDesc& getComponents() const
+    const ImagePlaneDesc &getComponents() const
     {
         return this->_params->getComponents();
     }
@@ -365,9 +396,9 @@ public:
     class ReadAccess
         : public GenericAccess
     {
-        const Image* img;
+        const Image *img;
 
-public:
+    public:
 
         ReadAccess(const Image* img)
             : GenericAccess()
@@ -394,11 +425,15 @@ public:
                 img->unlock();
             }
         }
+        RectI bounds() const
+        {
+            return img->_bounds;
+        }
 
         /**
          * @brief Access pixels. The pointer must be cast to the appropriate type afterwards.
          **/
-        const unsigned char* pixelAt(int x,
+        const unsigned char *pixelAt(int x,
                                      int y) const
         {
             assert(img);
@@ -406,7 +441,7 @@ public:
             return img->pixelAt(x, y);
         }
 
-        const char* bitmapAt(int x,
+        const char *bitmapAt(int x,
                              int y) const
         {
             assert(img);
@@ -425,9 +460,9 @@ public:
     class WriteAccess
         : public GenericAccess
     {
-        Image* img;
+        Image *img;
 
-public:
+    public:
 
         WriteAccess(Image* img)
             : GenericAccess()
@@ -448,17 +483,21 @@ public:
         {
             img->unlock();
         }
+        RectI bounds() const
+        {
+            return img->_bounds;
+        }
 
         /**
          * @brief Access pixels. The pointer must be cast to the appropriate type afterwards.
          **/
-        unsigned char* pixelAt(int x,
+        unsigned char *pixelAt(int x,
                                int y)
         {
             return img->pixelAt(x, y);
         }
 
-        char* bitmapAt(int x,
+        char *bitmapAt(int x,
                        int y) const
         {
             assert(img);
@@ -479,7 +518,7 @@ public:
         return WriteAccess(this);
     }
 
-    static unsigned char* pixelAtStatic(int x, int y, const RectI& bounds, int nComps, int dataSizeOf, unsigned char* buf);
+    static unsigned char *pixelAtStatic(int x, int y, const RectI& bounds, int nComps, int dataSizeOf, unsigned char* buf);
 
 private:
 
@@ -491,13 +530,13 @@ private:
      * of an image.
      **/
 
-    const char* getBitmapAt(int x,
+    const char *getBitmapAt(int x,
                             int y) const
     {
         return this->_bitmap.getBitmapAt(x, y);
     }
 
-    char* getBitmapAt(int x,
+    char *getBitmapAt(int x,
                       int y)
     {
         return this->_bitmap.getBitmapAt(x, y);
@@ -506,8 +545,8 @@ private:
     /**
      * @brief Access pixels. The pointer must be cast to the appropriate type afterwards.
      **/
-    unsigned char* pixelAt(int x, int y);
-    const unsigned char* pixelAt(int x, int y) const;
+    unsigned char *pixelAt(int x, int y);
+    const unsigned char *pixelAt(int x, int y) const;
 
     /**
      * @brief Locks the image for read/write access.
@@ -543,11 +582,11 @@ private:
 
     template <typename SRCPIX, typename DSTPIX, int srcMaxValue, int dstMaxValue>
     static void convertToFormatInternal_sameComps(const RectI & renderWindow,
-                                                  const Image & srcImg,
-                                                  Image & dstImg,
-                                                  ViewerColorSpaceEnum srcColorSpace,
-                                                  ViewerColorSpaceEnum dstColorSpace,
-                                                  bool copyBitmap);
+            const Image & srcImg,
+            Image & dstImg,
+            ViewerColorSpaceEnum srcColorSpace,
+            ViewerColorSpaceEnum dstColorSpace,
+            bool copyBitmap);
 
     template <typename SRCPIX, typename DSTPIX, int srcMaxValue, int dstMaxValue, int srcNComps, int dstNComps>
     static void convertToFormatInternal(const RectI & renderWindow,
@@ -564,37 +603,37 @@ private:
     template <typename SRCPIX, typename DSTPIX, int srcMaxValue, int dstMaxValue, int srcNComps, int dstNComps,
               bool requiresUnpremult>
     static void convertToFormatInternalForUnpremult(const RectI & renderWindow,
-                                                    const Image & srcImg,
-                                                    Image & dstImg,
-                                                    ViewerColorSpaceEnum srcColorSpace,
-                                                    ViewerColorSpaceEnum dstColorSpace,
-                                                    bool useAlpha0,
-                                                    bool copyBitmap,
-                                                    int channelForAlpha);
+            const Image & srcImg,
+            Image & dstImg,
+            ViewerColorSpaceEnum srcColorSpace,
+            ViewerColorSpaceEnum dstColorSpace,
+            bool useAlpha0,
+            bool copyBitmap,
+            int channelForAlpha);
 
 
     template <typename SRCPIX, typename DSTPIX, int srcMaxValue, int dstMaxValue, int srcNComps, int dstNComps,
               bool requiresUnpremult, bool useColorspaces>
     static void convertToFormatInternalForColorSpace(const RectI & renderWindow,
-                                                     const Image & srcImg,
-                                                     Image & dstImg,
-                                                     bool copyBitmap,
-                                                     bool useAlpha0,
-                                                     ViewerColorSpaceEnum srcColorSpace,
-                                                     ViewerColorSpaceEnum dstColorSpace,
-                                                     int channelForAlpha);
+            const Image & srcImg,
+            Image & dstImg,
+            bool copyBitmap,
+            bool useAlpha0,
+            ViewerColorSpaceEnum srcColorSpace,
+            ViewerColorSpaceEnum dstColorSpace,
+            int channelForAlpha);
 
 
     template <typename SRCPIX, typename DSTPIX, int srcMaxValue, int dstMaxValue>
     static void convertToFormatInternalForDepth(const RectI & renderWindow,
-                                                const Image & srcImg,
-                                                Image & dstImg,
-                                                ViewerColorSpaceEnum srcColorSpace,
-                                                ViewerColorSpaceEnum dstColorSpace,
-                                                int channelForAlpha,
-                                                bool useAlpha0,
-                                                bool copyBitmap,
-                                                bool requiresUnpremult);
+            const Image & srcImg,
+            Image & dstImg,
+            ViewerColorSpaceEnum srcColorSpace,
+            ViewerColorSpaceEnum dstColorSpace,
+            int channelForAlpha,
+            bool useAlpha0,
+            bool copyBitmap,
+            bool requiresUnpremult);
 
 public:
 
@@ -611,23 +650,25 @@ public:
      **/
 #if NATRON_ENABLE_TRIMAP
     void getRestToRender_trimap(const RectI & regionOfInterest,
-                                std::list<RectI>& ret,
+                                std::list<RectI> &ret,
                                 bool* isBeingRenderedElsewhere) const
     {
         if (!_useBitmap) {
             return;
         }
+
         QReadLocker locker(&_entryLock);
         _bitmap.minimalNonMarkedRects_trimap(regionOfInterest, ret, isBeingRenderedElsewhere);
     }
 
 #endif
     void getRestToRender(const RectI & regionOfInterest,
-                         std::list<RectI>& ret) const
+                         std::list<RectI> &ret) const
     {
         if (!_useBitmap) {
             return;
         }
+
         QReadLocker locker(&_entryLock);
         _bitmap.minimalNonMarkedRects(regionOfInterest, ret);
     }
@@ -639,6 +680,7 @@ public:
         if (!_useBitmap) {
             return regionOfInterest;
         }
+
         QReadLocker locker(&_entryLock);
 
         return _bitmap.minimalNonMarkedBbox_trimap(regionOfInterest, isBeingRenderedElsewhere);
@@ -650,6 +692,7 @@ public:
         if (!_useBitmap) {
             return regionOfInterest;
         }
+
         QReadLocker locker(&_entryLock);
 
         return _bitmap.minimalNonMarkedBbox(regionOfInterest);
@@ -657,11 +700,12 @@ public:
 
 #if NATRON_ENABLE_TRIMAP
     RectI getMinimalRectAndMarkForRendering_trimap(const RectI & regionOfInterest,
-                                                   bool* isBeingRenderedElsewhere)
+            bool* isBeingRenderedElsewhere)
     {
         if (!_useBitmap) {
             return regionOfInterest;
         }
+
         RectI ret;
         {
             QReadLocker locker(&_entryLock);
@@ -679,6 +723,7 @@ public:
         if (!_useBitmap) {
             return;
         }
+
         QWriteLocker locker(&_entryLock);
         const RectI intersection = _bounds.intersect(roi);
         _bitmap.markForRendered(intersection);
@@ -691,6 +736,7 @@ public:
         if (!_useBitmap) {
             return;
         }
+
         QWriteLocker locker(&_entryLock);
         const RectI intersection = _bounds.intersect(roi);
         _bitmap.markForRendering(intersection);
@@ -703,6 +749,7 @@ public:
         if (!_useBitmap) {
             return;
         }
+
         QWriteLocker locker(&_entryLock);
         const RectI intersection = _bounds.intersect(roi);
         _bitmap.clear(intersection);
@@ -718,29 +765,28 @@ public:
      * For example if the image comps is eImageComponentAlpha, then only the alpha value 'a' will
      * be used.
      **/
-    void fill( const RectI & roi, float r, float g, float b, float a, const OSGLContextPtr& glContext = OSGLContextPtr() );
+    void fill(const RectI & roi, float r, float g, float b, float a);
 
-    void fillZero( const RectI& roi, const OSGLContextPtr& glContext = OSGLContextPtr() );
+    void fillZero(const RectI& roi);
 
-    void fillBoundsZero( const OSGLContextPtr& glContext = OSGLContextPtr() );
+    void fillBoundsZero();
 
     /**
      * @brief Same as fill(const RectI&,float,float,float,float) but fills the R,G and B
      * components with the same value.
      **/
-    void fill( const RectI & rect,
-               float colorValue = 0.f,
-               float alphaValue = 1.f,
-               const OSGLContextPtr& glContext = OSGLContextPtr() )
+    void fill(const RectI & rect,
+              float colorValue = 0.f,
+              float alphaValue = 1.f)
     {
-        fill(rect, colorValue, colorValue, colorValue, alphaValue, glContext);
+        fill(rect, colorValue, colorValue, colorValue, alphaValue);
     }
 
     /**
      * @brief Copies the content of the portion defined by roi of the other image pixels into this image.
      * The internal bitmap will be copied as well
      **/
-    void pasteFrom( const Image & src, const RectI & srcRoi, bool copyBitmap = true, const OSGLContextPtr& glContext = OSGLContextPtr() );
+    void pasteFrom(const Image & src, const RectI & srcRoi, bool copyBitmap = true);
 
     /**
      * @brief Downscales a portion of this image into output.
@@ -829,16 +875,10 @@ private:
 
 public:
 
-    /**
-     * @brief Premultiply the image by its alpha channel on the given RoI.
-     * Currently there is no implementation for OpenGL textures.
-     **/
+
     void premultImage(const RectI& roi);
 
-    /**
-     * @brief Unpremultiply the image by its alpha channel on the given RoI.
-     * Currently there is no implementation for OpenGL textures.
-     **/
+
     void unpremultImage(const RectI& roi);
 
     bool canCallCopyUnProcessedChannels(std::bitset<4> processChannels) const;
@@ -847,29 +887,24 @@ public:
      * @brief Given the channels to process, this function copies from the originalImage the channels
      * that are not marked to true in processChannels.
      **/
-    void copyUnProcessedChannels( const RectI& roi,
-                                  ImagePremultiplicationEnum outputPremult,
-                                  ImagePremultiplicationEnum originalImagePremult,
-                                  std::bitset<4> processChannels,
-                                  const ImagePtr& originalImage,
-                                  bool ignorePremult,
-                                  const OSGLContextPtr& glContext = OSGLContextPtr() );
+    void copyUnProcessedChannels(const RectI& roi,
+                                 ImagePremultiplicationEnum outputPremult,
+                                 ImagePremultiplicationEnum originalImagePremult,
+                                 std::bitset<4> processChannels,
+                                 const ImagePtr& originalImage,
+                                 bool ignorePremult);
 
     /**
      * @brief Mask the image by the given mask and also disolves it to the originalImg with the given mix.
      **/
-    void applyMaskMix( const RectI& roi,
-                       const Image* maskImg,
-                       const Image* originalImg,
-                       bool masked,
-                       bool maskInvert,
-                       float mix,
-                       const OSGLContextPtr& glContext = OSGLContextPtr() );
+    void applyMaskMix(const RectI& roi,
+                      const Image* maskImg,
+                      const Image* originalImg,
+                      bool masked,
+                      bool maskInvert,
+                      float mix);
 
-    /**
-     * @brief Eeturns true if image contains NaNs or infinite values, and fix them.
-     * Currently, no OpenGL implementation is provided.
-     */
+
     bool checkForNaNsAndFix(const RectI& roi) WARN_UNUSED_RETURN;
 
     void copyBitmapRowPortion(int x1, int x2, int y, const Image& other);
@@ -957,11 +992,11 @@ private:
 
     template <typename PIX, int maxValue, int srcNComps, int dstNComps>
     void copyUnProcessedChannelsForComponents(bool premult,
-                                              const RectI& roi,
-                                              const std::bitset<4> processChannels,
-                                              const ImagePtr& originalImage,
-                                              const bool originalPremult,
-                                              const bool ignorePremult);
+            const RectI& roi,
+            const std::bitset<4> processChannels,
+            const ImagePtr& originalImage,
+            const bool originalPremult,
+            const bool ignorePremult);
 
     template <typename PIX, int maxValue>
     void copyUnProcessedChannelsForDepth(bool premult,
@@ -993,14 +1028,6 @@ private:
     void halveRoIForDepth(const RectI & roi,
                           bool copyBitMap,
                           Image* output) const;
-
-    /**
-     * @brief Same as halveRoI but for 1D only (either width == 1 or height == 1)
-     **/
-    void halve1DImage(const RectI & roi, Image* output) const;
-
-    template <typename PIX, int maxValue>
-    void halve1DImageForDepth(const RectI & roi, Image* output) const;
 
     template <typename PIX, int maxValue>
     void upscaleMipmapForDepth(const RectI & roi, unsigned int fromLevel, unsigned int toLevel, Image* output) const;
@@ -1054,15 +1081,24 @@ Image::clamp(double x,
 
 template<>
 inline unsigned char
-Image::clampIfInt(float v) { return (unsigned char)clamp<float>(v, 0, 255); }
+Image::clampIfInt(float v)
+{
+    return (unsigned char)clamp<float>(v, 0, 255);
+}
 
 template<>
 inline unsigned short
-Image::clampIfInt(float v) { return (unsigned short)clamp<float>(v, 0, 65535); }
+Image::clampIfInt(float v)
+{
+    return (unsigned short)clamp<float>(v, 0, 65535);
+}
 
 template<>
 inline float
-Image::clampIfInt(float v) { return v; }
+Image::clampIfInt(float v)
+{
+    return v;
+}
 
 NATRON_NAMESPACE_EXIT
 

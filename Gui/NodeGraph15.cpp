@@ -90,6 +90,9 @@ handleConnectionError(const NodeGuiPtr& outputNode,
                                     error.toStdString() );
 
             return true;
+        } else if (linkRetCode == Node::eCanConnectInput_incompatibleDataType) {
+            Dialogs::errorDialog(QCoreApplication::translate("NodeGraph", "Incompatible connection").toStdString(),
+                QCoreApplication::translate("NodeGraph", "This input requires a different data type. Use Render3D to convert a 3D scene into an image.").toStdString());
         } else if (linkRetCode == Node::eCanConnectInput_groupHasNoOutput) {
             QString error = QCoreApplication::translate("NodeGraph", "You cannot connect %1 to %2, because it is a group which does not have an Output node.")
                             .arg( QString::fromUtf8( outputNode->getNode()->getLabel().c_str() ) )

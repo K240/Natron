@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.16.7)
+project(NatronNormalize LANGUAGES CXX)
+find_package(Qt6 6.6 REQUIRED COMPONENTS Core)
+add_executable(normalize main.cpp)
+target_compile_features(normalize PRIVATE cxx_std_17)
+target_link_libraries(normalize PRIVATE Qt6::Core)

@@ -1309,6 +1309,7 @@ ViewerTab::toggleTripleSync(bool toggled)
 void
 ViewerTab::onPanelMadeCurrent()
 {
+    if (getGui()) getGui()->setActiveViewer(this);
     // Refresh the image since so far the viewer was probably not in sync with internal data
     if ( _imp->viewerNode && getGui() && !getGui()->getApp()->getProject()->isLoadingProject() && getGui()->getApp()->getNodesBeingCreated().empty() ) {
         _imp->viewerNode->renderCurrentFrame(true);

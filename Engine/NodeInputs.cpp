@@ -708,6 +708,15 @@ Node::canConnectInput(const NodePtr& input,
         return eCanConnectInput_graphCycles;
     }
 
+    const NodeDataType dataType = input->getEffectInstance()->getOutputDataType();
+    if (!getApp()->getProject()->isLoadingProject() && !_imp->effect->acceptsInputDataType(inputNumber, dataType)) {
+        return eCanConnectInput_incompatibleDataType;
+    }
+    // Pixel aspect and frame rate are properties of image connections.
+    if (dataType != NodeDataType::Image) {
+        return eCanConnectInput_ok;
+    }
+
     if ( _imp->effect->isInputRotoBrush(inputNumber) ) {
         qDebug() << "Debug: Attempt to connect " << input->getScriptName_mt_safe().c_str() << " to Roto brush";
 
@@ -756,6 +765,12 @@ Node::connectInput(const NodePtr & input,
 
     ///Check for cycles: they are forbidden in the graph
     if ( !checkIfConnectingInputIsOk( input.get() ) ) {
+        return false;
+    }
+    // Saved graphs reconnect in arbitrary node order. A Dot's final type is
+    // available only after its own input has been restored.
+    if (!getApp()->getProject()->isLoadingProject() &&
+        !_imp->effect->acceptsInputDataType(inputNumber, input->getEffectInstance()->getOutputDataType())) {
         return false;
     }
     if ( _imp->effect->isInputRotoBrush(inputNumber) ) {

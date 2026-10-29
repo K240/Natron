@@ -17,31 +17,19 @@ issue, the issue is linked.
 Toolkit and build modernization
 -------------------------------
 
-**Complete Qt 6 support while keeping Qt 5 (P1).**
-This is a first-class goal with its own chapter, :ref:`maint-qt6`, which is the
-single source of truth for the audited work items and counts. In short: the
-CMake build already has a ``NATRON_QT6`` switch and the viewer already uses
-``QOpenGLWidget``, so the remaining work is bounded — modernize the removed Qt
-APIs (``QRegExp`` → ``QRegularExpression``, ``QDesktopWidget`` → ``QScreen``,
-``setMargin``), bring the qmake build to Qt6 parity, and regenerate the
-PySide6/Shiboken6 bindings (resolving the enum/flag issue
-`#854 <https://github.com/NatronGitHub/Natron/issues/854>`_). Tracks
-`#1011 <https://github.com/NatronGitHub/Natron/issues/1011>`_ and
-`#827 <https://github.com/NatronGitHub/Natron/issues/827>`_.
-
-**Keep the two build systems in sync, and pick a long-term direction (P2).**
-Natron maintains *both* qmake and CMake builds. Every structural change must
-touch both, which is error-prone. Recommendation: treat CMake as the primary
-build (it already leads on Qt 6), keep qmake working during the transition, and
-document a date/criteria for eventually retiring qmake. Until then, add a CI job
-for each so neither silently rots.
+**Validate Qt 6 across platforms (P1).**
+Qt 6 / PySide6 / Shiboken6 and CMake are now the required build path. Qt 5,
+PySide2 and qmake have been retired. The Windows MSVC build and regenerated
+bindings are tested; Linux, macOS and installer packaging still need validation.
+Use :ref:`maint-building` for the current build and
+:ref:`maint-vulkan-migration` for the ongoing GPU migration.
 
 **Modernize CI (P1).**
 Migrate CI from Travis to GitHub Actions
 (`#601 <https://github.com/NatronGitHub/Natron/issues/601>`_; the ``.travis.yml``
-is already disabled). Build **both** Qt 5 and Qt 6 and run the ``Tests`` suite on
-all three platforms so regressions in the dual-toolkit build are caught
-automatically.
+is already disabled). Build Qt 6 and run the native tests and Vulkan / CPU OFX
+regressions on all three platforms. Keep executable, test-definition and image
+evidence so interrupted runs cannot be mistaken for successful validation.
 
 **Adopt a modern C++ baseline consistently (P3).**
 The CMake build already compiles as C++17, and the code has largely moved from
@@ -90,17 +78,17 @@ Robustness of critical subsystems
 ---------------------------------
 
 **Guard the serialization format (P1).**
-Project loading uses Boost.Serialization (see :ref:`maint-design`). There is no
-automated test that round-trips and cross-version-loads real project files.
+Project loading uses Boost.Serialization (see :ref:`maint-design`). The Windows
+headless smoke tests a current project round trip and Unicode paths. A corpus
+of historical project files is still needed for cross-version loading tests.
 Recommendation: add regression tests that load a corpus of old ``.ntp`` files
 and assert they still open; require a ``BOOST_CLASS_VERSION`` bump review for any
 ``*Serialization`` change. This directly protects users from data loss.
 
-**Replace deprecated/removed Qt string and regex APIs (P1).**
-Beyond Qt 6 compatibility, ``QRegExp`` and the ``QDesktopWidget`` family are the
-concrete deprecated APIs in use; migrating them (details in :ref:`maint-qt6`)
-improves the Qt 5 build immediately and is low-risk since the replacements exist
-in Qt 5.15.
+**Validate Qt 6 input and display behavior (P1).**
+``QRegularExpression`` and ``QScreen`` have replaced the removed APIs (see
+:ref:`maint-qt6`). Extend platform coverage for mixed DPI displays, tablets,
+focus changes and editor interactions without restoring the retired Qt 5 path.
 
 **Reduce the size of the largest translation units (P3).**
 Several files are enormous (``Node.cpp``, ``EffectInstance.cpp`` and

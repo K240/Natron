@@ -38,10 +38,10 @@ CLANG_DIAG_OFF(deprecated)
 CLANG_DIAG_OFF(uninitialized)
 #include <QtGlobal> // for Q_OS_*
 #include <QDebug>
-#include <QSettings>
+#include "Global/AppSettings.h"
 #include <QFileInfo>
 #include <QApplication>
-#include <QDesktopWidget>
+#include <QScreen>
 #include <QFileOpenEvent>
 CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)
@@ -299,9 +299,9 @@ GuiApplicationManager::initializeQApp(int &argc,
 #endif
         app = new Application(this, argc, argv);
     }
-    QDesktopWidget* desktop = app->desktop();
-    int dpiX = desktop->logicalDpiX();
-    int dpiY = desktop->logicalDpiY();
+    QScreen* screen = app->primaryScreen();
+    int dpiX = screen ? qRound(screen->logicalDotsPerInchX()) : 96;
+    int dpiY = screen ? qRound(screen->logicalDotsPerInchY()) : 96;
 
     setCurrentLogicalDPI(dpiX, dpiY);
 
@@ -617,7 +617,7 @@ GuiApplicationManager::matchesMouseShortcut(const std::string & stdgroup,
 void
 GuiApplicationManager::saveShortcuts() const
 {
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+    AppSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
 
     for (AppShortcuts::const_iterator it = _imp->_actionShortcuts.begin(); it != _imp->_actionShortcuts.end(); ++it) {
         settings.beginGroup(it->first);
@@ -651,7 +651,7 @@ void
 GuiApplicationManager::loadShortcuts()
 {
     bool settingsExistd = getCurrentSettings()->didSettingsExistOnStartup();
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+    AppSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
     int settingsVersion = -1;
 
     if ( settings.contains( QString::fromUtf8("NATRON_SHORTCUTS_DEFAULT_VERSION") ) ) {

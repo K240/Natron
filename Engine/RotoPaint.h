@@ -56,6 +56,9 @@ public:
 
     bool isDefaultBehaviourPaintContext() const;
 
+    bool supportsOverlayDrawList() const OVERRIDE FINAL { return true; }
+    bool hasOverlay() const OVERRIDE FINAL { return true; }
+
     virtual bool isRotoPaintNode() const OVERRIDE FINAL WARN_UNUSED_RETURN  { return true; }
 
     virtual int getMajorVersion() const OVERRIDE FINAL WARN_UNUSED_RETURN

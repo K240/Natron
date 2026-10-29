@@ -99,8 +99,6 @@ class QWheelEvent;
 class QWidget;
 typedef std::shared_ptr<QUndoStack> QUndoStackPtr;
 
-class QOpenGLShaderProgram;
-
 // Natron Gui
 NATRON_NAMESPACE_ENTER
 class AboutWindow;
@@ -151,6 +149,8 @@ class GuiGLContext;
 class GuiLayoutSerialization;
 class HierarchyView;
 class Histogram;
+class StageOutline;
+class Scene3DViewer;
 class HostOverlay;
 class InfoViewerWidget;
 class InspectorNode;

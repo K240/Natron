@@ -32,6 +32,7 @@
 
 #include "Engine/OfxImageEffectInstance.h"
 #include "Engine/OfxEffectInstance.h"
+#include "Engine/OfxDrawSuite.h"
 #include "Engine/Format.h"
 #include "Engine/OverlaySupport.h"
 #include "Engine/Knob.h"
@@ -56,9 +57,15 @@ NatronOverlayInteractSupport::OGLContextSaver::~OGLContextSaver()
 OfxOverlayInteract::OfxOverlayInteract(OfxImageEffectInstance &v,
                                        int bitDepthPerComponent,
                                        bool hasAlpha)
-    : OFX::Host::ImageEffect::OverlayInteract(v, bitDepthPerComponent, hasAlpha)
+    : OFX::Host::Interact::Instance(v.getSelectedOverlayDescriptor(bitDepthPerComponent, hasAlpha), v.getHandle())
     , NatronOverlayInteractSupport()
+    , _instance(v)
+    , _usesDrawSuite(v.usesDrawSuiteOverlay())
 {
+    if (_usesDrawSuite) {
+        const OFX::Host::Property::PropSpec context{kOfxInteractPropDrawContext, OFX::Host::Property::ePointer, 1, true, nullptr};
+        _argProperties.createProperty(context);
+    }
 }
 
 bool
@@ -77,7 +84,7 @@ OfxStatus
 OfxOverlayInteract::createInstanceAction()
 {
     //OGLContextSaver s(_viewport);
-    return OFX::Host::ImageEffect::OverlayInteract::createInstanceAction();
+    return OFX::Host::Interact::Instance::createInstanceAction();
 }
 
 // overridden from OFX::Host::Interact::Instance
@@ -87,8 +94,40 @@ OfxOverlayInteract::drawAction(OfxTime time,
                                int view,
                                const OfxRGBAColourD* pickerColour)
 {
+    if (_usesDrawSuite) {
+        auto* commands = _viewport ? _viewport->overlayDrawList() : nullptr;
+
+        if (!commands) {
+            return kOfxStatFailed;
+        }
+
+        auto colors = OfxDrawSession::defaultColors();
+        double r, g, b;
+
+        if (getSuggestedColour(r, g, b)) {
+            colors[kOfxStandardColourOverlaySelected] = {float(r), float(g), float(b), 1};
+            colors[kOfxStandardColourOverlayDeselected] = {float(r / 2), float(g / 2), float(b / 2), 1};
+            colors[kOfxStandardColourOverlayText] = colors[kOfxStandardColourOverlaySelected];
+        }
+
+        _viewport->getBackgroundColour(r, g, b);
+        colors[kOfxStandardColourOverlayBackground] = {float(r), float(g), float(b), 1};
+        double xScale, yScale;
+        _viewport->getPixelScale(xScale, yScale);
+        OfxDrawSession session(*commands, colors, xScale, yScale, _viewport->getScreenPixelRatio());
+        _argProperties.setPointerProperty(kOfxInteractPropDrawContext, session.handle());
+        struct ResetContext {
+            OFX::Host::Property::Set &properties;
+            ~ResetContext()
+            {
+                properties.setPointerProperty(kOfxInteractPropDrawContext, nullptr);
+            }
+        } reset{_argProperties};
+        return OFX::Host::Interact::Instance::drawAction(time, renderScale, view, pickerColour);
+    }
+
     NatronOverlayInteractSupport::OGLContextSaver s(_viewport);
-    OfxStatus stat = OFX::Host::ImageEffect::OverlayInteract::drawAction(time, renderScale, view, pickerColour);
+    OfxStatus stat = OFX::Host::Interact::Instance::drawAction(time, renderScale, view, pickerColour);
 
     return stat;
 }
@@ -104,7 +143,7 @@ OfxOverlayInteract::penMotionAction(OfxTime time,
                                     double pressure)
 {
     //OGLContextSaver s(_viewport);
-    return OFX::Host::ImageEffect::OverlayInteract::penMotionAction(time, renderScale, view, pickerColour, penPos, penPosViewport, pressure);
+    return OFX::Host::Interact::Instance::penMotionAction(time, renderScale, view, pickerColour, penPos, penPosViewport, pressure);
 }
 
 // overridden from OFX::Host::Interact::Instance
@@ -117,7 +156,7 @@ OfxOverlayInteract::penUpAction(OfxTime time,
                                 const OfxPointI &penPosViewport,
                                 double pressure)
 {
-    return OFX::Host::ImageEffect::OverlayInteract::penUpAction(time, renderScale, view, pickerColour, penPos, penPosViewport, pressure);
+    return OFX::Host::Interact::Instance::penUpAction(time, renderScale, view, pickerColour, penPos, penPosViewport, pressure);
 }
 
 // overridden from OFX::Host::Interact::Instance
@@ -130,7 +169,7 @@ OfxOverlayInteract::penDownAction(OfxTime time,
                                   const OfxPointI &penPosViewport,
                                   double pressure)
 {
-    return OFX::Host::ImageEffect::OverlayInteract::penDownAction(time, renderScale, view, pickerColour, penPos, penPosViewport, pressure);
+    return OFX::Host::Interact::Instance::penDownAction(time, renderScale, view, pickerColour, penPos, penPosViewport, pressure);
 }
 
 // overridden from OFX::Host::Interact::Instance
@@ -140,9 +179,9 @@ OfxOverlayInteract::keyDownAction(OfxTime time,
                                   int view,
                                   const OfxRGBAColourD* pickerColour,
                                   int key,
-                                  char*   keyString)
+                                  char   *keyString)
 {
-    return OFX::Host::ImageEffect::OverlayInteract::keyDownAction(time, renderScale, view, pickerColour, key, keyString);
+    return OFX::Host::Interact::Instance::keyDownAction(time, renderScale, view, pickerColour, key, keyString);
 }
 
 // overridden from OFX::Host::Interact::Instance
@@ -152,9 +191,9 @@ OfxOverlayInteract::keyUpAction(OfxTime time,
                                 int view,
                                 const OfxRGBAColourD* pickerColour,
                                 int key,
-                                char*   keyString)
+                                char   *keyString)
 {
-    return OFX::Host::ImageEffect::OverlayInteract::keyUpAction(time, renderScale, view, pickerColour, key, keyString);
+    return OFX::Host::Interact::Instance::keyUpAction(time, renderScale, view, pickerColour, key, keyString);
 }
 
 // overridden from OFX::Host::Interact::Instance
@@ -164,9 +203,9 @@ OfxOverlayInteract::keyRepeatAction(OfxTime time,
                                     int view,
                                     const OfxRGBAColourD* pickerColour,
                                     int key,
-                                    char*   keyString)
+                                    char   *keyString)
 {
-    return OFX::Host::ImageEffect::OverlayInteract::keyRepeatAction(time, renderScale, view, pickerColour, key, keyString);
+    return OFX::Host::Interact::Instance::keyRepeatAction(time, renderScale, view, pickerColour, key, keyString);
 }
 
 // overridden from OFX::Host::Interact::Instance
@@ -176,7 +215,7 @@ OfxOverlayInteract::gainFocusAction(OfxTime time,
                                     int view,
                                     const OfxRGBAColourD* pickerColour)
 {
-    return OFX::Host::ImageEffect::OverlayInteract::gainFocusAction(time, renderScale, view, pickerColour);
+    return OFX::Host::Interact::Instance::gainFocusAction(time, renderScale, view, pickerColour);
 }
 
 // overridden from OFX::Host::Interact::Instance
@@ -186,7 +225,7 @@ OfxOverlayInteract::loseFocusAction(OfxTime time,
                                     int view,
                                     const OfxRGBAColourD* pickerColour)
 {
-    return OFX::Host::ImageEffect::OverlayInteract::loseFocusAction(time, renderScale, view, pickerColour);
+    return OFX::Host::Interact::Instance::loseFocusAction(time, renderScale, view, pickerColour);
 }
 
 // overridden from OFX::Host::Interact::Instance
@@ -195,9 +234,9 @@ OfxOverlayInteract::getSuggestedColour(double &r,
                                        double &g,
                                        double &b) const
 {
-    OfxImageEffectInstance* effect = dynamic_cast<OfxImageEffectInstance*>(&_instance);
+    OfxImageEffectInstance* effect = dynamic_cast<OfxImageEffectInstance *>(&_instance);
 
-    assert( effect && effect->getOfxEffectInstance() );
+    assert(effect && effect->getOfxEffectInstance());
 
     return effect ? effect->getOfxEffectInstance()->getNode()->getOverlayColor(&r, &g, &b) : false;
 }
@@ -206,13 +245,15 @@ OfxOverlayInteract::getSuggestedColour(double &r,
 OfxStatus
 OfxOverlayInteract::redraw()
 {
-    OfxImageEffectInstance* effect = dynamic_cast<OfxImageEffectInstance*>(&_instance);
+    OfxImageEffectInstance* effect = dynamic_cast<OfxImageEffectInstance *>(&_instance);
 
     assert(effect);
-    if ( effect && effect->getOfxEffectInstance()->getNode()->shouldDrawOverlay() ) {
+
+    if (effect && effect->getOfxEffectInstance()->getNode()->shouldDrawOverlay()) {
         AppInstancePtr app =  effect->getOfxEffectInstance()->getApp();
         assert(app);
-        if ( effect->getOfxEffectInstance()->isDoingInteractAction() ) {
+
+        if (effect->getOfxEffectInstance()->isDoingInteractAction()) {
             app->queueRedrawForAllViewers();
         } else {
             app->redrawAllViewers();
@@ -223,12 +264,57 @@ OfxOverlayInteract::redraw()
 }
 
 OfxParamOverlayInteract::OfxParamOverlayInteract(KnobI* knob,
-                                                 OFX::Host::Interact::Descriptor &desc,
-                                                 void *effectInstance)
+        OFX::Host::Interact::Descriptor &desc,
+        void *effectInstance, bool usesDrawSuite)
     : OFX::Host::Interact::Instance(desc, effectInstance)
     , NatronOverlayInteractSupport()
+    , _usesDrawSuite(usesDrawSuite)
 {
     setCallingViewport(knob);
+
+    if (_usesDrawSuite) {
+        const OFX::Host::Property::PropSpec context{kOfxInteractPropDrawContext, OFX::Host::Property::ePointer, 1, true, nullptr};
+        _argProperties.createProperty(context);
+    }
+}
+
+OfxStatus
+OfxParamOverlayInteract::drawAction(OfxTime time, const OfxPointD &renderScale,
+                                    int view, const OfxRGBAColourD* pickerColour)
+{
+    if (!_usesDrawSuite) {
+        return kOfxStatErrUnsupported;
+    }
+
+    auto* commands = _viewport ? _viewport->overlayDrawList() : nullptr;
+
+    if (!commands) {
+        return kOfxStatFailed;
+    }
+
+    auto colors = OfxDrawSession::defaultColors();
+    double r, g, b;
+
+    if (getSuggestedColour(r, g, b)) {
+        colors[kOfxStandardColourOverlaySelected] = {float(r), float(g), float(b), 1};
+        colors[kOfxStandardColourOverlayDeselected] = {float(r / 2), float(g / 2), float(b / 2), 1};
+        colors[kOfxStandardColourOverlayText] = colors[kOfxStandardColourOverlaySelected];
+    }
+
+    _viewport->getBackgroundColour(r, g, b);
+    colors[kOfxStandardColourOverlayBackground] = {float(r), float(g), float(b), 1};
+    double xScale, yScale;
+    _viewport->getPixelScale(xScale, yScale);
+    OfxDrawSession session(*commands, colors, xScale, yScale, _viewport->getScreenPixelRatio());
+    _argProperties.setPointerProperty(kOfxInteractPropDrawContext, session.handle());
+    struct ResetContext {
+        OFX::Host::Property::Set &properties;
+        ~ResetContext()
+        {
+            properties.setPointerProperty(kOfxInteractPropDrawContext, nullptr);
+        }
+    } reset{_argProperties};
+    return OFX::Host::Interact::Instance::drawAction(time, renderScale, view, pickerColour);
 }
 
 bool
@@ -254,7 +340,7 @@ NatronOverlayInteractSupport::setCallingViewport(OverlaySupport* viewport)
     _viewport = viewport;
 }
 
-OverlaySupport*
+OverlaySupport *
 NatronOverlayInteractSupport::getLastCallingViewport() const
 {
     return _viewport;
@@ -272,7 +358,7 @@ NatronOverlayInteractSupport::n_swapBuffers()
 
 void
 NatronOverlayInteractSupport::n_getViewportSize(double &width,
-                                                double &height) const
+        double &height) const
 {
     if (_viewport) {
         _viewport->getViewportSize(width, height);
@@ -280,8 +366,8 @@ NatronOverlayInteractSupport::n_getViewportSize(double &width,
 }
 
 void
-NatronOverlayInteractSupport::n_getPixelScale(double & xScale,
-                                              double & yScale) const
+NatronOverlayInteractSupport::n_getPixelScale(double &xScale,
+        double &yScale) const
 {
     if (_viewport) {
         _viewport->getPixelScale(xScale, yScale);
@@ -296,14 +382,15 @@ NatronOverlayInteractSupport::n_getScreenPixelRatio() const
     if (_viewport) {
         return _viewport->getScreenPixelRatio();
     }
+
     return 1.;
 }
 #endif
 
 void
 NatronOverlayInteractSupport::n_getBackgroundColour(double &r,
-                                                    double &g,
-                                                    double &b) const
+        double &g,
+        double &b) const
 {
     if (_viewport) {
         _viewport->getBackgroundColour(r, g, b);
@@ -312,23 +399,23 @@ NatronOverlayInteractSupport::n_getBackgroundColour(double &r,
 
 bool
 NatronOverlayInteractSupport::n_getSuggestedColour(double & /*r*/,
-                                                   double & /*g*/,
-                                                   double & /*b*/) const
+        double & /*g*/,
+        double & /*b*/) const
 {
     return false;
 }
 
 void
-OfxParamOverlayInteract::getMinimumSize(double & minW,
-                                        double & minH) const
+OfxParamOverlayInteract::getMinimumSize(double &minW,
+                                        double &minH) const
 {
     minW = _descriptor.getProperties().getDoubleProperty(kOfxParamPropInteractMinimumSize, 0);
     minH = _descriptor.getProperties().getDoubleProperty(kOfxParamPropInteractMinimumSize, 1);
 }
 
 void
-OfxParamOverlayInteract::getPreferredSize(int & pW,
-                                          int & pH) const
+OfxParamOverlayInteract::getPreferredSize(int &pW,
+        int &pH) const
 {
     pW = _descriptor.getProperties().getIntProperty(kOfxParamPropInteractPreferedSize, 0);
     pH = _descriptor.getProperties().getIntProperty(kOfxParamPropInteractPreferedSize, 1);
@@ -351,7 +438,7 @@ OfxParamOverlayInteract::setSize(int w,
 }
 
 void
-OfxParamOverlayInteract::getPixelAspectRatio(double & par) const
+OfxParamOverlayInteract::getPixelAspectRatio(double &par) const
 {
     par = _descriptor.getProperties().getDoubleProperty(kOfxParamPropInteractSizeAspect);
 }

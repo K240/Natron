@@ -17,7 +17,7 @@
 # along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
 # ***** END LICENSE BLOCK *****
 
-cmake_minimum_required(VERSION 3.16.7)
+cmake_minimum_required(VERSION 3.24)
 
 project(Natron
     VERSION "2.6.0"
@@ -27,12 +27,26 @@ project(Natron
 )
 
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(GNUInstallDirs)
 
-option(NATRON_QT6 "use Qt6" OFF)
+find_package(Git QUIET)
+set(NATRON_GIT_BRANCH "unknown")
+set(NATRON_GIT_COMMIT "unknown")
+if(Git_FOUND)
+    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --abbrev-ref HEAD
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} OUTPUT_VARIABLE NATRON_GIT_BRANCH OUTPUT_STRIP_TRAILING_WHITESPACE)
+    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} OUTPUT_VARIABLE NATRON_GIT_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE)
+endif()
+configure_file(Global/GitVersion.h.in generated/Global/GitVersion.h @ONLY)
+include_directories(BEFORE "${CMAKE_BINARY_DIR}/generated")
+
 option(NATRON_SYSTEM_LIBS "use system versions of dependencies instead of bundled ones" OFF)
 option(NATRON_BUILD_TESTS "build the Natron test suite" ON)
+option(NATRON_BUILD_GPU_TESTS "build Vulkan tests requiring a GPU and a display" OFF)
 
 set(IS_DEBUG_BUILD OFF)
 if(CMAKE_BUILD_TYPE MATCHES "^(debug|Debug|DEBUG)$")
@@ -41,7 +55,7 @@ if(CMAKE_BUILD_TYPE MATCHES "^(debug|Debug|DEBUG)$")
 
     if(WIN32)
         # Debug builds need minimal optimizations to avoid excessive link times and link errors related to Eigen.
-        add_compile_options(-O)
+        add_compile_options($<IF:$<CXX_COMPILER_ID:MSVC>,/O1,-O1>)
     endif()
 else()
     add_definitions(-DQT_NO_DEBUG_OUTPUT)
@@ -54,10 +68,14 @@ endif()
 
 find_package(Boost COMPONENTS headers serialization CONFIG)
 if(WIN32)
-    # Prevent looking in the registry so that the MinGW python can be found.
+    # Use the explicitly selected Python interpreter instead of registry installations.
     set(Python3_FIND_REGISTRY NEVER)
 endif()
-find_package(Python3 COMPONENTS Interpreter Development)
+find_package(Python3 3.10 REQUIRED COMPONENTS Interpreter Development)
+
+find_program(NATRON_UV_EXECUTABLE uv REQUIRED)
+set(NATRON_PYTHON_COMMAND "${NATRON_UV_EXECUTABLE}" run --no-project
+    --python "${Python3_EXECUTABLE}" python)
 
 if(IS_DEBUG_BUILD AND WIN32)
     # Explicitly setting SHIBOKEN_PYTHON_LIBRARIES variable to avoid PYTHON_DEBUG_LIBRARY-NOTFOUND
@@ -65,41 +83,19 @@ if(IS_DEBUG_BUILD AND WIN32)
     set(SHIBOKEN_PYTHON_LIBRARIES ${Python3_LIBRARIES})
 endif()
 
-set(QT_COMPONENTS Core Gui Network Widgets Concurrent)
-if(NATRON_QT6)
-    list(APPEND QT_COMPONENTS OpenGLWidgets)
-    find_package(Qt6 6.3 CONFIG REQUIRED COMPONENTS ${QT_COMPONENTS})
-    find_package(Shiboken6 6.3 CONFIG REQUIRED COMPONENTS libshiboken6)
-    find_package(Shiboken6Tools 6.3 CONFIG REQUIRED COMPONENTS shiboken6)
-    find_package(PySide6 6.3 CONFIG REQUIRED COMPONENTS pyside6)
-    set(QT_VERSION_MAJOR 6)
-    set(PYSIDE_VERSION_MAJOR 6)
-
-    get_target_property(PYSIDE_INCLUDE_DIRS PySide6::pyside6 INTERFACE_INCLUDE_DIRECTORIES)
-    set(QTCORE_INCLUDE_DIRS ${Qt6Core_INCLUDE_DIRS})
-    set(QTGUI_INCLUDE_DIRS ${Qt6Gui_INCLUDE_DIRS})
-    set(QTWIDGETS_INCLUDE_DIRS ${Qt6Widgets_INCLUDE_DIRS})
-
-    set(SHIBOKEN_EXE Shiboken6::shiboken6)
-    set(SHIBOKEN_LIB Shiboken6::libshiboken)
-    set(PYSIDE_LIB PySide6::pyside6)
-else()
-    find_package(Qt5 5.15 CONFIG REQUIRED COMPONENTS ${QT_COMPONENTS})
-    find_package(Shiboken2 5.15 CONFIG REQUIRED COMPONENTS libshiboken2 shiboken2)
-
-    find_package(PySide2 5.15 CONFIG REQUIRED COMPONENTS pyside2)
-    set(QT_VERSION_MAJOR 5)
-    set(PYSIDE_VERSION_MAJOR 2)
-
-    get_target_property(PYSIDE_INCLUDE_DIRS PySide2::pyside2 INTERFACE_INCLUDE_DIRECTORIES)
-    set(QTCORE_INCLUDE_DIRS ${Qt5Core_INCLUDE_DIRS})
-    set(QTGUI_INCLUDE_DIRS ${Qt5Gui_INCLUDE_DIRS})
-    set(QTWIDGETS_INCLUDE_DIRS ${Qt5Widgets_INCLUDE_DIRS})
-
-    set(SHIBOKEN_EXE Shiboken2::shiboken2)
-    set(SHIBOKEN_LIB Shiboken2::libshiboken)
-    set(PYSIDE_LIB PySide2::pyside2)
-endif()
+find_package(Qt6 6.6 CONFIG REQUIRED COMPONENTS Core Gui Network Widgets Concurrent)
+find_package(Shiboken6 6.6 CONFIG REQUIRED COMPONENTS libshiboken6)
+find_package(Shiboken6Tools 6.6 CONFIG REQUIRED COMPONENTS shiboken6)
+find_package(PySide6 6.6 CONFIG REQUIRED COMPONENTS pyside6)
+set(QT_VERSION_MAJOR 6)
+set(PYSIDE_VERSION_MAJOR 6)
+get_target_property(PYSIDE_INCLUDE_DIRS PySide6::pyside6 INTERFACE_INCLUDE_DIRECTORIES)
+set(QTCORE_INCLUDE_DIRS ${Qt6Core_INCLUDE_DIRS})
+set(QTGUI_INCLUDE_DIRS ${Qt6Gui_INCLUDE_DIRS})
+set(QTWIDGETS_INCLUDE_DIRS ${Qt6Widgets_INCLUDE_DIRS})
+set(SHIBOKEN_EXE Shiboken6::shiboken6)
+set(SHIBOKEN_LIB Shiboken6::libshiboken)
+set(PYSIDE_LIB PySide6::pyside6)
 
 if(IS_DEBUG_BUILD AND WIN32)
     # Remove NDEBUG from Shiboken INTERFACE_COMPILE_DEFINITIONS so it is not inherited in debug builds.
@@ -114,7 +110,7 @@ add_compile_definitions(QT_NO_CAST_FROM_ASCII)
 
 if (MSVC)
     # Allow __cplusplus to properly reflect the c++ standard version.
-    add_compile_options(/Zc:__cplusplus)
+    add_compile_options(/Zc:__cplusplus /utf-8 /bigobj)
     add_compile_definitions(__STDC_LIMIT_MACROS WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
 else()
     SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wmissing-prototypes" )
@@ -130,12 +126,7 @@ if(NATRON_SYSTEM_LIBS)
     find_package(Ceres)
 endif()
 
-if(UNIX AND NOT APPLE)
-    find_package(ECM NO_MODULE)
-    set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH} ${CMAKE_MODULE_PATH})
-    find_package(X11 REQUIRED)
-    find_package(Wayland COMPONENTS Client Egl)
-elseif(APPLE)
+if(APPLE)
     enable_language(OBJCXX)
 elseif(WIN32)
     enable_language(RC)
@@ -159,6 +150,10 @@ set(CMAKE_AUTORCC ON)
 enable_testing()
 
 add_subdirectory(libs)
+
+add_subdirectory(Gpu)
+
+add_subdirectory(Scene)
 
 add_subdirectory(HostSupport)
 

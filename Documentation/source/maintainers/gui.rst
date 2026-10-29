@@ -34,27 +34,50 @@ The node graph
 - ``NodeGraphUndoRedo`` and ``NodeCreationDialog`` handle edits and node
   creation. Node clipboard: ``NodeClipBoard``.
 
+Node layout and serialization use the unscaled body rectangle, excluding the
+outline. Reusing ``boundingRect()`` as a new body size adds the outline on each
+Reader filename refresh and compounds temporary node magnification. The GUI
+regression in ``tools/node-size-gui-smoke.py`` changes sequence time with the
+Reader panel open, toggles previews, changes labels, and saves/reloads the
+project. To reset a node enlarged by an older build, select it and toggle its
+preview off and on (default shortcut: Alt+P).
+
+``DotGui`` creates an ellipse instead of the base node's rectangular body.
+The inherited size API uses its virtual geometry, and content resize refreshes
+skip nodes that cannot be resized. ``tools/dot-insertion-gui-smoke.py`` presses
+Ctrl in the actual node graph, clicks the displayed edge bend point, checks
+the Reader/Dot/Viewer connections and 16 undo/redo cycles, then saves/reloads
+a project containing two Dots.
+
 The viewer
 ----------
 
-- ``ViewerGL`` (``ViewerGL.cpp``, ``ViewerGLPrivate.*``): the ``QOpenGLWidget``
-  viewport; implements ``OpenGLViewerI``. Draws the rendered textures, overlays
-  and the user's interactions.
+- ``ViewerGL`` (``ViewerGL.cpp``, ``ViewerGLPrivate.*``, ``ViewerVulkan.cpp``):
+  the ``QWidget`` viewport containing a native Vulkan surface. It implements
+  the existing ``OpenGLViewerI`` interface and displays frames through the
+  shared Vulkan device. Overlays use ``OverlayDrawList`` and interactions
+  reach the widget through the native surface's event bridge.
 - ``ViewerTab`` (``ViewerTab.cpp`` and ``ViewerTab10``–``40.cpp``,
-  ``ViewerTabPrivate.*``): the panel around the GL widget — playback controls,
+  ``ViewerTabPrivate.*``): the panel around the viewport — playback controls,
   channel/view selectors, the timeline.
-- ``InfoViewerWidget``, ``Histogram`` (also a ``QOpenGLWidget``),
-  ``TimeLineGui``.
+- ``InfoViewerWidget``, ``Histogram`` and ``TimeLineGui`` use Qt raster widgets.
+  Histogram binning remains on the CPU.
 
 Animation editors
 -----------------
 
 - ``CurveEditor`` / ``CurveWidget`` (``CurveWidget.cpp``,
   ``CurveWidgetPrivate.*``, ``CurveGui``): the keyframe curve editor
-  (``QOpenGLWidget``).
+  (``QWidget`` / ``QPainter`` with the shared draw command list).
 - ``DopeSheet`` / ``DopeSheetView`` / ``DopeSheetEditor`` /
-  ``DopeSheetHierarchyView`` (with ``DopeSheetEditorUndoRedo``): the dope sheet.
+  ``DopeSheetHierarchyView`` (with ``DopeSheetEditorUndoRedo``): the raster
+  dope sheet, including key icons, clip ranges and editing handles.
 - Undo/redo for curves: ``CurveEditorUndoRedo``.
+
+Custom OFX parameter controls and parametric backgrounds use the Natron draw
+suite extensions. Standard Viewer overlays use OFX DrawSuite / Overlay
+Interact V2. The GUI does not link Qt OpenGL or OpenGLWidgets; remaining Engine
+and shipped plugin GL paths are tracked in :ref:`maint-vulkan-migration`.
 
 Parameter panels (Knob GUIs)
 ----------------------------

@@ -108,6 +108,8 @@
 
 NATRON_NAMESPACE_ENTER
 
+enum class NodeDataType { Image, Geometry, Camera, Material, Transform, Scene, Unknown, Light };
+
 /**
  * @brief This is the base class for visual effects.
  * A live instance is always living throughout the lifetime of a Node and other copies are
@@ -115,20 +117,19 @@ NATRON_NAMESPACE_ENTER
  **/
 class EffectInstance
     : public NamedKnobHolder
-      , public LockManagerI<Image>
-      , public std::enable_shared_from_this<EffectInstance>
+    , public LockManagerI<Image>
+    , public std::enable_shared_from_this<EffectInstance>
 {
-GCC_DIAG_SUGGEST_OVERRIDE_OFF
+    GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
-GCC_DIAG_SUGGEST_OVERRIDE_ON
+    GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
     typedef std::map<int, std::list<ImagePtr> > InputImagesMap;
     typedef std::map<int, std::list<ImagePlaneDesc> > ComponentsNeededMap;
     typedef std::shared_ptr<ComponentsNeededMap> ComponentsNeededMapPtr;
 
-    struct RenderRoIArgs
-    {
+    struct RenderRoIArgs {
         // Developer note: the fields were reordered to optimize packing.
         // see http://www.catb.org/esr/structure-packing/
 
@@ -143,7 +144,7 @@ public:
         ///When called from getImage() the calling node  will have already computed input images, hence the image of this node
         ///might already be in this list
         EffectInstance::InputImagesMap inputImagesList;
-        const EffectInstance* caller;
+        const EffectInstance *caller;
         ImageBitDepthEnum bitdepth; //< the requested bit depth
         bool byPassCache;
         bool calledFromGetImage;
@@ -153,6 +154,9 @@ public:
 
         // Set to false if you don't want the node to render using the GPU at all
         bool allowGPURendering;
+        // At most one recreation in this render call; a second loss is a
+        // bounded failure rather than recursive driver recovery.
+        unsigned deviceLossRetries = 0;
 
         // the time that was passed to the original renderRoI call of the caller node
         double callerRenderTime;
@@ -176,20 +180,20 @@ public:
         {
         }
 
-        RenderRoIArgs( double time_,
-                       const RenderScale & scale_,
-                       unsigned int mipmapLevel_,
-                       ViewIdx view_,
-                       bool byPassCache_,
-                       const RectI & roi_,
-                       const RectD & preComputedRoD_,
-                       const std::list<ImagePlaneDesc> & components_,
-                       ImageBitDepthEnum bitdepth_,
-                       bool calledFromGetImage,
-                       const EffectInstance* caller,
-                       StorageModeEnum returnStorage,
-                       double callerRenderTime,
-                       const EffectInstance::InputImagesMap & inputImages = EffectInstance::InputImagesMap() )
+        RenderRoIArgs(double time_,
+                      const RenderScale & scale_,
+                      unsigned int mipmapLevel_,
+                      ViewIdx view_,
+                      bool byPassCache_,
+                      const RectI & roi_,
+                      const RectD & preComputedRoD_,
+                      const std::list<ImagePlaneDesc> &components_,
+                      ImageBitDepthEnum bitdepth_,
+                      bool calledFromGetImage,
+                      const EffectInstance* caller,
+                      StorageModeEnum returnStorage,
+                      double callerRenderTime,
+                      const EffectInstance::InputImagesMap & inputImages = EffectInstance::InputImagesMap())
             : time(time_)
             , scale(scale_)
             , mipmapLevel(mipmapLevel_)
@@ -209,8 +213,7 @@ public:
         }
     };
 
-    enum SupportsEnum
-    {
+    enum SupportsEnum {
         eSupportsMaybe = -1,
         eSupportsNo = 0,
         eSupportsYes = 1
@@ -284,10 +287,10 @@ public:
     /**
      * @brief Forwarded to the node's name
      **/
-    const std::string & getScriptName() const WARN_UNUSED_RETURN;
+    const std::string &getScriptName() const WARN_UNUSED_RETURN;
     virtual std::string getScriptName_mt_safe() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual std::string getFullyQualifiedName() const OVERRIDE FINAL WARN_UNUSED_RETURN;
-    virtual void onScriptNameChanged(const std::string& /*fullyQualifiedName*/) {}
+    virtual void onScriptNameChanged(const std::string & /*fullyQualifiedName*/) {}
 
     /**
      * @brief Returns the node output format
@@ -304,6 +307,9 @@ public:
      * MT-Safe
      **/
     EffectInstancePtr getInput(int n) const WARN_UNUSED_RETURN;
+
+    virtual NodeDataType getOutputDataType() const;
+    virtual bool acceptsInputDataType(int input, NodeDataType type) const;
 
     /**
      * @brief Forwarded to the node holding the effect
@@ -444,7 +450,10 @@ public:
         return -1;
     }
 
-    virtual bool getMakeSettingsPanel() const { return true; }
+    virtual bool getMakeSettingsPanel() const
+    {
+        return true;
+    }
 
 
     virtual bool getCreateChannelSelectorKnob() const;
@@ -457,7 +466,7 @@ public:
      * B = 2
      * A = 3
      **/
-    int getMaskChannel(int inputNb, const std::list<ImagePlaneDesc>& availableLayers, ImagePlaneDesc* comps) const;
+    int getMaskChannel(int inputNb, const std::list<ImagePlaneDesc> &availableLayers, ImagePlaneDesc* comps) const;
 
     /**
      * @brief Returns whether masking is enabled or not
@@ -470,8 +479,8 @@ public:
      * This function is also called to specify what image components this effect can output.
      * In that case inputNb equals -1.
      **/
-    virtual void addAcceptedComponents(int inputNb, std::list<ImagePlaneDesc>* comps) = 0;
-    virtual void addSupportedBitDepth(std::list<ImageBitDepthEnum>* depths) const = 0;
+    virtual void addAcceptedComponents(int inputNb, std::list<ImagePlaneDesc> *comps) = 0;
+    virtual void addSupportedBitDepth(std::list<ImageBitDepthEnum> *depths) const = 0;
 
     /**
      * @brief Must return the deepest bit depth that this plug-in can support.
@@ -521,7 +530,7 @@ public:
      * Each string being one level of the grouping. The first one being the name
      * of one group that will appear in the user interface.
      **/
-    virtual void getPluginGrouping(std::list<std::string>* grouping) const = 0;
+    virtual void getPluginGrouping(std::list<std::string> *grouping) const = 0;
 
     /**
      * @brief Must be implemented to give a description of the effect that this node does. This is typically
@@ -543,7 +552,7 @@ public:
      * Make sure that within the same plug-in there are no conflicting shortcuts.
      * Each shortcut ID can then be set to KnobButton used to indicate they have a shortcut.
      **/
-    virtual void getPluginShortcuts(std::list<PluginActionShortcut>* /*shortcuts*/) {}
+    virtual void getPluginShortcuts(std::list<PluginActionShortcut> * /*shortcuts*/) {}
 
 
     /**
@@ -558,8 +567,7 @@ public:
         return eSequentialPreferenceNotSequential;
     }
 
-    enum RenderRoIRetCode
-    {
+    enum RenderRoIRetCode {
         eRenderRoIRetCodeOk = 0,
         eRenderRoIRetCodeAborted,
         eRenderRoIRetCodeFailed
@@ -573,37 +581,23 @@ public:
      * and return 0 plane if the RoI does not intersect the RoD of the effect.
      **/
     RenderRoIRetCode renderRoI(const RenderRoIArgs & args,
-                               std::map<ImagePlaneDesc, ImagePtr>* outputPlanes) WARN_UNUSED_RETURN;
+                               std::map<ImagePlaneDesc, ImagePtr> *outputPlanes) WARN_UNUSED_RETURN;
 
 
     void getImageFromCacheAndConvertIfNeeded(bool useCache,
-                                             StorageModeEnum storage,
-                                             StorageModeEnum returnStorage,
-                                             const ImageKey & key,
-                                             unsigned int mipmapLevel,
-                                             const RectI* boundsParam,
-                                             const RectD* rodParam,
-                                             const RectI& roi,
-                                             ImageBitDepthEnum bitdepth,
-                                             const ImagePlaneDesc & components,
-                                             const EffectInstance::InputImagesMap & inputImages,
-                                             const RenderStatsPtr & stats,
-                                             const OSGLContextAttacherPtr& glContextAttacher,
-                                             ImagePtr* image);
-
-    /**
-     * @brief Converts the given OpenGL texture to a RAM-stored image. The resulting image will be cached.
-     * This function is SLOW as it makes use of glReadPixels.
-     * The OpenGL context should have been made current prior to calling this function.
-     **/
-    ImagePtr convertOpenGLTextureToCachedRAMImage(const ImagePtr& image);
-
-    /**
-     * @brief Converts the given RAM-stored image to an OpenGL texture.
-     * THe resulting texture will not be cached and will destroyed when the shared pointer is released.
-     * The OpenGL context should have been made current prior to calling this function.
-     **/
-    ImagePtr convertRAMImageToOpenGLTexture(const ImagePtr& image);
+            StorageModeEnum storage,
+            StorageModeEnum returnStorage,
+            const ImageKey & key,
+            unsigned int mipmapLevel,
+            const RectI* boundsParam,
+            const RectD* rodParam,
+            const RectI& roi,
+            ImageBitDepthEnum bitdepth,
+            const ImagePlaneDesc & components,
+            const EffectInstance::InputImagesMap & inputImages,
+            const RenderStatsPtr & stats,
+            ImagePtr* image,
+            const ImagePlaneDesc* returnComponents = nullptr);
 
 
     /**
@@ -616,11 +610,11 @@ public:
 
     class NotifyRenderingStarted_RAII
     {
-        Node* _node;
+        Node *_node;
         bool _didEmit;
         bool _didGroupEmit;
 
-public:
+    public:
 
         NotifyRenderingStarted_RAII(Node* node);
 
@@ -630,11 +624,11 @@ public:
 
     class NotifyInputNRenderingStarted_RAII
     {
-        Node* _node;
+        Node *_node;
         int _inputNumber;
         bool _didEmit;
 
-public:
+    public:
 
         NotifyInputNRenderingStarted_RAII(Node* node,
                                           int inputNumber);
@@ -642,7 +636,6 @@ public:
         ~NotifyInputNRenderingStarted_RAII();
     };
     typedef std::shared_ptr<NotifyInputNRenderingStarted_RAII> NotifyInputNRenderingStarted_RAIIPtr;
-
 
 
     /**
@@ -658,14 +651,12 @@ public:
                                   const NodePtr & treeRoot,
                                   int visitsCount,
                                   const NodeFrameRequestPtr & nodeRequest,
-                                  const OSGLContextPtr& glContext,
                                   int textureIndex,
                                   const TimeLine* timeline,
                                   bool isAnalysis,
                                   bool isDuringPaintStrokeCreation,
                                   const NodesList & rotoPaintNodes,
                                   RenderSafetyEnum currentThreadSafety,
-                                  PluginOpenGLRenderSupport currentOpenGLSupport,
                                   bool doNanHandling,
                                   bool draftMode,
                                   const RenderStatsPtr & stats);
@@ -708,21 +699,21 @@ public:
 
     // Implem is in ParallelRenderArgs.cpp
     static EffectInstance::RenderRoIRetCode treeRecurseFunctor(bool isRenderFunctor,
-                                                               const NodePtr & node,
-                                                               const FramesNeededMap & framesNeeded,
-                                                               const RoIMap & inputRois,
-                                                               const InputMatrixMapPtr & reroutesMap,
-                                                               bool useTransforms,         // roi functor specific
-                                                               StorageModeEnum renderStorageMode, // The storage of the image returned by the current Render
-                                                               unsigned int originalMipmapLevel,         // roi functor specific
-                                                               double time,
-                                                               ViewIdx view,
-                                                               const NodePtr & treeRoot,
-                                                               FrameRequestMap* requests,          // roi functor specific
-                                                               EffectInstance::InputImagesMap* inputImages,         // render functor specific
-                                                               const EffectInstance::ComponentsNeededMap* neededComps,         // render functor specific
-                                                               bool useScaleOneInputs,         // render functor specific
-                                                               bool byPassCache);         // render functor specific
+            const NodePtr & node,
+            const FramesNeededMap & framesNeeded,
+            const RoIMap & inputRois,
+            const InputMatrixMapPtr & reroutesMap,
+            bool useTransforms,         // roi functor specific
+            StorageModeEnum renderStorageMode, // The storage of the image returned by the current Render
+            unsigned int originalMipmapLevel,         // roi functor specific
+            double time,
+            ViewIdx view,
+            const NodePtr & treeRoot,
+            FrameRequestMap* requests,          // roi functor specific
+            EffectInstance::InputImagesMap* inputImages,         // render functor specific
+            const EffectInstance::ComponentsNeededMap* neededComps,         // render functor specific
+            bool useScaleOneInputs,         // render functor specific
+            bool byPassCache);         // render functor specific
 
 
     /**
@@ -765,9 +756,9 @@ protected:
 
     bool setMetadataInternal(const NodeMetadata& metadata);
 
-    virtual void onMetadataRefreshed(const NodeMetadata& /*metadata*/) {}
+    virtual void onMetadataRefreshed(const NodeMetadata & /*metadata*/) {}
 
-    bool refreshMetadata_recursive(std::list<Node*> & markedNodes);
+    bool refreshMetadata_recursive(std::list<Node*> &markedNodes);
 
     friend class ClipPreferencesRunning_RAII;
     void setClipPreferencesRunning(bool running);
@@ -793,14 +784,16 @@ public:
 
 protected:
 
-    virtual StatusEnum getPreferredMetadata(NodeMetadata& /*metadata*/) { return eStatusOK; }
+    virtual StatusEnum getPreferredMetadata(NodeMetadata & /*metadata*/)
+    {
+        return eStatusOK;
+    }
 
 private:
 
     StatusEnum getDefaultMetadata(NodeMetadata& metadata);
 
 public:
-
 
 
     /**
@@ -849,9 +842,9 @@ public:
     ///////////////////////End Metadatas related////////////////////////
 
 
-    virtual void lock(const std::shared_ptr<Image> & entry) OVERRIDE FINAL;
-    virtual bool tryLock(const std::shared_ptr<Image> & entry) OVERRIDE FINAL;
-    virtual void unlock(const std::shared_ptr<Image> & entry) OVERRIDE FINAL;
+    virtual void lock(const std::shared_ptr<Image> &entry) OVERRIDE FINAL;
+    virtual bool tryLock(const std::shared_ptr<Image> &entry) OVERRIDE FINAL;
+    virtual void unlock(const std::shared_ptr<Image> &entry) OVERRIDE FINAL;
     virtual bool canSetValue() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual void abortAnyEvaluation(bool keepOldestRender = true) OVERRIDE FINAL;
     virtual double getCurrentTime() const OVERRIDE WARN_UNUSED_RETURN;
@@ -867,14 +860,13 @@ public:
 
     ViewIdx getFrameRenderArgsCurrentView() const;
 
-    virtual bool getInputsHoldingTransform(std::list<int>* /*inputs*/) const
+    virtual bool getInputsHoldingTransform(std::list<int> * /*inputs*/) const
     {
         return false;
     }
 
     bool getThreadLocalRegionsOfInterests(RoIMap & roiMap) const;
 
-    OSGLContextPtr getThreadLocalOpenGLContext() const;
 
     void getThreadLocalInputImages(InputImagesMap* images) const;
 
@@ -888,8 +880,7 @@ public:
         return false;
     }
 
-    enum PassThroughEnum
-    {
+    enum PassThroughEnum {
         ePassThroughBlockNonRenderedPlanes,
         ePassThroughPassThroughNonRenderedPlanes,
         ePassThroughRenderAllRequestedPlanes
@@ -905,8 +896,7 @@ public:
         return false;
     }
 
-    enum ViewInvarianceLevel
-    {
+    enum ViewInvarianceLevel {
         eViewInvarianceAllViewsVariant,
         eViewInvarianceOnlyPassThroughPlanesVariant,
         eViewInvarianceAllViewsInvariant,
@@ -917,39 +907,7 @@ public:
         return eViewInvarianceAllViewsVariant;
     }
 
-    class OpenGLContextEffectData
-    {
-        // True if we did not unlock the context mutex in attachOpenGLContext()
-        bool hasTakenLock;
-
-public:
-
-        OpenGLContextEffectData()
-            : hasTakenLock(false)
-        {
-        }
-
-        void setHasTakenLock(bool b)
-        {
-            hasTakenLock = b;
-        }
-
-        bool getHasTakenLock() const
-        {
-            return hasTakenLock;
-        }
-
-        virtual ~OpenGLContextEffectData()
-        {
-        }
-    };
-
-    typedef std::shared_ptr<OpenGLContextEffectData> OpenGLContextEffectDataPtr;
-    typedef std::map<OSGLContextWPtr, OpenGLContextEffectDataPtr, std::owner_less<OSGLContextWPtr>> OpenGLContextEffectsMap;
-
-
-    struct RenderActionArgs
-    {
+    struct RenderActionArgs {
         double time;
         RenderScale originalScale;
         RenderScale mappedScale;
@@ -961,8 +919,6 @@ public:
         bool isRenderResponseToUserInteraction;
         bool byPassCache;
         bool draftMode;
-        bool useOpenGL;
-        EffectInstance::OpenGLContextEffectDataPtr glContextData;
         std::bitset<4> processChannels;
     };
 
@@ -975,8 +931,7 @@ protected:
      * Note that this function can be called concurrently for the same output image but with different
      * rois, depending on the threading-affinity of the plug-in.
      **/
-    virtual StatusEnum render(const RenderActionArgs & /*args*/) WARN_UNUSED_RETURN
-    {
+    virtual StatusEnum render(const RenderActionArgs & /*args*/) WARN_UNUSED_RETURN {
         return eStatusOK;
     }
 
@@ -984,9 +939,8 @@ protected:
                                     const RenderScale & /*renderScale*/,
                                     bool /*draftRender*/,
                                     ViewIdx /*view*/,
-                                    EffectInstancePtr* /*inputToTransform*/,
-                                    Transform::Matrix3x3* /*transform*/) WARN_UNUSED_RETURN
-    {
+                                    EffectInstancePtr * /*inputToTransform*/,
+                                    Transform::Matrix3x3 * /*transform*/) WARN_UNUSED_RETURN {
         return eStatusReplyDefault;
     }
 
@@ -1002,25 +956,24 @@ public:
                                    Transform::Matrix3x3* transform) WARN_UNUSED_RETURN;
 
 protected:
-/**
- * @brief Can be overloaded to indicates whether the effect is an identity, i.e it doesn't produce
- * any change in output.
- * @param time The time of interest
- * @param scale The scale of interest
- * @param rod The image region of definition, in canonical coordinates
- * @param view The view we 're interested in
- * @param inputTime[out] the input time to which this plugin is identity of
- * @param inputNb[out] the input number of the effect that is identity of.
- * The special value of -2 indicates that the plugin is identity of itself at another time
- **/
+    /**
+     * @brief Can be overloaded to indicates whether the effect is an identity, i.e it doesn't produce
+     * any change in output.
+     * @param time The time of interest
+     * @param scale The scale of interest
+     * @param rod The image region of definition, in canonical coordinates
+     * @param view The view we 're interested in
+     * @param inputTime[out] the input time to which this plugin is identity of
+     * @param inputNb[out] the input number of the effect that is identity of.
+     * The special value of -2 indicates that the plugin is identity of itself at another time
+     **/
     virtual bool isIdentity(double /*time*/,
                             const RenderScale & /*scale*/,
                             const RectI & /*roi*/,
                             ViewIdx /*view*/,
-                            double* /*inputTime*/,
-                            ViewIdx* /*inputView*/,
-                            int* /*inputNb*/) WARN_UNUSED_RETURN
-    {
+                            double * /*inputTime*/,
+                            ViewIdx * /*inputView*/,
+                            int * /*inputNb*/) WARN_UNUSED_RETURN {
         return false;
     }
 
@@ -1033,9 +986,9 @@ public:
                            const RenderScale & scale,
                            const RectI & renderWindow,
                            ViewIdx view,
-                           double* inputTime,
+                           double *inputTime,
                            ViewIdx* inputView,
-                           int* inputNb) WARN_UNUSED_RETURN;
+                           int *inputNb) WARN_UNUSED_RETURN;
 
     /**
      * @brief Indicates how many simultaneous renders the plugin can deal with.
@@ -1060,17 +1013,17 @@ public:
      * converted to pixel coordinates
      */
     ImagePtr getImage(int inputNb,
-                                      const double time,
-                                      const RenderScale & scale,
-                                      const ViewIdx view,
-                                      const RectD *optionalBounds, //!< optional region in canonical coordinates
-                                      const ImagePlaneDesc* layer, //< if set, fetch this specific layer, otherwise use what's in the clip pref
-                                      const bool mapToClipPrefs,
-                                      const bool dontUpscale,
-                                      const StorageModeEnum returnStorage,
-                                      const ImageBitDepthEnum* textureDepth,
-                                      RectI* roiPixel,
-                                      Transform::Matrix3x3Ptr* transform = 0) WARN_UNUSED_RETURN;
+                      const double time,
+                      const RenderScale & scale,
+                      const ViewIdx view,
+                      const RectD *optionalBounds, //!< optional region in canonical coordinates
+                      const ImagePlaneDesc* layer, //< if set, fetch this specific layer, otherwise use what's in the clip pref
+                      const bool mapToClipPrefs,
+                      const bool dontUpscale,
+                      const StorageModeEnum returnStorage,
+                      const ImageBitDepthEnum* textureDepth,
+                      RectI* roiPixel,
+                      Transform::Matrix3x3Ptr* transform = 0) WARN_UNUSED_RETURN;
     virtual void aboutToRestoreDefaultValues() OVERRIDE FINAL;
     virtual bool shouldCacheOutput(bool isFrameVaryingOrAnimated, double time, ViewIdx view, int visitsCount) const;
 
@@ -1146,11 +1099,11 @@ public:
                                             bool* isProjectFormat) WARN_UNUSED_RETURN;
 
     StatusEnum getRegionOfDefinitionFromCache(U64 hash,
-                                              double time,
-                                              const RenderScale & scale,
-                                              ViewIdx view,
-                                              RectD* rod,
-                                              bool* isProjectFormat) WARN_UNUSED_RETURN;
+            double time,
+            const RenderScale & scale,
+            ViewIdx view,
+            RectD* rod,
+            bool* isProjectFormat) WARN_UNUSED_RETURN;
 
 public:
 
@@ -1175,7 +1128,7 @@ public:
     }
 
     void setCurrentViewportForOverlays_public(OverlaySupport* viewport);
-    OverlaySupport* getCurrentViewportForOverlays() const;
+    OverlaySupport *getCurrentViewportForOverlays() const;
 
 protected:
 
@@ -1205,8 +1158,7 @@ public:
      * at once. If not called, onKnobValueChanged() will call automatically bracket its call be a begin/end
      * but this can lead to worse performance. You can overload this to make all changes to params at once.
      **/
-    virtual void beginKnobsValuesChanged(ValueChangedReasonEnum /*reason*/) OVERRIDE
-    {
+    virtual void beginKnobsValuesChanged(ValueChangedReasonEnum /*reason*/) OVERRIDE {
     }
 
     /**
@@ -1214,8 +1166,7 @@ public:
      * at once. If not called, onKnobValueChanged() will call automatically bracket its call be a begin/end
      * but this can lead to worse performance. You can overload this to make all changes to params at once.
      **/
-    virtual void endKnobsValuesChanged(ValueChangedReasonEnum /*reason*/) OVERRIDE
-    {
+    virtual void endKnobsValuesChanged(ValueChangedReasonEnum /*reason*/) OVERRIDE {
     }
 
     /**
@@ -1298,7 +1249,10 @@ public:
     /// should be set during effect initialization, but may also be set by the first getRegionOfDefinition with scale != 1 that succeeds
     void setSupportsRenderScaleMaybe(EffectInstance::SupportsEnum s) const;
 
-    virtual bool supportsRenderQuality() const { return false; }
+    virtual bool supportsRenderQuality() const
+    {
+        return false;
+    }
 
     /**
      * @brief Does this effect can support multiple clips PAR ?
@@ -1330,6 +1284,15 @@ public:
     {
         return ePluginOpenGLRenderSupportNone;
     }
+    virtual bool supportsVulkanRender() const
+    {
+        return false;
+    }
+    virtual bool requiresVulkanRender() const
+    {
+        return false;
+    }
+    bool isVulkanRenderThreadLocal() const;
 
     /**
      * @brief If this effect is a writer then the file path corresponding to the output images path will be fed
@@ -1374,8 +1337,7 @@ public:
 
     bool isDuringPaintStrokeCreationThreadLocal() const;
 
-    struct PlaneToRender
-    {
+    struct PlaneToRender {
         //Points to the fullscale image if render scale is not supported by the plug-in, or downscaleImage otherwise
         ImagePtr fullscaleImage;
 
@@ -1393,7 +1355,7 @@ public:
            if the render is issues directly from getImage() we swap image in cache instead of taking the write lock of fullScaleImage
          */
         ImagePtr cacheSwapImage;
-        void* originalCachedImage;
+        void *originalCachedImage;
 
         /**
          * This is set to true if this plane is allocated with allocateImagePlaneAndSetInThreadLocalStorage()
@@ -1412,8 +1374,7 @@ public:
         }
     };
 
-    struct RectToRender
-    {
+    struct RectToRender {
         EffectInstancePtr identityInput;
         RectI rect;
         RoIMap inputRois;
@@ -1423,22 +1384,17 @@ public:
         ViewIdx identityView;
     };
 
-    struct ImagePlanesToRender
-    {
+    struct ImagePlanesToRender {
         std::list<RectToRender> rectsToRender;
         std::map<ImagePlaneDesc, PlaneToRender> planes;
         std::map<int, ImagePremultiplicationEnum> inputPremult;
         ImagePremultiplicationEnum outputPremult;
-        bool useOpenGL;
-        EffectInstance::OpenGLContextEffectDataPtr glContextData;
 
         ImagePlanesToRender()
             : rectsToRender()
             , planes()
             , inputPremult()
             , outputPremult(eImagePremultiplicationPremultiplied)
-            , useOpenGL(false)
-            , glContextData()
         {
         }
     };
@@ -1453,7 +1409,7 @@ public:
      *
      * WARNING: This call isexpensive and this function should not be called many times.
      **/
-    bool getThreadLocalRenderedPlanes(std::map<ImagePlaneDesc, EffectInstance::PlaneToRender >*  planes,
+    bool getThreadLocalRenderedPlanes(std::map<ImagePlaneDesc, EffectInstance::PlaneToRender >  *planes,
                                       ImagePlaneDesc* planeBeingRendered,
                                       RectI* renderWindow) const;
 
@@ -1503,9 +1459,9 @@ protected:
 
     class CanSetSetValueFlag_RAII
     {
-        EffectInstance* effect;
+        EffectInstance *effect;
 
-public:
+    public:
 
         CanSetSetValueFlag_RAII(EffectInstance* effect,
                                 bool canSetValue)
@@ -1552,9 +1508,7 @@ public:
                                            bool /*isSequentialRender*/,
                                            bool /*isRenderResponseToUserInteraction*/,
                                            bool /*draftMode*/,
-                                           ViewIdx /*view*/,
-                                           bool /*isOpenGLRender*/,
-                                           const EffectInstance::OpenGLContextEffectDataPtr& /*glContextData*/)
+                                           ViewIdx /*view*/)
     {
         return eStatusOK;
     }
@@ -1567,9 +1521,7 @@ public:
                                          bool /*isSequentialRender*/,
                                          bool /*isRenderResponseToUserInteraction*/,
                                          bool /*draftMode*/,
-                                         ViewIdx /*view*/,
-                                         bool /*isOpenGLRender*/,
-                                         const EffectInstance::OpenGLContextEffectDataPtr& /*glContextData*/)
+                                         ViewIdx /*view*/)
     {
         return eStatusOK;
     }
@@ -1605,18 +1557,17 @@ public:
                                           double step, bool interactive, const RenderScale & scale,
                                           bool isSequentialRender, bool isRenderResponseToUserInteraction,
                                           bool draftMode,
-                                          ViewIdx view,
-                                          bool isOpenGLRender,
-                                          const EffectInstance::OpenGLContextEffectDataPtr& glContextData);
+                                          ViewIdx view);
     StatusEnum endSequenceRender_public(double first, double last,
                                         double step, bool interactive, const RenderScale & scale,
                                         bool isSequentialRender, bool isRenderResponseToUserInteraction,
                                         bool draftMode,
-                                        ViewIdx view,
-                                        bool isOpenGLRender,
-                                        const EffectInstance::OpenGLContextEffectDataPtr& glContextData);
+                                        ViewIdx view);
 
-    virtual bool canHandleRenderScaleForOverlays() const { return true; }
+    virtual bool canHandleRenderScaleForOverlays() const
+    {
+        return true;
+    }
 
 
     void drawOverlay_public(double time, const RenderScale & renderScale, ViewIdx view);
@@ -1644,8 +1595,8 @@ public:
     virtual bool isDoingInteractAction() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual void onInteractViewportSelectionCleared() {}
 
-    virtual void onInteractViewportSelectionUpdated(const RectD& /*rectangle*/,
-                                                    bool /*onRelease*/) {}
+    virtual void onInteractViewportSelectionUpdated(const RectD & /*rectangle*/,
+            bool /*onRelease*/) {}
 
     void setDoingInteractAction(bool doing);
 
@@ -1660,6 +1611,13 @@ public:
     {
         return false;
     }
+
+    // Overrides must draw with the viewport's OverlayDrawList rather than GL.
+    virtual bool supportsOverlayDrawList() const
+    {
+        return false;
+    }
+    bool isCurrentOverlayBackendSupported() const;
 
     virtual void redrawOverlayInteract();
 
@@ -1676,9 +1634,9 @@ public:
      * @returns True if you want the host to add the RGBA checkboxes, false otherwise.
      **/
     virtual bool isHostChannelSelectorSupported(bool* defaultR,
-                                                bool* defaultG,
-                                                bool* defaultB,
-                                                bool* defaultA) const
+            bool* defaultG,
+            bool* defaultB,
+            bool* defaultA) const
     {
         *defaultR = true;
         *defaultG = true;
@@ -1708,7 +1666,7 @@ public:
         return false;
     }
 
-    virtual void onKnobsAboutToBeLoaded(const NodeSerializationPtr& /*serialization*/) {}
+    virtual void onKnobsAboutToBeLoaded(const NodeSerializationPtr & /*serialization*/) {}
 
     virtual void onKnobsLoaded() {}
 
@@ -1716,32 +1674,21 @@ public:
      * @brief Called after all knobs have been loaded and the nod ehas been created
      **/
     virtual void onEffectCreated(bool /*mayCreateFileDialog*/,
-                                 const CreateNodeArgs& /*args*/) {}
+                                 const CreateNodeArgs & /*args*/) {}
 
     virtual void onKnobSlaved(const KnobIPtr& slave, const KnobIPtr& master,
                               int dimension,
                               bool isSlave) OVERRIDE FINAL;
 
-    /**
-     * @brief This function calls the implementation specific attachOpenGLContext()
-     **/
-    StatusEnum attachOpenGLContext_public(const OSGLContextPtr& glContext, EffectInstance::OpenGLContextEffectDataPtr* data);
-
-    /**
-     * @brief This function calls the implementation specific dettachOpenGLContext()
-     **/
-    StatusEnum dettachOpenGLContext_public(const OSGLContextPtr& glContext, const EffectInstance::OpenGLContextEffectDataPtr& data);
 
     /**
      * @brief Called for plug-ins that support concurrent OpenGL renders when the effect is about to be destroyed to release all contexts data.
      **/
-    void dettachAllOpenGLContexts();
 
     /**
      * @brief Must return whether the plug-in handles concurrent OpenGL renders or not.
      * By default the OpenFX OpenGL render suite cannot support concurrent OpenGL renders, but version 2 specified by Natron allows for this.
      **/
-    virtual bool supportsConcurrentOpenGLRenders() const { return true; }
 
 
     void clearRenderInstances();
@@ -1754,7 +1701,10 @@ protected:
      * of the effect that will be used to render. The copy should be as fast as possible, meaning any clip or parameter should
      * share pointers (since internally these classes are thread-safe) and ensure that any private data member is copied.
      **/
-    virtual EffectInstancePtr createRenderClone() { return EffectInstancePtr(); }
+    virtual EffectInstancePtr createRenderClone()
+    {
+        return EffectInstancePtr();
+    }
 
 
     /**
@@ -1771,61 +1721,34 @@ private:
 
     void releaseRenderInstance(const EffectInstancePtr& instance);
 
-    /**
-     * @brief This function must initialize all OpenGL context related data such as shaders, LUTs, etc...
-     * This function will be called once per context. The function dettachOpenGLContext() will be called
-     * on the value returned by this function to deinitialize all context related data.
-     *
-     * If the function supportsConcurrentOpenGLRenders() returns false, each call to attachOpenGLContext must be followed by
-     * a call to dettachOpenGLContext before attaching a DIFFERENT context, meaning the plug-in thread-safety is instance safe at most.
-     *
-     * Possible return status code:
-     * eStatusOK , the action was trapped and all was well
-     * eStatusReplyDefault , the action was ignored, but all was well anyway
-     * eStatusOutOfMemory , in which case this may be called again after a memory purge
-     * eStatusFailed , something went wrong, but no error code appropriate, the plugin should to post a message if possible and the host should not attempt to run the plugin in OpenGL render mode.
-     **/
-    virtual StatusEnum attachOpenGLContext(EffectInstance::OpenGLContextEffectDataPtr* /*data*/) { return eStatusReplyDefault; }
-
-    /**
-     * @brief This function must free all OpenGL context related data that were allocated previously in a call to attachOpenGLContext().
-     * Possible return status code:
-     * eStatusOK , the action was trapped and all was well
-     * eStatusReplyDefault , the action was ignored, but all was well anyway
-     * eStatusOutOfMemory , in which case this may be called again after a memory purge
-     * eStatusFailed , something went wrong, but no error code appropriate, the plugin should to post a message if possible and the host should not attempt to run the plugin in OpenGL render mode.
-     **/
-    virtual StatusEnum dettachOpenGLContext(const OpenGLContextEffectDataPtr& /*data*/) { return eStatusReplyDefault; }
-
-
 
 public:
 
     void getComponentsNeededAndProduced_public(U64 hash,
-                                               double time, ViewIdx view,
-                                               EffectInstance::ComponentsNeededMap* comps,
-                                               std::list<ImagePlaneDesc>* passThroughPlanes,
-                                               bool* processAllRequested,
-                                               double* passThroughTime,
-                                               int* passThroughView,
-                                               std::bitset<4> *processChannels,
-                                               int* passThroughInput);
+            double time, ViewIdx view,
+            EffectInstance::ComponentsNeededMap* comps,
+            std::list<ImagePlaneDesc> *passThroughPlanes,
+            bool* processAllRequested,
+            double *passThroughTime,
+            int *passThroughView,
+            std::bitset<4> *processChannels,
+            int *passThroughInput);
 
 
-    void getAvailableLayers(double time, ViewIdx view, int inputNb, std::list<ImagePlaneDesc>* availableLayers) ;
+    void getAvailableLayers(double time, ViewIdx view, int inputNb, std::list<ImagePlaneDesc> *availableLayers) ;
 
-    const std::vector<std::string>& getUserPlanes() const;
+    const std::vector<std::string> &getUserPlanes() const;
 
 private:
 
     void getComponentsNeededDefault(double time, ViewIdx view,
                                     EffectInstance::ComponentsNeededMap* comps,
-                                    std::list<ImagePlaneDesc>* passThroughPlanes,
+                                    std::list<ImagePlaneDesc> *passThroughPlanes,
                                     bool* processAllRequested,
-                                    double* passThroughTime,
-                                    int* passThroughView,
+                                    double *passThroughTime,
+                                    int *passThroughView,
                                     std::bitset<4> *processChannels,
-                                    int* passThroughInput);
+                                    int *passThroughInput);
 
 public:
 
@@ -1845,9 +1768,8 @@ public:
                                    double par,
                                    const RenderScale & scale,
                                    RoIMap* inputRois,
-                                   std::map<int, EffectInstancePtr>* reroutesMap);
-    struct RenderArgs
-    {
+                                   std::map<int, EffectInstancePtr> *reroutesMap);
+    struct RenderArgs {
         RectD rod; //!< the effect's RoD in CANONICAL coordinates
         RoIMap regionOfInterestResults; //< the input RoI's in CANONICAL coordinates
         RectI renderWindowPixel; //< the current renderWindow in PIXEL coordinates
@@ -1865,18 +1787,16 @@ public:
         ComponentsNeededMapPtr  compsNeeded;
         double firstFrame, lastFrame;
         InputMatrixMapPtr transformRedirections;
-        bool isDoingOpenGLRender;
 
         RenderArgs();
 
         RenderArgs(const RenderArgs & o);
 
-        RenderArgs& operator=(const RenderArgs& other); // copy assignment
+        RenderArgs &operator=(const RenderArgs& other); // copy assignment
     };
 
     //these are per-node thread-local data
-    struct EffectTLSData
-    {
+    struct EffectTLSData {
         //Used to count the begin/endRenderAction recursion
         int beginEndRenderCount;
 
@@ -1977,8 +1897,7 @@ protected:
      * @brief Must be implemented to initialize any knob using the
      * KnobFactory.
      **/
-    virtual void initializeKnobs() OVERRIDE
-    {
+    virtual void initializeKnobs() OVERRIDE {
     };
 
 
@@ -1988,13 +1907,13 @@ protected:
      * passThroughInput to fetch the components needed.
      **/
     virtual void getComponentsNeededAndProduced(double time, ViewIdx view,
-                                                EffectInstance::ComponentsNeededMap* comps,
-                                                double* passThroughTime,
-                                                int* passThroughView,
-                                                int* passThroughInput);
+            EffectInstance::ComponentsNeededMap* comps,
+            double *passThroughTime,
+            int *passThroughView,
+            int *passThroughInput);
 
 
-    virtual void setInteractColourPicker(const OfxRGBAColourD& /*color*/, bool /*setColor*/, bool /*hasColor*/)
+    virtual void setInteractColourPicker(const OfxRGBAColourD & /*color*/, bool /*setColor*/, bool /*hasColor*/)
     {
 
     }
@@ -2022,8 +1941,7 @@ protected:
                                   const QPointF & /*pos*/,
                                   double /*pressure*/,
                                   double /*timestamp*/,
-                                  PenType /*pen*/) WARN_UNUSED_RETURN
-    {
+                                  PenType /*pen*/) WARN_UNUSED_RETURN {
         return false;
     }
 
@@ -2031,8 +1949,7 @@ protected:
                                            const RenderScale & /*renderScale*/,
                                            ViewIdx /*view*/,
                                            const QPointF & /*viewportPos*/,
-                                           const QPointF & /*pos*/) WARN_UNUSED_RETURN
-    {
+                                           const QPointF & /*pos*/) WARN_UNUSED_RETURN {
         return false;
     }
 
@@ -2042,8 +1959,7 @@ protected:
                                     const QPointF & /*viewportPos*/,
                                     const QPointF & /*pos*/,
                                     double /*pressure*/,
-                                    double /*timestamp*/) WARN_UNUSED_RETURN
-    {
+                                    double /*timestamp*/) WARN_UNUSED_RETURN {
         return false;
     }
 
@@ -2053,8 +1969,7 @@ protected:
                                 const QPointF & /*viewportPos*/,
                                 const QPointF & /*pos*/,
                                 double /*pressure*/,
-                                double /*timestamp*/) WARN_UNUSED_RETURN
-    {
+                                double /*timestamp*/) WARN_UNUSED_RETURN {
         return false;
     }
 
@@ -2062,8 +1977,7 @@ protected:
                                   const RenderScale & /*renderScale*/,
                                   ViewIdx /*view*/,
                                   Key /*key*/,
-                                  KeyboardModifiers /*modifiers*/) WARN_UNUSED_RETURN
-    {
+                                  KeyboardModifiers /*modifiers*/) WARN_UNUSED_RETURN {
         return false;
     }
 
@@ -2071,8 +1985,7 @@ protected:
                                 const RenderScale & /*renderScale*/,
                                 ViewIdx /*view*/,
                                 Key /*key*/,
-                                KeyboardModifiers /*modifiers*/) WARN_UNUSED_RETURN
-    {
+                                KeyboardModifiers /*modifiers*/) WARN_UNUSED_RETURN {
         return false;
     }
 
@@ -2080,22 +1993,19 @@ protected:
                                     const RenderScale & /*renderScale*/,
                                     ViewIdx /*view*/,
                                     Key /*key*/,
-                                    KeyboardModifiers /*modifiers*/) WARN_UNUSED_RETURN
-    {
+                                    KeyboardModifiers /*modifiers*/) WARN_UNUSED_RETURN {
         return false;
     }
 
     virtual bool onOverlayFocusGained(double /*time*/,
                                       const RenderScale & /*renderScale*/,
-                                      ViewIdx /*view*/) WARN_UNUSED_RETURN
-    {
+                                      ViewIdx /*view*/) WARN_UNUSED_RETURN {
         return false;
     }
 
     virtual bool onOverlayFocusLost(double /*time*/,
                                     const RenderScale & /*renderScale*/,
-                                    ViewIdx /*view*/) WARN_UNUSED_RETURN
-    {
+                                    ViewIdx /*view*/) WARN_UNUSED_RETURN {
         return false;
     }
 
@@ -2110,8 +2020,7 @@ private:
     friend class WriteNode;
     friend class ImageBitMapMarker_RAII;
 
-    enum RenderRoIStatusEnum
-    {
+    enum RenderRoIStatusEnum {
         eRenderRoIStatusImageAlreadyRendered = 0, // there was nothing left to render
         eRenderRoIStatusImageRendered, // we rendered what was missing
         eRenderRoIStatusRenderFailed, // render failed
@@ -2145,51 +2054,51 @@ private:
      * @returns True if the render call succeeded, false otherwise.
      **/
     static RenderRoIStatusEnum renderRoIInternal(EffectInstance* self,
-                                                 double time,
-                                                 const ParallelRenderArgsPtr & frameArgs,
-                                                 RenderSafetyEnum safety,
-                                                 unsigned int mipmapLevel,
-                                                 ViewIdx view,
-                                                 const RectD & rod, //!< rod in canonical coordinates
-                                                 const double par,
-                                                 const ImagePlanesToRenderPtr & planes,
-                                                 bool isSequentialRender,
-                                                 bool isRenderMadeInResponseToUserInteraction,
-                                                 U64 nodeHash,
-                                                 bool renderFullScaleThenDownscale,
-                                                 bool byPassCache,
-                                                 ImageBitDepthEnum outputClipPrefDepth,
-                                                 const ImagePlaneDesc& outputClipPrefsComps,
-                                                 const ComponentsNeededMapPtr & compsNeeded,
-                                                 std::bitset<4> processChannels);
+            double time,
+            const ParallelRenderArgsPtr & frameArgs,
+            RenderSafetyEnum safety,
+            unsigned int mipmapLevel,
+            ViewIdx view,
+            const RectD & rod, //!< rod in canonical coordinates
+            const double par,
+            const ImagePlanesToRenderPtr & planes,
+            bool isSequentialRender,
+            bool isRenderMadeInResponseToUserInteraction,
+            U64 nodeHash,
+            bool renderFullScaleThenDownscale,
+            bool byPassCache,
+            ImageBitDepthEnum outputClipPrefDepth,
+            const ImagePlaneDesc& outputClipPrefsComps,
+            const ComponentsNeededMapPtr & compsNeeded,
+            std::bitset<4> processChannels);
 
 
     /// \returns false if rendering was aborted
     RenderRoIRetCode renderInputImagesForRoI(const FrameViewRequest* request,
-                                             bool useTransforms,
-                                             StorageModeEnum renderStorageMode,
-                                             double time,
-                                             ViewIdx view,
-                                             const RectD & rod,
-                                             const RectD & canonicalRenderWindow,
-                                             const InputMatrixMapPtr & transformMatrix,
-                                             unsigned int mipmapLevel,
-                                             const RenderScale & renderMappedScale,
-                                             bool useScaleOneInputImages,
-                                             bool byPassCache,
-                                             const FramesNeededMap & framesNeeded,
-                                             const EffectInstance::ComponentsNeededMap & compsNeeded,
-                                             EffectInstance::InputImagesMap *inputImages,
-                                             RoIMap* inputsRoI);
+            bool useTransforms,
+            StorageModeEnum renderStorageMode,
+            double time,
+            ViewIdx view,
+            const RectD & rod,
+            const RectD & canonicalRenderWindow,
+            const InputMatrixMapPtr & transformMatrix,
+            unsigned int mipmapLevel,
+            const RenderScale & renderMappedScale,
+            bool useScaleOneInputImages,
+            bool byPassCache,
+            const FramesNeededMap & framesNeeded,
+            const EffectInstance::ComponentsNeededMap & compsNeeded,
+            EffectInstance::InputImagesMap *inputImages,
+            RoIMap* inputsRoI);
 
     static ImagePtr convertPlanesFormatsIfNeeded(const AppInstancePtr& app,
-                                                                 const ImagePtr& inputImage,
-                                                                 const RectI& roi,
-                                                                 const ImagePlaneDesc& targetComponents,
-                                                                 ImageBitDepthEnum targetDepth,
-                                                                 bool useAlpha0ForRGBToRGBAConversion,
-                                                                 ImagePremultiplicationEnum outputPremult,
-                                                                 int channelForAlpha);
+            const ImagePtr& inputImage,
+            const RectI& roi,
+            const ImagePlaneDesc& targetComponents,
+            ImageBitDepthEnum targetDepth,
+            bool useAlpha0ForRGBToRGBAConversion,
+            ImagePremultiplicationEnum outputPremult,
+            int channelForAlpha);
 
 
     /**
@@ -2230,8 +2139,7 @@ private:
 
     virtual void onSignificantEvaluateAboutToBeCalled(KnobI* knob) OVERRIDE FINAL;
     virtual void onAllKnobsSlaved(bool isSlave, KnobHolder* master) OVERRIDE FINAL;
-    enum RenderingFunctorRetEnum
-    {
+    enum RenderingFunctorRetEnum {
         eRenderingFunctorRetFailed, //< must stop rendering
         eRenderingFunctorRetOK, //< ok, move on
         eRenderingFunctorRetAborted, // we were aborted
@@ -2247,7 +2155,7 @@ private:
 
 class ClipPreferencesRunning_RAII
 {
-    EffectInstance* _effect;
+    EffectInstance *_effect;
 
 public:
 
@@ -2268,7 +2176,7 @@ public:
  * @typedef Any plug-in should have a static function called BuildEffect with the following signature.
  * It is used to build a new instance of an effect. Basically it should just call the constructor.
  **/
-typedef EffectInstance* (*EffectBuilder)(NodePtr);
+typedef EffectInstance *(*EffectBuilder)(NodePtr);
 
 NATRON_NAMESPACE_EXIT
 

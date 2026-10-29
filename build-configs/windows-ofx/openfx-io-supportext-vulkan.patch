@@ -1,0 +1,989 @@
+diff --git a/ofxsGenerator.cpp b/ofxsGenerator.cpp
+index 2ab0728..58bc1db 100644
+--- a/ofxsGenerator.cpp
++++ b/ofxsGenerator.cpp
+@@ -567,7 +567,7 @@ namespace OFX {
+ void
+ generatorDescribe(ImageEffectDescriptor &desc)
+ {
+-    desc.setOverlayInteractDescriptor(new GeneratorOverlayDescriptor);
++    NatronOFX::setOverlay(desc, new GeneratorOverlayDescriptor);
+ }
+ 
+ void
+diff --git a/ofxsGenerator.h b/ofxsGenerator.h
+index 8875635..32cc517 100644
+--- a/ofxsGenerator.h
++++ b/ofxsGenerator.h
+@@ -25,6 +25,7 @@
+ #ifndef openfx_supportext_ofxsGenerator_h
+ #define openfx_supportext_ofxsGenerator_h
+ 
++#include "NatronOverlayInteract.h"
+ #include "ofxsImageEffect.h"
+ #include "ofxsMacros.h"
+ #include "ofxsRectangleInteract.h"
+@@ -198,7 +199,7 @@ private:
+ 
+ namespace OFX {
+ class GeneratorOverlayDescriptor
+-    : public DefaultEffectOverlayDescriptor<GeneratorOverlayDescriptor, GeneratorInteract>
++    : public NatronOFX::OverlayDescriptor<GeneratorOverlayDescriptor, GeneratorInteract>
+ {
+ };
+ 
+diff --git a/ofxsPositionInteract.h b/ofxsPositionInteract.h
+index 37812bf..cd9ee34 100644
+--- a/ofxsPositionInteract.h
++++ b/ofxsPositionInteract.h
+@@ -27,18 +27,10 @@
+ 
+ #include <cmath>
+ 
+-#ifdef __APPLE__
+-#ifndef GL_SILENCE_DEPRECATION
+-#define GL_SILENCE_DEPRECATION // Yes, we are still doing OpenGL 2.1
+-#endif
+-#include <OpenGL/gl.h>
+-#else
+-#include <GL/gl.h>
+-#endif
++#include "NatronOverlayInteract.h"
+ 
+ #include <ofxsInteract.h>
+ #include <ofxsImageEffect.h>
+-#include "ofxsOGLTextRenderer.h"
+ #include "ofxsOGLHiDPI.h"
+ #include "ofxsMacros.h"
+ 
+@@ -47,7 +39,7 @@
+ 
+ namespace OFX {
+ 
+-// Before calling this function: make sure the OpenGL props are correctly set.
++// Called within a DrawSuite overlay drawing action.
+ // Try to draw one point per frame, but no more thankDrawPointTrajectoryMaxPoints
+ // in total, and at least kDrawPointTrajectoryMinStepsPerKey between two keys.
+ inline void
+@@ -57,16 +49,16 @@ drawPointTrajectory(Double2DParam* p)
+ 
+     if (numKeys > 0) {
+         int maxStepsPerKey = int(kDrawPointTrajectoryMaxPoints / numKeys);
+-        glBegin(GL_POINTS);
++        NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Points);
+         for (int i=0; i < numKeys; ++i) {
+             double time = p->getKeyTime(i);
+             OfxPointD pt;
+             p->getValueAtTime(time, pt.x, pt.y);
+-            glVertex2d(pt.x, pt.y);
++            NatronOFX::overlayDrawing().vertex(pt.x, pt.y);
+ 
+         }
+-        glEnd();
+-        glBegin(GL_LINE_STRIP);
++        NatronOFX::overlayDrawing().end();
++        NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::LineStrip);
+         double time = p->getKeyTime(0);
+         for (int i = 1; i < numKeys; ++i) {
+             double timeNext = p->getKeyTime(i);
+@@ -76,11 +68,11 @@ drawPointTrajectory(Double2DParam* p)
+ 
+                 OfxPointD pt;
+                 p->getValueAtTime(timeStep, pt.x, pt.y);
+-                glVertex2d(pt.x, pt.y);
++                NatronOFX::overlayDrawing().vertex(pt.x, pt.y);
+             }
+             time = timeNext;
+         }
+-        glEnd();
++        NatronOFX::overlayDrawing().end();
+     }
+ }
+ 
+@@ -96,7 +88,7 @@ drawPointTrajectory(Double2DParam* p)
+    }
+ 
+    // the describe() function should include the declaration of the interact:
+-   desc.setOverlayInteractDescriptor(new PositionOverlayDescriptor<MyPositionInteractParam>);
++   NatronOFX::setOverlay(desc, new PositionOverlayDescriptor<MyPositionInteractParam>);
+ 
+    // The position param should be defined is describeInContext() as follows:
+    Double2DParamDescriptor* position = desc.defineDouble2DParam(kMyName);
+@@ -201,22 +193,12 @@ PositionInteract<ParamName>::draw(const OFX::DrawArgs &args)
+ 
+     bool hiDPI = _hiDPI ? _hiDPI->getValue() : false;
+     double screenPixelRatio = hiDPI ? 2 : 1;
+-#ifdef OFX_EXTENSIONS_NATRON
+-    screenPixelRatio *= args.screenPixelRatio;
+-    hiDPI |= args.screenPixelRatio > 1;
+-#endif
+-    TextRenderer::Font font = hiDPI ? TextRenderer::FONT_TIMES_ROMAN_24 : TextRenderer::FONT_HELVETICA_12;
++
+ 
+     OfxRGBColourD color = { 0.8, 0.8, 0.8 };
+     getSuggestedColour(color);
+     //const OfxPointD& pscale = args.pixelScale;
+-    GLdouble projection[16];
+-    glGetDoublev( GL_PROJECTION_MATRIX, projection);
+-    GLint viewport[4];
+-    glGetIntegerv(GL_VIEWPORT, viewport);
+-    OfxPointD shadow; // how much to translate GL_PROJECTION to get exactly one pixel on screen
+-    shadow.x = 2. / (projection[0] * viewport[2]);
+-    shadow.y = 2. / (projection[5] * viewport[3]);
++    const OfxPointD shadow = args.pixelScale;
+ 
+     OfxRGBColourF col;
+     switch (_state) {
+@@ -234,39 +216,38 @@ PositionInteract<ParamName>::draw(const OFX::DrawArgs &args)
+     } else {
+         _position->getValueAtTime(args.time, pos.x, pos.y);
+     }
+-    //glPushAttrib(GL_ALL_ATTRIB_BITS); // caller is responsible for protecting attribs
+-    glPointSize( (float)pointSize() * screenPixelRatio);
+-    glEnable(GL_LINE_SMOOTH);
+-    glEnable(GL_BLEND);
+-    glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE);
+-    glLineWidth(1.5f * screenPixelRatio);
+-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
++
++    NatronOFX::overlayDrawing().pointSize( (float)pointSize() * screenPixelRatio);
++    NatronOFX::overlayDrawing().smoothLines(true);
++
++
++    NatronOFX::overlayDrawing().lineWidth(1.5f * screenPixelRatio);
++
+ 
+     // Draw everything twice
+     // l = 0: shadow
+     // l = 1: drawing
+     for (int l = 0; l < 2; ++l) {
+-        // shadow (uses GL_PROJECTION)
+-        glMatrixMode(GL_PROJECTION);
++        // One logical pixel shadow in canonical coordinates.
++
+         int direction = (l == 0) ? 1 : -1;
+         // translate (1,-1) pixels
+-        glTranslated(direction * shadow.x, -direction * shadow.y, 0);
+-        glMatrixMode(GL_MODELVIEW); // Modelview should be used on Nuke
++        NatronOFX::overlayDrawing().offsetShadow(direction * shadow.x, -direction * shadow.y);
++
+ 
+-        glEnable(GL_POINT_SMOOTH);
++        NatronOFX::overlayDrawing().roundPoints(true);
+         const double darken = 0.5;
+-        glColor3f(color.r * l * darken, color.g * l * darken, color.b * l * darken);
++        NatronOFX::overlayDrawing().colour(color.r * l * darken, color.g * l * darken, color.b * l * darken);
+         drawPointTrajectory(_position);
+ 
+-        glDisable(GL_POINT_SMOOTH);
+-        glColor3f(col.r * l, col.g * l, col.b * l);
+-        glBegin(GL_POINTS);
+-        glVertex2d(pos.x, pos.y);
+-        glEnd();
+-        OFX::TextRenderer::bitmapString( pos.x, pos.y + pointSize() * screenPixelRatio, ParamName::name(), font );
++        NatronOFX::overlayDrawing().roundPoints(false);
++        NatronOFX::overlayDrawing().colour(col.r * l, col.g * l, col.b * l);
++        NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Points);
++        NatronOFX::overlayDrawing().vertex(pos.x, pos.y);
++        NatronOFX::overlayDrawing().end();
++        NatronOFX::overlayDrawing().text(pos.x, pos.y + pointSize() * screenPixelRatio * args.pixelScale.y, ParamName::name());
+     }
+ 
+-    //glPopAttrib();
+ 
+     return true;
+ } // draw
+@@ -409,7 +390,7 @@ PositionInteract<ParamName>::loseFocus(const OFX::FocusArgs & /*args*/)
+ 
+ template <typename ParamName>
+ class PositionOverlayDescriptor
+-    : public OFX::DefaultEffectOverlayDescriptor<PositionOverlayDescriptor<ParamName>, PositionInteract<ParamName> >
++    : public NatronOFX::OverlayDescriptor<PositionOverlayDescriptor<ParamName>, PositionInteract<ParamName> >
+ {
+ };
+ } // namespace OFX
+diff --git a/ofxsRamp.cpp b/ofxsRamp.cpp
+index a384974..3b6fa23 100644
+--- a/ofxsRamp.cpp
++++ b/ofxsRamp.cpp
+@@ -27,14 +27,7 @@
+ #include <cmath>
+ #include <cfloat> // DBL_MAX
+ 
+-#ifdef __APPLE__
+-#ifndef GL_SILENCE_DEPRECATION
+-#define GL_SILENCE_DEPRECATION // Yes, we are still doing OpenGL 2.1
+-#endif
+-#include <OpenGL/gl.h>
+-#else
+-#include <GL/gl.h>
+-#endif
++#include "NatronOverlayInteract.h"
+ #define POINT_TOLERANCE 6
+ #define POINT_SIZE 5
+ 
+@@ -82,21 +75,11 @@ RampInteractHelper::draw(const DrawArgs &args)
+ 
+     bool hiDPI = _hiDPI ? _hiDPI->getValue() : false;
+     double screenPixelRatio = hiDPI ? 2 : 1;
+-#ifdef OFX_EXTENSIONS_NATRON
+-    screenPixelRatio *= args.screenPixelRatio;
+-    hiDPI |= args.screenPixelRatio > 1;
+-#endif
+-    TextRenderer::Font font = hiDPI ? TextRenderer::FONT_TIMES_ROMAN_24 : TextRenderer::FONT_HELVETICA_12;
++
+ 
+     OfxRGBColourD color = { 0.8, 0.8, 0.8 };
+     _interact->getSuggestedColour(color);
+-    GLdouble projection[16];
+-    glGetDoublev( GL_PROJECTION_MATRIX, projection);
+-    GLint viewport[4];
+-    glGetIntegerv(GL_VIEWPORT, viewport);
+-    OfxPointD shadow; // how much to translate GL_PROJECTION to get exactly one pixel on screen
+-    shadow.x = 2. / (projection[0] * viewport[2]);
+-    shadow.y = 2. / (projection[5] * viewport[3]);
++    const OfxPointD shadow = args.pixelScale;
+ 
+     OfxPointD p[2];
+     if (_state == eInteractStateIdle) {
+@@ -197,60 +180,58 @@ RampInteractHelper::draw(const DrawArgs &args)
+         }
+     }
+ 
+-    //glPushAttrib(GL_ALL_ATTRIB_BITS); // caller is responsible for protecting attribs
+ 
+-    glEnable(GL_LINE_SMOOTH);
+-    glDisable(GL_POINT_SMOOTH);
+-    glEnable(GL_BLEND);
+-    glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE);
+-    glLineWidth(1.5f * screenPixelRatio);
+-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+-    glLineStipple(2, 0xAAAA);
++    NatronOFX::overlayDrawing().smoothLines(true);
++    NatronOFX::overlayDrawing().roundPoints(false);
++
++
++    NatronOFX::overlayDrawing().lineWidth(1.5f * screenPixelRatio);
++
+ 
+-    glPointSize(POINT_SIZE * screenPixelRatio);
++
++    NatronOFX::overlayDrawing().pointSize(POINT_SIZE * screenPixelRatio);
+ 
+     // Draw everything twice
+     // l = 0: shadow
+     // l = 1: drawing
+     for (int l = 0; l < 2; ++l) {
+-        // shadow (uses GL_PROJECTION)
+-        glMatrixMode(GL_PROJECTION);
++        // One logical pixel shadow in canonical coordinates.
++
+         int direction = (l == 0) ? 1 : -1;
+         // translate (1,-1) pixels
+-        glTranslated(direction * shadow.x, -direction * shadow.y, 0);
+-        glMatrixMode(GL_MODELVIEW); // Modelview should be used on Nuke
++        NatronOFX::overlayDrawing().offsetShadow(direction * shadow.x, -direction * shadow.y);
++
+ 
+         
+         for (int i = 0; i < 2; ++i) {
+-            glDisable(GL_LINE_STIPPLE);
+-            glEnable(GL_POINT_SMOOTH);
++            NatronOFX::overlayDrawing().dashed(false);
++            NatronOFX::overlayDrawing().roundPoints(true);
+             const double darken = 0.5;
+-            glColor3f(color.r * l * darken, color.g * l * darken, color.b * l * darken);
++            NatronOFX::overlayDrawing().colour(color.r * l * darken, color.g * l * darken, color.b * l * darken);
+             drawPointTrajectory(i ==0 ? _point0 : _point1);
+ 
+-            glEnable(GL_LINE_STIPPLE);
+-            glDisable(GL_POINT_SMOOTH);
++            NatronOFX::overlayDrawing().dashed(true);
++            NatronOFX::overlayDrawing().roundPoints(false);
+             bool dragging = _state == (i == 0 ? eInteractStateDraggingPoint0 : eInteractStateDraggingPoint1);
+-            glBegin(GL_POINTS);
++            NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Points);
+             if (dragging) {
+-                glColor3f(0.f * l, 1.f * l, 0.f * l);
++                NatronOFX::overlayDrawing().colour(0.f * l, 1.f * l, 0.f * l);
+             } else {
+-                glColor3f( (float)color.r * l, (float)color.g * l, (float)color.b * l );
++                NatronOFX::overlayDrawing().colour( (float)color.r * l, (float)color.g * l, (float)color.b * l );
+             }
+-            glVertex2d(p[i].x, p[i].y);
+-            glEnd();
++            NatronOFX::overlayDrawing().vertex(p[i].x, p[i].y);
++            NatronOFX::overlayDrawing().end();
+ 
+-            glBegin(GL_LINES);
+-            glColor3f( (float)color.r * l, (float)color.g * l, (float)color.b * l );
+-            glVertex2d(pline1[i].x, pline1[i].y);
+-            glVertex2d(pline2[i].x, pline2[i].y);
+-            glEnd();
++            NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Lines);
++            NatronOFX::overlayDrawing().colour( (float)color.r * l, (float)color.g * l, (float)color.b * l );
++            NatronOFX::overlayDrawing().vertex(pline1[i].x, pline1[i].y);
++            NatronOFX::overlayDrawing().vertex(pline2[i].x, pline2[i].y);
++            NatronOFX::overlayDrawing().end();
+ 
+-            TextRenderer::bitmapString(p[i].x, p[i].y + POINT_SIZE * screenPixelRatio, i == 0 ? kParamRampPoint0Label : kParamRampPoint1Label, font);
++            NatronOFX::overlayDrawing().text(p[i].x, p[i].y + POINT_SIZE * screenPixelRatio * args.pixelScale.y, i == 0 ? kParamRampPoint0Label : kParamRampPoint1Label);
+         }
+     }
+ 
+-    //glPopAttrib();
+ 
+     return true;
+ } // RampInteractHelper::draw
+diff --git a/ofxsRamp.h b/ofxsRamp.h
+index 8eb3fec..03d9385 100644
+--- a/ofxsRamp.h
++++ b/ofxsRamp.h
+@@ -31,7 +31,6 @@
+ #include <ofxsInteract.h>
+ #include <ofxsImageEffect.h>
+ #include "ofxsMacros.h"
+-#include "ofxsOGLTextRenderer.h"
+ #include "ofxsOGLHiDPI.h"
+ 
+ #define kParamRampPoint0 "rampPoint0"
+diff --git a/ofxsRectangleInteract.cpp b/ofxsRectangleInteract.cpp
+index ec101ad..bfab289 100644
+--- a/ofxsRectangleInteract.cpp
++++ b/ofxsRectangleInteract.cpp
+@@ -26,14 +26,7 @@
+ #include "ofxsRectangleInteract.h"
+ #include <cmath>
+ 
+-#ifdef __APPLE__
+-#ifndef GL_SILENCE_DEPRECATION
+-#define GL_SILENCE_DEPRECATION // Yes, we are still doing OpenGL 2.1
+-#endif
+-#include <OpenGL/gl.h>
+-#else
+-#include <GL/gl.h>
+-#endif
++#include "NatronOverlayInteract.h"
+ 
+ #define POINT_SIZE 5
+ #define POINT_TOLERANCE 6
+@@ -83,14 +76,14 @@ drawPoint(const OfxRGBColourD &color,
+     if (draw) {
+         if (ds == id) {
+             if (keepAR) {
+-                glColor3f(1.f * l, 0.f * l, 0.f * l);
++                NatronOFX::overlayDrawing().colour(1.f * l, 0.f * l, 0.f * l);
+             } else {
+-                glColor3f(0.f * l, 1.f * l, 0.f * l);
++                NatronOFX::overlayDrawing().colour(0.f * l, 1.f * l, 0.f * l);
+             }
+         } else {
+-            glColor3f( (float)color.r * l, (float)color.g * l, (float)color.b * l );
++            NatronOFX::overlayDrawing().colour( (float)color.r * l, (float)color.g * l, (float)color.b * l );
+         }
+-        glVertex2d(x, y);
++        NatronOFX::overlayDrawing().vertex(x, y);
+     }
+ }
+ 
+@@ -105,22 +98,12 @@ RectangleInteract::draw(const DrawArgs &args)
+ 
+     bool hiDPI = _hiDPI ? _hiDPI->getValue() : false;
+     double screenPixelRatio = hiDPI ? 2 : 1;
+-#ifdef OFX_EXTENSIONS_NATRON
+-    screenPixelRatio *= args.screenPixelRatio;
+-    //hiDPI |= args.screenPixelRatio > 1;
+-#endif
+-    //TextRenderer::Font font = hiDPI ? TextRenderer::FONT_TIMES_ROMAN_24 : TextRenderer::FONT_HELVETICA_12;
++
+ 
+     OfxRGBColourD color = { 0.8, 0.8, 0.8 };
+     getSuggestedColour(color);
+     const OfxPointD& pscale = args.pixelScale;
+-    GLdouble projection[16];
+-    glGetDoublev( GL_PROJECTION_MATRIX, projection);
+-    GLint viewport[4];
+-    glGetIntegerv(GL_VIEWPORT, viewport);
+-    OfxPointD shadow; // how much to translate GL_PROJECTION to get exactly one pixel on screen
+-    shadow.x = 2. / (projection[0] * viewport[2]);
+-    shadow.y = 2. / (projection[5] * viewport[3]);
++    const OfxPointD shadow = args.pixelScale;
+ 
+     double x1, y1, w, h;
+     if (_mouseState != eMouseStateIdle) {
+@@ -139,39 +122,38 @@ RectangleInteract::draw(const DrawArgs &args)
+     const bool keepAR = _modifierStateShift > 0;
+     const bool centered = _modifierStateCtrl > 0;
+ 
+-    //glPushAttrib(GL_ALL_ATTRIB_BITS); // caller is responsible for protecting attribs
+     aboutToCheckInteractivity(args.time);
+ 
+-    glDisable(GL_LINE_STIPPLE);
+-    glEnable(GL_LINE_SMOOTH);
+-    glDisable(GL_POINT_SMOOTH);
+-    glEnable(GL_BLEND);
+-    glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE);
+-    glLineWidth(1.5f * screenPixelRatio);
+-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
++    NatronOFX::overlayDrawing().dashed(false);
++    NatronOFX::overlayDrawing().smoothLines(true);
++    NatronOFX::overlayDrawing().roundPoints(false);
++
++
++    NatronOFX::overlayDrawing().lineWidth(1.5f * screenPixelRatio);
++
+ 
+     // Draw everything twice
+     // l = 0: shadow
+     // l = 1: drawing
+     for (int l = 0; l < 2; ++l) {
+-        // shadow (uses GL_PROJECTION)
+-        glMatrixMode(GL_PROJECTION);
++        // One logical pixel shadow in canonical coordinates.
++
+         int direction = (l == 0) ? 1 : -1;
+         // translate (1,-1) pixels
+-        glTranslated(direction * shadow.x, -direction * shadow.y, 0);
+-        glMatrixMode(GL_MODELVIEW); // Modelview should be used on Nuke
++        NatronOFX::overlayDrawing().offsetShadow(direction * shadow.x, -direction * shadow.y);
++
+ 
+-        glColor3f( (float)color.r * l, (float)color.g * l, (float)color.b * l );
++        NatronOFX::overlayDrawing().colour( (float)color.r * l, (float)color.g * l, (float)color.b * l );
+ 
+-        glBegin(GL_LINE_LOOP);
+-        glVertex2d(x1, y1);
+-        glVertex2d(x1, y2);
+-        glVertex2d(x2, y2);
+-        glVertex2d(x2, y1);
+-        glEnd();
++        NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::LineLoop);
++        NatronOFX::overlayDrawing().vertex(x1, y1);
++        NatronOFX::overlayDrawing().vertex(x1, y2);
++        NatronOFX::overlayDrawing().vertex(x2, y2);
++        NatronOFX::overlayDrawing().vertex(x2, y1);
++        NatronOFX::overlayDrawing().end();
+ 
+-        glPointSize(POINT_SIZE * screenPixelRatio);
+-        glBegin(GL_POINTS);
++        NatronOFX::overlayDrawing().pointSize(POINT_SIZE * screenPixelRatio);
++        NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Points);
+         drawPoint(color, allowBtmLeftInteraction(),  x1, y1, eDrawStateHoveringBtmLeft,  _drawState, keepAR, l);
+         drawPoint(color, allowMidLeftInteraction(),  x1, yc, eDrawStateHoveringMidLeft,  _drawState, false,  l);
+         drawPoint(color, allowTopLeftInteraction(),  x1, y2, eDrawStateHoveringTopLeft,  _drawState, keepAR, l);
+@@ -181,25 +163,25 @@ RectangleInteract::draw(const DrawArgs &args)
+         drawPoint(color, allowBtmRightInteraction(), x2, y1, eDrawStateHoveringBtmRight, _drawState, keepAR, l);
+         drawPoint(color, allowMidRightInteraction(), x2, yc, eDrawStateHoveringMidRight, _drawState, false,  l);
+         drawPoint(color, allowTopRightInteraction(), x2, y2, eDrawStateHoveringTopRight, _drawState, keepAR, l);
+-        glEnd();
+-        glPointSize(1);
++        NatronOFX::overlayDrawing().end();
++        NatronOFX::overlayDrawing().pointSize(1);
+ 
+         ///draw center cross hair
+-        glBegin(GL_LINES);
++        NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Lines);
+         if ( (_drawState == eDrawStateHoveringCenter) || ( centered && (_drawState != eDrawStateInactive) ) ) {
+-            glColor3f(0.f * l, 1.f * l, 0.f * l);
++            NatronOFX::overlayDrawing().colour(0.f * l, 1.f * l, 0.f * l);
+         } else if ( !allowCenterInteraction() ) {
+-            glColor3f( (float)(color.r / 2) * l, (float)(color.g / 2) * l, (float)(color.b / 2) * l );
++            NatronOFX::overlayDrawing().colour( (float)(color.r / 2) * l, (float)(color.g / 2) * l, (float)(color.b / 2) * l );
+         } else {
+-            glColor3f( (float)color.r * l, (float)color.g * l, (float)color.b * l );
++            NatronOFX::overlayDrawing().colour( (float)color.r * l, (float)color.g * l, (float)color.b * l );
+         }
+-        glVertex2d(xc - CROSS_SIZE * pscale.x, yc);
+-        glVertex2d(xc + CROSS_SIZE * pscale.x, yc);
+-        glVertex2d(xc, yc - CROSS_SIZE * pscale.y);
+-        glVertex2d(xc, yc + CROSS_SIZE * pscale.y);
+-        glEnd();
++        NatronOFX::overlayDrawing().vertex(xc - CROSS_SIZE * pscale.x, yc);
++        NatronOFX::overlayDrawing().vertex(xc + CROSS_SIZE * pscale.x, yc);
++        NatronOFX::overlayDrawing().vertex(xc, yc - CROSS_SIZE * pscale.y);
++        NatronOFX::overlayDrawing().vertex(xc, yc + CROSS_SIZE * pscale.y);
++        NatronOFX::overlayDrawing().end();
+     }
+-    //glPopAttrib();
++
+ 
+     return true;
+ } // draw
+diff --git a/ofxsTransformInteract.cpp b/ofxsTransformInteract.cpp
+index 6cdace0..27756cb 100644
+--- a/ofxsTransformInteract.cpp
++++ b/ofxsTransformInteract.cpp
+@@ -30,22 +30,7 @@
+ #include <cfloat> // DBL_MAX
+ #include <algorithm>
+ 
+-#ifdef __APPLE__
+-#ifndef GL_SILENCE_DEPRECATION
+-#define GL_SILENCE_DEPRECATION // Yes, we are still doing OpenGL 2.1
+-#endif
+-#include <OpenGL/gl.h>
+-#else
+-#ifdef _WIN32
+-#define WIN32_LEAN_AND_MEAN
+-#ifndef NOMINMAX
+-#define NOMINMAX
+-#endif
+-#include <windows.h>
+-#endif
+-
+-#include <GL/gl.h>
+-#endif
++#include "NatronOverlayInteract.h"
+ 
+ #include "ofxsMatrix2D.h"
+ #include "ofxsTransform3x3.h"
+@@ -516,24 +501,24 @@ drawSquare(const OfxRGBColourD& color,
+ 
+     if (hovered) {
+         if (althovered) {
+-            glColor3f(0.f * l, 1.f * l, 0.f * l);
++            NatronOFX::overlayDrawing().colour(0.f * l, 1.f * l, 0.f * l);
+         } else {
+-            glColor3f(1.f * l, 0.f * l, 0.f * l);
++            NatronOFX::overlayDrawing().colour(1.f * l, 0.f * l, 0.f * l);
+         }
+     } else {
+-        glColor3f( (float)color.r * l, (float)color.g * l, (float)color.b * l );
++        NatronOFX::overlayDrawing().colour( (float)color.r * l, (float)color.g * l, (float)color.b * l );
+     }
+     double halfWidth = (POINT_SIZE / 2.) * meanPixelScale;
+     double halfHeight = (POINT_SIZE / 2.) * meanPixelScale;
+-    glPushMatrix();
+-    glTranslated(center.x, center.y, 0.);
+-    glBegin(GL_POLYGON);
+-    glVertex2d(-halfWidth, -halfHeight);   // bottom left
+-    glVertex2d(-halfWidth, +halfHeight);   // top left
+-    glVertex2d(+halfWidth, +halfHeight);   // bottom right
+-    glVertex2d(+halfWidth, -halfHeight);   // top right
+-    glEnd();
+-    glPopMatrix();
++    NatronOFX::overlayDrawing().pushTransform();
++    NatronOFX::overlayDrawing().translate(center.x, center.y, 0.);
++    NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Polygon);
++    NatronOFX::overlayDrawing().vertex(-halfWidth, -halfHeight);   // bottom left
++    NatronOFX::overlayDrawing().vertex(-halfWidth, +halfHeight);   // top left
++    NatronOFX::overlayDrawing().vertex(+halfWidth, +halfHeight);   // bottom right
++    NatronOFX::overlayDrawing().vertex(+halfWidth, -halfHeight);   // top right
++    NatronOFX::overlayDrawing().end();
++    NatronOFX::overlayDrawing().popTransform();
+ }
+ 
+ static void
+@@ -544,25 +529,25 @@ drawEllipse(const OfxRGBColourD& color,
+             int l)
+ {
+     if (hovered) {
+-        glColor3f(1.f * l, 0.f * l, 0.f * l);
++        NatronOFX::overlayDrawing().colour(1.f * l, 0.f * l, 0.f * l);
+     } else {
+-        glColor3f( (float)color.r * l, (float)color.g * l, (float)color.b * l );
++        NatronOFX::overlayDrawing().colour( (float)color.r * l, (float)color.g * l, (float)color.b * l );
+     }
+ 
+-    glPushMatrix();
++    NatronOFX::overlayDrawing().pushTransform();
+     //  center the oval at x_center, y_center
+-    glTranslatef( (float)center.x, (float)center.y, 0.f );
++    NatronOFX::overlayDrawing().translate( (float)center.x, (float)center.y, 0.f );
+     //  draw the oval using line segments
+-    glBegin(GL_LINE_LOOP);
++    NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::LineLoop);
+     // we don't need to be pixel-perfect here, it's just an interact!
+     // 40 segments is enough.
+     for (int i = 0; i < 40; ++i) {
+         double theta = i * 2 * ofxsPi() / 40.;
+-        glVertex2d( targetRadius.x * std::cos(theta), targetRadius.y * std::sin(theta) );
++        NatronOFX::overlayDrawing().vertex( targetRadius.x * std::cos(theta), targetRadius.y * std::sin(theta) );
+     }
+-    glEnd();
++    NatronOFX::overlayDrawing().end();
+ 
+-    glPopMatrix();
++    NatronOFX::overlayDrawing().popTransform();
+ }
+ 
+ static void
+@@ -575,22 +560,22 @@ drawSkewBar(const OfxRGBColourD& color,
+             int l)
+ {
+     if (hovered) {
+-        glColor3f(1.f * l, 0.f * l, 0.f * l);
++        NatronOFX::overlayDrawing().colour(1.f * l, 0.f * l, 0.f * l);
+     } else {
+-        glColor3f( (float)color.r * l, (float)color.g * l, (float)color.b * l );
++        NatronOFX::overlayDrawing().colour( (float)color.r * l, (float)color.g * l, (float)color.b * l );
+     }
+ 
+     // we are not axis-aligned: use the mean pixel scale
+     double meanPixelScale = (pixelScale.x + pixelScale.y) / 2.;
+     double barHalfSize = targetRadiusY + 20. * meanPixelScale;
+ 
+-    glPushMatrix();
+-    glTranslatef( (float)center.x, (float)center.y, 0.f );
+-    glRotated(angle, 0, 0, 1);
++    NatronOFX::overlayDrawing().pushTransform();
++    NatronOFX::overlayDrawing().translate( (float)center.x, (float)center.y, 0.f );
++    NatronOFX::overlayDrawing().rotate(angle);
+ 
+-    glBegin(GL_LINES);
+-    glVertex2d(0., -barHalfSize);
+-    glVertex2d(0., +barHalfSize);
++    NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Lines);
++    NatronOFX::overlayDrawing().vertex(0., -barHalfSize);
++    NatronOFX::overlayDrawing().vertex(0., +barHalfSize);
+ 
+     if (hovered) {
+         double arrowYPosition = targetRadiusY + 10. * meanPixelScale;
+@@ -599,25 +584,25 @@ drawSkewBar(const OfxRGBColourD& color,
+         double arrowHeadOffsetY = 3 * meanPixelScale;
+ 
+         ///draw the central bar
+-        glVertex2d(-arrowXHalfSize, -arrowYPosition);
+-        glVertex2d(+arrowXHalfSize, -arrowYPosition);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize, -arrowYPosition);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize, -arrowYPosition);
+ 
+         ///left triangle
+-        glVertex2d(-arrowXHalfSize, -arrowYPosition);
+-        glVertex2d(-arrowXHalfSize + arrowHeadOffsetX, -arrowYPosition + arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize, -arrowYPosition);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize + arrowHeadOffsetX, -arrowYPosition + arrowHeadOffsetY);
+ 
+-        glVertex2d(-arrowXHalfSize, -arrowYPosition);
+-        glVertex2d(-arrowXHalfSize + arrowHeadOffsetX, -arrowYPosition - arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize, -arrowYPosition);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize + arrowHeadOffsetX, -arrowYPosition - arrowHeadOffsetY);
+ 
+         ///right triangle
+-        glVertex2d(+arrowXHalfSize, -arrowYPosition);
+-        glVertex2d(+arrowXHalfSize - arrowHeadOffsetX, -arrowYPosition + arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize, -arrowYPosition);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize - arrowHeadOffsetX, -arrowYPosition + arrowHeadOffsetY);
+ 
+-        glVertex2d(+arrowXHalfSize, -arrowYPosition);
+-        glVertex2d(+arrowXHalfSize - arrowHeadOffsetX, -arrowYPosition - arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize, -arrowYPosition);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize - arrowHeadOffsetX, -arrowYPosition - arrowHeadOffsetY);
+     }
+-    glEnd();
+-    glPopMatrix();
++    NatronOFX::overlayDrawing().end();
++    NatronOFX::overlayDrawing().popTransform();
+ }
+ 
+ static void
+@@ -632,16 +617,16 @@ drawRotationBar(const OfxRGBColourD& color,
+     double meanPixelScale = (pixelScale.x + pixelScale.y) / 2.;
+ 
+     if (hovered) {
+-        glColor3f(1.f * l, 0.f * l, 0.f * l);
++        NatronOFX::overlayDrawing().colour(1.f * l, 0.f * l, 0.f * l);
+     } else {
+-        glColor3d(color.r * l, color.g * l, color.b * l);
++        NatronOFX::overlayDrawing().colour(color.r * l, color.g * l, color.b * l);
+     }
+ 
+     double barExtra = 30. * meanPixelScale;
+-    glBegin(GL_LINES);
+-    glVertex2d(0., 0.);
+-    glVertex2d(0. + targetRadiusX + barExtra, 0.);
+-    glEnd();
++    NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Lines);
++    NatronOFX::overlayDrawing().vertex(0., 0.);
++    NatronOFX::overlayDrawing().vertex(0. + targetRadiusX + barExtra, 0.);
++    NatronOFX::overlayDrawing().end();
+ 
+     if (hovered) {
+         double arrowCenterX = targetRadiusX + barExtra / 2.;
+@@ -651,35 +636,35 @@ drawRotationBar(const OfxRGBColourD& color,
+         arrowRadius.x = 5. * meanPixelScale;
+         arrowRadius.y = 10. * meanPixelScale;
+ 
+-        glPushMatrix();
++        NatronOFX::overlayDrawing().pushTransform();
+         //  center the oval at x_center, y_center
+-        glTranslatef( (float)arrowCenterX, 0.f, 0 );
++        NatronOFX::overlayDrawing().translate( (float)arrowCenterX, 0.f, 0 );
+         //  draw the oval using line segments
+-        glBegin(GL_LINE_STRIP);
+-        glVertex2d(0, arrowRadius.y);
+-        glVertex2d(arrowRadius.x, 0.);
+-        glVertex2d(0, -arrowRadius.y);
+-        glEnd();
++        NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::LineStrip);
++        NatronOFX::overlayDrawing().vertex(0, arrowRadius.y);
++        NatronOFX::overlayDrawing().vertex(arrowRadius.x, 0.);
++        NatronOFX::overlayDrawing().vertex(0, -arrowRadius.y);
++        NatronOFX::overlayDrawing().end();
+ 
+ 
+-        glBegin(GL_LINES);
++        NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Lines);
+         ///draw the top head
+-        glVertex2d(0., arrowRadius.y);
+-        glVertex2d(0., arrowRadius.y - 5. * meanPixelScale);
++        NatronOFX::overlayDrawing().vertex(0., arrowRadius.y);
++        NatronOFX::overlayDrawing().vertex(0., arrowRadius.y - 5. * meanPixelScale);
+ 
+-        glVertex2d(0., arrowRadius.y);
+-        glVertex2d(4. * meanPixelScale, arrowRadius.y - 3. * meanPixelScale); // 5^2 = 3^2+4^2
++        NatronOFX::overlayDrawing().vertex(0., arrowRadius.y);
++        NatronOFX::overlayDrawing().vertex(4. * meanPixelScale, arrowRadius.y - 3. * meanPixelScale); // 5^2 = 3^2+4^2
+ 
+         ///draw the bottom head
+-        glVertex2d(0., -arrowRadius.y);
+-        glVertex2d(0., -arrowRadius.y + 5. * meanPixelScale);
++        NatronOFX::overlayDrawing().vertex(0., -arrowRadius.y);
++        NatronOFX::overlayDrawing().vertex(0., -arrowRadius.y + 5. * meanPixelScale);
+ 
+-        glVertex2d(0., -arrowRadius.y);
+-        glVertex2d(4. * meanPixelScale, -arrowRadius.y + 3. * meanPixelScale); // 5^2 = 3^2+4^2
++        NatronOFX::overlayDrawing().vertex(0., -arrowRadius.y);
++        NatronOFX::overlayDrawing().vertex(4. * meanPixelScale, -arrowRadius.y + 3. * meanPixelScale); // 5^2 = 3^2+4^2
+ 
+-        glEnd();
++        NatronOFX::overlayDrawing().end();
+ 
+-        glPopMatrix();
++        NatronOFX::overlayDrawing().popTransform();
+     }
+     if (inverted) {
+         double arrowXPosition = targetRadiusX + barExtra * 1.5;
+@@ -687,52 +672,52 @@ drawRotationBar(const OfxRGBColourD& color,
+         double arrowHeadOffsetX = 3 * meanPixelScale;
+         double arrowHeadOffsetY = 3 * meanPixelScale;
+ 
+-        glPushMatrix();
+-        glTranslatef( (float)arrowXPosition, 0, 0 );
++        NatronOFX::overlayDrawing().pushTransform();
++        NatronOFX::overlayDrawing().translate( (float)arrowXPosition, 0, 0 );
+ 
+-        glBegin(GL_LINES);
++        NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Lines);
+         ///draw the central bar
+-        glVertex2d(-arrowXHalfSize, 0.);
+-        glVertex2d(+arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize, 0.);
+ 
+         ///left triangle
+-        glVertex2d(-arrowXHalfSize, 0.);
+-        glVertex2d(-arrowXHalfSize + arrowHeadOffsetX, arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize + arrowHeadOffsetX, arrowHeadOffsetY);
+ 
+-        glVertex2d(-arrowXHalfSize, 0.);
+-        glVertex2d(-arrowXHalfSize + arrowHeadOffsetX, -arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize + arrowHeadOffsetX, -arrowHeadOffsetY);
+ 
+         ///right triangle
+-        glVertex2d(+arrowXHalfSize, 0.);
+-        glVertex2d(+arrowXHalfSize - arrowHeadOffsetX, arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize - arrowHeadOffsetX, arrowHeadOffsetY);
+ 
+-        glVertex2d(+arrowXHalfSize, 0.);
+-        glVertex2d(+arrowXHalfSize - arrowHeadOffsetX, -arrowHeadOffsetY);
+-        glEnd();
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize - arrowHeadOffsetX, -arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().end();
+ 
+-        glRotated(90., 0., 0., 1.);
++        NatronOFX::overlayDrawing().rotate(90.);
+ 
+-        glBegin(GL_LINES);
++        NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Lines);
+         ///draw the central bar
+-        glVertex2d(-arrowXHalfSize, 0.);
+-        glVertex2d(+arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize, 0.);
+ 
+         ///left triangle
+-        glVertex2d(-arrowXHalfSize, 0.);
+-        glVertex2d(-arrowXHalfSize + arrowHeadOffsetX, arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize + arrowHeadOffsetX, arrowHeadOffsetY);
+ 
+-        glVertex2d(-arrowXHalfSize, 0.);
+-        glVertex2d(-arrowXHalfSize + arrowHeadOffsetX, -arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(-arrowXHalfSize + arrowHeadOffsetX, -arrowHeadOffsetY);
+ 
+         ///right triangle
+-        glVertex2d(+arrowXHalfSize, 0.);
+-        glVertex2d(+arrowXHalfSize - arrowHeadOffsetX, arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize - arrowHeadOffsetX, arrowHeadOffsetY);
+ 
+-        glVertex2d(+arrowXHalfSize, 0.);
+-        glVertex2d(+arrowXHalfSize - arrowHeadOffsetX, -arrowHeadOffsetY);
+-        glEnd();
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize, 0.);
++        NatronOFX::overlayDrawing().vertex(+arrowXHalfSize - arrowHeadOffsetX, -arrowHeadOffsetY);
++        NatronOFX::overlayDrawing().end();
+ 
+-        glPopMatrix();
++        NatronOFX::overlayDrawing().popTransform();
+     }
+ } // drawRotationBar
+ 
+@@ -748,21 +733,11 @@ TransformInteractHelper::draw(const DrawArgs &args)
+ 
+     bool hiDPI = _hiDPI ? _hiDPI->getValue() : false;
+     double screenPixelRatio = hiDPI ? 2 : 1;
+-#ifdef OFX_EXTENSIONS_NATRON
+-    screenPixelRatio *= args.screenPixelRatio;
+-    //hiDPI |= args.screenPixelRatio > 1;
+-#endif
+-    //TextRenderer::Font font = hiDPI ? TextRenderer::FONT_TIMES_ROMAN_24 : TextRenderer::FONT_HELVETICA_12;
++
+ 
+     OfxRGBColourD color = { 0.8, 0.8, 0.8 };
+     _interact->getSuggestedColour(color);
+-    GLdouble projection[16];
+-    glGetDoublev( GL_PROJECTION_MATRIX, projection);
+-    GLint viewport[4];
+-    glGetIntegerv(GL_VIEWPORT, viewport);
+-    OfxPointD shadow; // how much to translate GL_PROJECTION to get exactly one pixel on screen
+-    shadow.x = 2. / (projection[0] * viewport[2]);
+-    shadow.y = 2. / (projection[5] * viewport[3]);
++    const OfxPointD shadow = args.pixelScale;
+ 
+     TransformParams tp;
+ 
+@@ -785,38 +760,37 @@ TransformInteractHelper::draw(const DrawArgs &args)
+     getTargetPoints(targetCenter, targetRadius, &left, &bottom, &top, &right);
+ 
+ 
+-    GLdouble skewMatrix[16];
++    double skewMatrix[16];
+     skewMatrix[0] = ( tp.skewOrder ? 1. : (1. + tp.skewX * tp.skewY) ); skewMatrix[1] = tp.skewY; skewMatrix[2] = 0.; skewMatrix[3] = 0;
+     skewMatrix[4] = tp.skewX; skewMatrix[5] = (tp.skewOrder ? (1. + tp.skewX * tp.skewY) : 1.); skewMatrix[6] = 0.; skewMatrix[7] = 0;
+     skewMatrix[8] = 0.; skewMatrix[9] = 0.; skewMatrix[10] = 1.; skewMatrix[11] = 0;
+     skewMatrix[12] = 0.; skewMatrix[13] = 0.; skewMatrix[14] = 0.; skewMatrix[15] = 1.;
+ 
+-    //glPushAttrib(GL_ALL_ATTRIB_BITS); // caller is responsible for protecting attribs
+ 
+-    glDisable(GL_LINE_STIPPLE);
+-    glEnable(GL_LINE_SMOOTH);
+-    glEnable(GL_POINT_SMOOTH);
+-    glEnable(GL_BLEND);
+-    glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE);
+-    glLineWidth(1.5f * screenPixelRatio);
+-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
++    NatronOFX::overlayDrawing().dashed(false);
++    NatronOFX::overlayDrawing().smoothLines(true);
++    NatronOFX::overlayDrawing().roundPoints(true);
++
++
++    NatronOFX::overlayDrawing().lineWidth(1.5f * screenPixelRatio);
++
+ 
+     // Draw everything twice
+     // l = 0: shadow
+     // l = 1: drawing
+     for (int l = 0; l < 2; ++l) {
+-        // shadow (uses GL_PROJECTION)
+-        glMatrixMode(GL_PROJECTION);
++        // One logical pixel shadow in canonical coordinates.
++
+         int direction = (l == 0) ? 1 : -1;
+         // translate (1,-1) pixels
+-        glTranslated(direction * shadow.x, -direction * shadow.y, 0);
+-        glMatrixMode(GL_MODELVIEW); // Modelview should be used on Nuke
++        NatronOFX::overlayDrawing().offsetShadow(direction * shadow.x, -direction * shadow.y);
++
+ 
+         // First, draw the motion curve, based on the keyframes for the translate parameter.
+         if (_translate) {
+             // Draw the motion curve a bit darker
+             const double darken = 0.5;
+-            glColor3d(color.r * darken * l, color.g * darken * l, color.b * darken * l);
++            NatronOFX::overlayDrawing().colour(color.r * darken * l, color.g * darken * l, color.b * darken * l);
+ 
+             int numKeys = _translate->getNumKeys();
+ 
+@@ -827,8 +801,8 @@ TransformInteractHelper::draw(const DrawArgs &args)
+                 OfxPointD center = { 0., 0. };
+                 OfxPointD translate = { 0., 0. };
+                 int maxStepsPerKey = int(kDrawPointTrajectoryMaxPoints / numKeys);
+-                glPointSize(POINT_SIZE * screenPixelRatio);
+-                glBegin(GL_POINTS);
++                NatronOFX::overlayDrawing().pointSize(POINT_SIZE * screenPixelRatio);
++                NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::Points);
+                 for (int i=0; i < numKeys; ++i) {
+                     double time = _translate->getKeyTime(i);
+                     if (_center) {
+@@ -838,11 +812,11 @@ TransformInteractHelper::draw(const DrawArgs &args)
+                         _translate->getValueAtTime(time, translate.x, translate.y);
+                     }
+                     getTargetCenter(center, translate, &targetCenter);
+-                    glVertex2d(targetCenter.x, targetCenter.y);
++                    NatronOFX::overlayDrawing().vertex(targetCenter.x, targetCenter.y);
+ 
+                 }
+-                glEnd();
+-                glBegin(GL_LINE_STRIP);
++                NatronOFX::overlayDrawing().end();
++                NatronOFX::overlayDrawing().begin(NatronOFX::OverlayPrimitive::LineStrip);
+                 double time = _translate->getKeyTime(0);
+                 for (int i = 1; i < numKeys; ++i) {
+                     double timeNext = _translate->getKeyTime(i);
+@@ -856,24 +830,24 @@ TransformInteractHelper::draw(const DrawArgs &args)
+                             _translate->getValueAtTime(timeStep, translate.x, translate.y);
+                         }
+                         getTargetCenter(center, translate, &targetCenter);
+-                        glVertex2d(targetCenter.x, targetCenter.y);
++                        NatronOFX::overlayDrawing().vertex(targetCenter.x, targetCenter.y);
+                     }
+                     time = timeNext;
+                 }
+-                glEnd();
++                NatronOFX::overlayDrawing().end();
+             }
+         }
+ 
+ 
+-        glColor3d(color.r * l, color.g * l, color.b * l);
++        NatronOFX::overlayDrawing().colour(color.r * l, color.g * l, color.b * l);
+ 
+-        glPushMatrix();
+-        glTranslated(targetCenter.x, targetCenter.y, 0.);
++        NatronOFX::overlayDrawing().pushTransform();
++        NatronOFX::overlayDrawing().translate(targetCenter.x, targetCenter.y, 0.);
+ 
+-        glRotated(tp.rotate, 0, 0., 1.);
++        NatronOFX::overlayDrawing().rotate(tp.rotate);
+         drawRotationBar(color, pscale, targetRadius.x, _mouseState == eDraggingRotationBar || _drawState == eRotationBarHovered, tp.inverted, l);
+-        glMultMatrixd(skewMatrix);
+-        glTranslated(-targetCenter.x, -targetCenter.y, 0.);
++        NatronOFX::overlayDrawing().affine(skewMatrix);
++        NatronOFX::overlayDrawing().translate(-targetCenter.x, -targetCenter.y, 0.);
+ 
+         drawEllipse(color, targetCenter, targetRadius, _mouseState == eDraggingCircle || _drawState == eCircleHovered, l);
+ 
+@@ -909,9 +883,9 @@ TransformInteractHelper::draw(const DrawArgs &args)
+         drawSquare(color, top, pscale, _mouseState == eDraggingTopPoint || _drawState == eTopPointHovered, false, l);
+         drawSquare(color, bottom, pscale, _mouseState == eDraggingBottomPoint || _drawState == eBottomPointHovered, false, l);
+ 
+-        glPopMatrix();
++        NatronOFX::overlayDrawing().popTransform();
+     }
+-    //glPopAttrib();
++
+ 
+     return true;
+ } // TransformInteractHelper::draw
+@@ -1585,3 +1559,4 @@ TransformInteractHelper::loseFocus(const FocusArgs & /*args*/)
+     _drawState = eInActive;
+ }
+ } // namespace OFX
++

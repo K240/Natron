@@ -127,6 +127,11 @@ public:
         return true;
     }
 
+    virtual bool supportsOverlayDrawList() const OVERRIDE FINAL
+    {
+        return true;
+    }
+
     virtual bool isSubGraphUserVisible() const OVERRIDE FINAL WARN_UNUSED_RETURN
     {
         return false;

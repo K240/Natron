@@ -57,7 +57,7 @@ public:
 
 protected:
     AbstractOfxEffectInstance(const AbstractOfxEffectInstance& other)
-    : OutputEffectInstance(other)
+        : OutputEffectInstance(other)
     {
     }
 
@@ -67,15 +67,15 @@ public:
     }
 
     virtual void createOfxImageEffectInstance(OFX::Host::ImageEffect::ImageEffectPlugin* plugin,
-                                              OFX::Host::ImageEffect::Descriptor* desc,
-                                              ContextEnum context,
-                                              const NodeSerialization* serialization,
-                                              const CreateNodeArgs& args
+            OFX::Host::ImageEffect::Descriptor* desc,
+            ContextEnum context,
+            const NodeSerialization* serialization,
+            const CreateNodeArgs& args
 #ifndef NATRON_ENABLE_IO_META_NODES
-                                              , bool allowFileDialogs,
-                                              bool *hasUsedFileDialog
+            , bool allowFileDialogs,
+            bool *hasUsedFileDialog
 #endif
-                                              ) = 0;
+                                             ) = 0;
     static QStringList makePluginGrouping(const std::string & pluginIdentifier,
                                           int versionMajor, int versionMinor,
                                           const std::string & pluginLabel,
@@ -89,9 +89,9 @@ struct OfxEffectInstancePrivate;
 class OfxEffectInstance
     : public AbstractOfxEffectInstance
 {
-GCC_DIAG_SUGGEST_OVERRIDE_OFF
+    GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
-GCC_DIAG_SUGGEST_OVERRIDE_ON
+    GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
     OfxEffectInstance(NodePtr node);
@@ -109,19 +109,21 @@ public:
                                       , bool allowFileDialogs,
                                       bool *hasUsedFileDialog
 #endif
-                                      ) OVERRIDE FINAL;
+                                     ) OVERRIDE FINAL;
 
-    OfxImageEffectInstance* effectInstance() WARN_UNUSED_RETURN;
-    const OfxImageEffectInstance* effectInstance() const WARN_UNUSED_RETURN;
-    const std::string & getShortLabel() const WARN_UNUSED_RETURN;
+    OfxImageEffectInstance *effectInstance() WARN_UNUSED_RETURN;
+    const OfxImageEffectInstance *effectInstance() const WARN_UNUSED_RETURN;
+    const std::string &getShortLabel() const WARN_UNUSED_RETURN;
 
-    typedef std::vector<OFX::Host::ImageEffect::ClipDescriptor*> MappedInputV;
+    typedef std::vector<OFX::Host::ImageEffect::ClipDescriptor *> MappedInputV;
     MappedInputV inputClipsCopyWithoutOutput() const WARN_UNUSED_RETURN;
 
     bool isCreated() const;
     bool isInitialized() const;
 
-    const std::string & ofxGetOutputPremultiplication() const;
+    QString getDrawSuiteCompatibilityWarning() const;
+
+    const std::string &ofxGetOutputPremultiplication() const;
 
     /**
      * @brief Calls syncPrivateDataAction from another thread than the main thread. The actual
@@ -151,10 +153,10 @@ public:
     virtual int getNInputs() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual std::string getPluginID() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual std::string getPluginLabel() const OVERRIDE FINAL WARN_UNUSED_RETURN;
-    virtual void getPluginGrouping(std::list<std::string>* grouping) const OVERRIDE FINAL;
+    virtual void getPluginGrouping(std::list<std::string> *grouping) const OVERRIDE FINAL;
     virtual std::string getPluginDescription() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual bool isPluginDescriptionInMarkdown() const OVERRIDE FINAL WARN_UNUSED_RETURN;
-    virtual std::string getInputLabel (int inputNb) const OVERRIDE FINAL WARN_UNUSED_RETURN;
+    virtual std::string getInputLabel(int inputNb) const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual std::string getInputHint(int inputNb) const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual bool isInputOptional(int inputNb) const OVERRIDE WARN_UNUSED_RETURN;
     virtual bool isInputMask(int inputNb) const OVERRIDE FINAL WARN_UNUSED_RETURN;
@@ -174,6 +176,7 @@ public:
     virtual void getFrameRange(double *first, double *last) OVERRIDE;
     virtual void initializeOverlayInteract() OVERRIDE FINAL;
     virtual bool hasOverlay() const OVERRIDE FINAL;
+    virtual bool supportsOverlayDrawList() const OVERRIDE FINAL;
     virtual void redrawOverlayInteract() OVERRIDE FINAL;
     virtual void drawOverlay(double time, const RenderScale & renderScale, ViewIdx view) OVERRIDE FINAL;
     virtual bool onOverlayPenDown(double time, const RenderScale & renderScale, ViewIdx view, const QPointF & viewportPos, const QPointF & pos, double pressure, double timestamp, PenType pen) OVERRIDE FINAL WARN_UNUSED_RETURN;
@@ -200,9 +203,9 @@ public:
                             const RenderScale & scale,
                             const RectI & renderWindow, //!< render window in pixel coords
                             ViewIdx view,
-                            double* inputTime,
+                            double *inputTime,
                             ViewIdx* inputView,
-                            int* inputNb) OVERRIDE;
+                            int *inputNb) OVERRIDE;
     virtual RenderSafetyEnum renderThreadSafety() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual void purgeCaches() OVERRIDE;
 
@@ -215,6 +218,8 @@ public:
     virtual bool supportsTiles() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual bool supportsRenderQuality() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual PluginOpenGLRenderSupport supportsOpenGLRender() const OVERRIDE FINAL WARN_UNUSED_RETURN;
+    virtual bool supportsVulkanRender() const OVERRIDE FINAL;
+    virtual bool requiresVulkanRender() const OVERRIDE FINAL;
     virtual bool doesTemporalClipAccess() const OVERRIDE FINAL WARN_UNUSED_RETURN;
 
     /**
@@ -237,9 +242,7 @@ public:
                                            bool isSequentialRender,
                                            bool isRenderResponseToUserInteraction,
                                            bool draftMode,
-                                           ViewIdx view,
-                                           bool isOpenGLRender,
-                                           const EffectInstance::OpenGLContextEffectDataPtr& glContextData) OVERRIDE FINAL WARN_UNUSED_RETURN;
+                                           ViewIdx view) OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual StatusEnum endSequenceRender(double first,
                                          double last,
                                          double step,
@@ -248,26 +251,21 @@ public:
                                          bool isSequentialRender,
                                          bool isRenderResponseToUserInteraction,
                                          bool draftMode,
-                                         ViewIdx view,
-                                         bool isOpenGLRender,
-                                         const EffectInstance::OpenGLContextEffectDataPtr& glContextData) OVERRIDE FINAL WARN_UNUSED_RETURN;
-    virtual void addAcceptedComponents(int inputNb, std::list<ImagePlaneDesc>* comps) OVERRIDE FINAL;
-    virtual void addSupportedBitDepth(std::list<ImageBitDepthEnum>* depths) const OVERRIDE FINAL;
+                                         ViewIdx view) OVERRIDE FINAL WARN_UNUSED_RETURN;
+    virtual void addAcceptedComponents(int inputNb, std::list<ImagePlaneDesc> *comps) OVERRIDE FINAL;
+    virtual void addSupportedBitDepth(std::list<ImageBitDepthEnum> *depths) const OVERRIDE FINAL;
     virtual SequentialPreferenceEnum getSequentialPreference() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual StatusEnum getPreferredMetadata(NodeMetadata& metadata) OVERRIDE FINAL;
     virtual void onMetadataRefreshed(const NodeMetadata& metadata) OVERRIDE FINAL;
     virtual void getComponentsNeededAndProduced(double time, ViewIdx view,
-                                                EffectInstance::ComponentsNeededMap* comps,
-                                                double* passThroughTime,
-                                                int* passThroughView,
-                                                int* passThroughInput) OVERRIDE;
+            EffectInstance::ComponentsNeededMap* comps,
+            double *passThroughTime,
+            int *passThroughView,
+            int *passThroughInput) OVERRIDE;
     virtual bool isMultiPlanar() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual EffectInstance::PassThroughEnum isPassThroughForNonRenderedPlanes() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual bool isViewAware() const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual EffectInstance::ViewInvarianceLevel isViewInvariant() const OVERRIDE FINAL WARN_UNUSED_RETURN;
-    virtual bool supportsConcurrentOpenGLRenders() const OVERRIDE FINAL WARN_UNUSED_RETURN;
-    virtual StatusEnum attachOpenGLContext(OpenGLContextEffectDataPtr* data) OVERRIDE FINAL WARN_UNUSED_RETURN;
-    virtual StatusEnum dettachOpenGLContext(const OpenGLContextEffectDataPtr& data) OVERRIDE FINAL;
     virtual EffectInstancePtr createRenderClone() OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual void onInteractViewportSelectionCleared() OVERRIDE FINAL;
     virtual void onInteractViewportSelectionUpdated(const RectD& rectangle, bool onRelease) OVERRIDE FINAL;
@@ -275,7 +273,7 @@ public:
 public:
 
     virtual bool getCanTransform() const OVERRIDE FINAL WARN_UNUSED_RETURN;
-    virtual bool getInputsHoldingTransform(std::list<int>* inputs) const OVERRIDE FINAL WARN_UNUSED_RETURN;
+    virtual bool getInputsHoldingTransform(std::list<int> *inputs) const OVERRIDE FINAL WARN_UNUSED_RETURN;
     virtual StatusEnum getTransform(double time,
                                     const RenderScale & renderScale,
                                     bool draftRender,
@@ -286,7 +284,7 @@ public:
     virtual bool isHostMixingEnabled() const OVERRIDE FINAL WARN_UNUSED_RETURN;
 
     /********OVERRIDDEN FROM EFFECT INSTANCE: END*************/
-    OfxClipInstance* getClipCorrespondingToInput(int inputNo) const;
+    OfxClipInstance *getClipCorrespondingToInput(int inputNo) const;
     static ContextEnum mapToContextEnum(const std::string &s);
     static std::string mapContextToString(ContextEnum ctx);
     static std::string natronValueChangedReasonToOfxValueChangedReason(ValueChangedReasonEnum reason);

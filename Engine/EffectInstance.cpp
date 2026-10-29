@@ -38,8 +38,8 @@
 
 #include <QReadWriteLock>
 #include <QCoreApplication>
-#include <QtConcurrentMap> // QtCore on Qt4, QtConcurrent on Qt5
-#include <QtConcurrentRun> // QtCore on Qt4, QtConcurrent on Qt5
+#include <QtConcurrentMap>
+#include <QtConcurrentRun>
 
 #include "Global/QtCompat.h"
 
@@ -50,16 +50,17 @@
 #include "Engine/DiskCacheNode.h"
 #include "Engine/Image.h"
 #include "Engine/ImageParams.h"
+#include "Engine/VulkanImageContextPool.h"
+#include "Gpu/VulkanDevice.h"
 #include "Engine/KnobFile.h"
 #include "Engine/KnobTypes.h"
 #include "Engine/Log.h"
 #include "Engine/MemoryInfo.h" // printAsRAM
 #include "Engine/Node.h"
+#include "Engine/NodeGroup.h"
 #include "Engine/OfxEffectInstance.h"
 #include "Engine/OfxOverlayInteract.h"
 #include "Engine/OfxImageEffectInstance.h"
-#include "Engine/GPUContextPool.h"
-#include "Engine/OSGLContext.h"
 #include "Engine/OutputSchedulerThread.h"
 #include "Engine/PluginMemory.h"
 #include "Engine/Project.h"
@@ -79,6 +80,56 @@
 
 NATRON_NAMESPACE_ENTER
 
+NodeDataType EffectInstance::getOutputDataType() const
+{
+    const auto id = getPluginID();
+    if (id == PLUGINID_NATRON_INPUT && getNode()) {
+        const auto group = std::dynamic_pointer_cast<NodeGroup>(getNode()->getGroup());
+        const auto source = group ? group->getRealInputForInput(false, getNode()) : NodePtr();
+        return source ? source->getEffectInstance()->getOutputDataType() : NodeDataType::Unknown;
+    }
+    if (id == PLUGINID_NATRON_GROUP) {
+        const auto group = getNode() ? getNode()->isEffectGroup() : nullptr;
+        const auto output = group ? group->getOutputNodeInput(false) : NodePtr();
+        return output ? output->getEffectInstance()->getOutputDataType() : NodeDataType::Unknown;
+    }
+    if (id == PLUGINID_NATRON_DOT || id == PLUGINID_NATRON_INPUT || id == PLUGINID_NATRON_OUTPUT) {
+        const auto input = getNode() ? getInput(0) : EffectInstancePtr();
+        return input ? input->getOutputDataType() : NodeDataType::Unknown;
+    }
+    return NodeDataType::Image;
+}
+bool EffectInstance::acceptsInputDataType(int inputIndex, NodeDataType type) const
+{
+    const auto id = getPluginID();
+    if (id == PLUGINID_NATRON_GROUP) {
+        const auto group = getNode() ? getNode()->isEffectGroup() : nullptr;
+        std::vector<NodePtr> inputs;
+        if (group) group->getInputs(&inputs, false);
+        return inputIndex >= 0 && inputIndex < int(inputs.size()) &&
+            inputs[inputIndex]->getEffectInstance()->acceptsInputDataType(0, type);
+    }
+    if (id == PLUGINID_NATRON_DOT || id == PLUGINID_NATRON_INPUT || id == PLUGINID_NATRON_OUTPUT) {
+        // Retyping a passthrough must also satisfy its existing downstream sockets.
+        // Unknown allows wiring an empty Dot/Group before choosing its source.
+        NodePtr source = getNode();
+        if (id == PLUGINID_NATRON_OUTPUT && source) {
+            const auto group = std::dynamic_pointer_cast<NodeGroup>(source->getGroup());
+            source = group ? group->getNode() : NodePtr();
+        }
+        NodesWList outputs;
+        if (source) source->getOutputs_mt_safe(outputs);
+        for (const auto& weak : outputs) if (const auto output = weak.lock()) {
+            for (int i = 0; i < output->getNInputs(); ++i) {
+                if (output->getRealInput(i) == source && !output->getEffectInstance()->acceptsInputDataType(i, type))
+                    return false;
+            }
+        }
+        return true;
+    }
+    return type == NodeDataType::Image || type == NodeDataType::Unknown;
+}
+
 
 class KnobFile;
 class KnobOutputFile;
@@ -86,18 +137,18 @@ class KnobOutputFile;
 
 void
 EffectInstance::addThreadLocalInputImageTempPointer(int inputNb,
-                                                    const ImagePtr & img)
+        const ImagePtr & img)
 {
     _imp->addInputImageTempPointer(inputNb, img);
 }
 
 EffectInstance::EffectInstance(NodePtr node)
-    : NamedKnobHolder( node ? node->getApp() : AppInstancePtr() )
+    : NamedKnobHolder(node ? node->getApp() : AppInstancePtr())
     , _node(node)
-    , _imp( new Implementation(this) )
+    , _imp(new Implementation(this))
 {
     if (node) {
-        if ( !node->isRenderScaleSupportEnabledForPlugin() ) {
+        if (!node->isRenderScaleSupportEnabledForPlugin()) {
             setSupportsRenderScaleMaybe(eSupportsNo);
         }
     }
@@ -107,8 +158,8 @@ EffectInstance::EffectInstance(const EffectInstance& other)
     : NamedKnobHolder(other)
     , LockManagerI<Image>()
     , std::enable_shared_from_this<EffectInstance>()
-    , _node( other.getNode() )
-    , _imp( new Implementation(*other._imp) )
+    , _node(other.getNode())
+    , _imp(new Implementation(*other._imp))
 {
     _imp->_publicInterface = this;
 }
@@ -146,8 +197,8 @@ EffectInstance::unlock(const ImagePtr & entry)
  * @brief Add the layers from the inputList to the toList if they do not already exist in the list.
  * For the color plane, if it already existed in toList it is replaced by the value in inputList
  **/
-static void mergeLayersList(const std::list<ImagePlaneDesc>& inputList,
-                            std::list<ImagePlaneDesc>* toList)
+static void mergeLayersList(const std::list<ImagePlaneDesc> &inputList,
+                            std::list<ImagePlaneDesc> *toList)
 {
     for (std::list<ImagePlaneDesc>::const_iterator it = inputList.begin(); it != inputList.end(); ++it) {
 
@@ -157,6 +208,7 @@ static void mergeLayersList(const std::list<ImagePlaneDesc>& inputList,
         if (foundMatch != toList->end()) {
             toList->erase(foundMatch);
         }
+
         toList->push_back(*it);
 
     } // for each input components
@@ -165,11 +217,12 @@ static void mergeLayersList(const std::list<ImagePlaneDesc>& inputList,
 /**
  * @brief Remove any layer from the toRemove list from toList.
  **/
-static void removeFromLayersList(const std::list<ImagePlaneDesc>& toRemove,
-                                 std::list<ImagePlaneDesc>* toList)
+static void removeFromLayersList(const std::list<ImagePlaneDesc> &toRemove,
+                                 std::list<ImagePlaneDesc> *toList)
 {
     for (std::list<ImagePlaneDesc>::const_iterator it = toRemove.begin(); it != toRemove.end(); ++it) {
         std::list<ImagePlaneDesc>::iterator foundMatch = ImagePlaneDesc::findEquivalentLayer<std::list<ImagePlaneDesc>::iterator>(*it, toList->begin(), toList->end());
+
         if (foundMatch != toList->end()) {
             toList->erase(foundMatch);
         }
@@ -197,6 +250,7 @@ EffectInstance::getUserPlanes() const
         std::string ofxPlane = ImagePlaneDesc::mapPlaneToOFXPlaneString(*it);
         tls->userPlaneStrings.push_back(ofxPlane);
     }
+
     return tls->userPlaneStrings;
 }
 
@@ -205,13 +259,17 @@ EffectInstance::clearPluginMemoryChunks()
 {
     // This will remove the mem from the pluginMemoryChunks list
     QMutexLocker l(&_imp->pluginMemoryChunksMutex);
-    for (std::list<PluginMemoryWPtr>::iterator it = _imp->pluginMemoryChunks.begin(); it!=_imp->pluginMemoryChunks.end(); ++it) {
+
+    for (std::list<PluginMemoryWPtr>::iterator it = _imp->pluginMemoryChunks.begin(); it != _imp->pluginMemoryChunks.end(); ++it) {
         PluginMemoryPtr mem = it->lock();
+
         if (!mem) {
             continue;
         }
+
         mem->setUnregisterOnDestructor(false);
     }
+
     _imp->pluginMemoryChunks.clear();
 }
 
@@ -228,7 +286,7 @@ EffectInstance::invalidateCanSetValueFlag()
     EffectTLSDataPtr tls = _imp->tlsData->getTLSData();
 
     assert(tls);
-    assert( !tls->canSetValue.empty() );
+    assert(!tls->canSetValue.empty());
     tls->canSetValue.pop_back();
 }
 
@@ -240,7 +298,8 @@ EffectInstance::isDuringActionThatCanSetValue() const
     if (!tls) {
         return true;
     }
-    if ( tls->canSetValue.empty() ) {
+
+    if (tls->canSetValue.empty()) {
         return true;
     }
 
@@ -259,37 +318,38 @@ EffectInstance::setNodeRequestThreadLocal(const NodeFrameRequestPtr & nodeReques
 
         return;
     }
-    std::list<ParallelRenderArgsPtr>& argsList = tls->frameArgs;
-    if ( argsList.empty() ) {
+
+    std::list<ParallelRenderArgsPtr> &argsList = tls->frameArgs;
+
+    if (argsList.empty()) {
         return;
     }
+
     argsList.back()->request = nodeRequest;
 }
 
 void
 EffectInstance::setParallelRenderArgsTLS(double time,
-                                         ViewIdx view,
-                                         bool isRenderUserInteraction,
-                                         bool isSequential,
-                                         U64 nodeHash,
-                                         const AbortableRenderInfoPtr& abortInfo,
-                                         const NodePtr & treeRoot,
-                                         int visitsCount,
-                                         const NodeFrameRequestPtr & nodeRequest,
-                                         const OSGLContextPtr& glContext,
-                                         int textureIndex,
-                                         const TimeLine* timeline,
-                                         bool isAnalysis,
-                                         bool isDuringPaintStrokeCreation,
-                                         const NodesList & rotoPaintNodes,
-                                         RenderSafetyEnum currentThreadSafety,
-                                         PluginOpenGLRenderSupport currentOpenGLSupport,
-                                         bool doNanHandling,
-                                         bool draftMode,
-                                         const RenderStatsPtr & stats)
+        ViewIdx view,
+        bool isRenderUserInteraction,
+        bool isSequential,
+        U64 nodeHash,
+        const AbortableRenderInfoPtr& abortInfo,
+        const NodePtr & treeRoot,
+        int visitsCount,
+        const NodeFrameRequestPtr & nodeRequest,
+        int textureIndex,
+        const TimeLine* timeline,
+        bool isAnalysis,
+        bool isDuringPaintStrokeCreation,
+        const NodesList & rotoPaintNodes,
+        RenderSafetyEnum currentThreadSafety,
+        bool doNanHandling,
+        bool draftMode,
+        const RenderStatsPtr & stats)
 {
     EffectTLSDataPtr tls = _imp->tlsData->getOrCreateTLSData();
-    std::list<ParallelRenderArgsPtr>& argsList = tls->frameArgs;
+    std::list<ParallelRenderArgsPtr> &argsList = tls->frameArgs;
     ParallelRenderArgsPtr args = std::make_shared<ParallelRenderArgs>();
 
     args->time = time;
@@ -298,11 +358,13 @@ EffectInstance::setParallelRenderArgsTLS(double time,
     args->isRenderResponseToUserInteraction = isRenderUserInteraction;
     args->isSequentialRender = isSequential;
     args->request = nodeRequest;
+
     if (nodeRequest) {
         args->nodeHash = nodeRequest->nodeHash;
     } else {
         args->nodeHash = nodeHash;
     }
+
     assert(abortInfo);
     args->abortInfo = abortInfo;
     args->treeRoot = treeRoot;
@@ -311,13 +373,12 @@ EffectInstance::setParallelRenderArgsTLS(double time,
     args->isAnalysis = isAnalysis;
     args->isDuringPaintStrokeCreation = isDuringPaintStrokeCreation;
     args->currentThreadSafety = currentThreadSafety;
-    args->currentOpenglSupport = currentOpenGLSupport;
+    args->currentVulkanSupport = supportsVulkanRender();
     args->rotoPaintNodes = rotoPaintNodes;
     args->doNansHandling = isAnalysis ? false : doNanHandling;
     args->draftMode = draftMode;
     args->tilesSupported = getNode()->getCurrentSupportTiles();
     args->stats = stats;
-    args->openGLContext = glContext;
     argsList.push_back(args);
 }
 
@@ -329,9 +390,11 @@ EffectInstance::getThreadLocalRotoPaintTreeNodes(NodesList* nodes) const
     if (!tls) {
         return false;
     }
-    if ( tls->frameArgs.empty() ) {
+
+    if (tls->frameArgs.empty()) {
         return false;
     }
+
     *nodes = tls->frameArgs.back()->rotoPaintNodes;
 
     return true;
@@ -350,7 +413,7 @@ EffectInstance::setParallelRenderArgsTLS(const ParallelRenderArgsPtr & args)
 {
     EffectTLSDataPtr tls = _imp->tlsData->getOrCreateTLSData();
 
-    assert( args->abortInfo.lock() );
+    assert(args->abortInfo.lock());
     tls->frameArgs.push_back(args);
 }
 
@@ -363,11 +426,13 @@ EffectInstance::invalidateParallelRenderArgsTLS()
         return;
     }
 
-    assert( !tls->frameArgs.empty() );
+    assert(!tls->frameArgs.empty());
     const ParallelRenderArgsPtr& back = tls->frameArgs.back();
+
     for (NodesList::iterator it = back->rotoPaintNodes.begin(); it != back->rotoPaintNodes.end(); ++it) {
         (*it)->getEffectInstance()->invalidateParallelRenderArgsTLS();
     }
+
     tls->frameArgs.pop_back();
 }
 
@@ -376,7 +441,7 @@ EffectInstance::getParallelRenderArgsTLS() const
 {
     EffectTLSDataPtr tls = _imp->tlsData->getTLSData();
 
-    if ( !tls || tls->frameArgs.empty() ) {
+    if (!tls || tls->frameArgs.empty()) {
         return ParallelRenderArgsPtr();
     }
 
@@ -396,7 +461,7 @@ EffectInstance::getRenderHash() const
 {
     EffectTLSDataPtr tls = _imp->tlsData->getTLSData();
 
-    if ( !tls || tls->frameArgs.empty() ) {
+    if (!tls || tls->frameArgs.empty()) {
         //No tls: get the GUI hash
         return getHash();
     }
@@ -421,14 +486,15 @@ EffectInstance::Implementation::aborted(bool isRenderResponseToUserInteraction,
         // Rendering is playback or render on disk
 
         // If we have abort info, e just peek the atomic int inside the abort info, this is very fast
-        if ( abortInfo && abortInfo->isAborted() ) {
+        if (abortInfo && abortInfo->isAborted()) {
             return true;
         }
 
         // Fallback on the flag set on the node that requested the render in OutputSchedulerThread
         if (treeRoot) {
-            OutputEffectInstance* effect = dynamic_cast<OutputEffectInstance*>( treeRoot.get() );
+            OutputEffectInstance* effect = dynamic_cast<OutputEffectInstance *>(treeRoot.get());
             assert(effect);
+
             if (effect) {
                 return effect->isSequentialRenderBeingAborted();
             }
@@ -439,21 +505,22 @@ EffectInstance::Implementation::aborted(bool isRenderResponseToUserInteraction,
     } else {
         // This is a render issued to refresh the image on the Viewer
 
-        if ( !abortInfo || !abortInfo->canAbort() ) {
+        if (!abortInfo || !abortInfo->canAbort()) {
             // We do not have any abortInfo set or this render is not abortable. This should be avoided as much as possible!
             return false;
         }
 
         // This is very fast, we just peek the atomic int inside the abort info
-        if ( (int)abortInfo->isAborted() ) {
+        if ((int)abortInfo->isAborted()) {
             return true;
         }
 
         // If this node can start sequential renders (e.g: start playback like on the viewer or render on disk) and it is already doing a sequential render, abort
         // this render
-        OutputEffectInstance* isRenderEffect = dynamic_cast<OutputEffectInstance*>( treeRoot.get() );
+        OutputEffectInstance* isRenderEffect = dynamic_cast<OutputEffectInstance *>(treeRoot.get());
+
         if (isRenderEffect) {
-            if ( isRenderEffect->isDoingSequentialRender() ) {
+            if (isRenderEffect->isDoingSequentialRender()) {
                 return true;
             }
         }
@@ -469,7 +536,7 @@ EffectInstance::aborted() const
     QThread* thisThread = QThread::currentThread();
 
     /* If this thread is an AbortableThread, this function will be extremely fast*/
-    AbortableThread* isAbortableThread = dynamic_cast<AbortableThread*>(thisThread);
+    AbortableThread* isAbortableThread = dynamic_cast<AbortableThread *>(thisThread);
 
     /**
        The solution here is to store per-render info on the thread that we retrieve.
@@ -484,18 +551,22 @@ EffectInstance::aborted() const
     EffectInstancePtr treeRoot;
 
 
-    if ( !isAbortableThread || !isAbortableThread->getAbortInfo(&isRenderUserInteraction, &abortInfo, &treeRoot) ) {
+    if (!isAbortableThread || !isAbortableThread->getAbortInfo(&isRenderUserInteraction, &abortInfo, &treeRoot)) {
         // If this thread is not abortable or we did not set the abort info for this render yet, retrieve them from the TLS of this node.
         EffectTLSDataPtr tls = _imp->tlsData->getTLSData();
+
         if (!tls) {
             return false;
         }
-        if ( tls->frameArgs.empty() ) {
+
+        if (tls->frameArgs.empty()) {
             return false;
         }
+
         const ParallelRenderArgsPtr & args = tls->frameArgs.back();
         isRenderUserInteraction = args->isRenderResponseToUserInteraction;
         abortInfo = args->abortInfo.lock();
+
         if (args->treeRoot) {
             treeRoot = args->treeRoot->getEffectInstance();
         }
@@ -581,7 +652,7 @@ EffectInstance::getInputLabel(int inputNb) const
 {
     std::string out;
 
-    out.append( 1, (char)(inputNb + 65) );
+    out.append(1, (char)(inputNb + 65));
 
     return out;
 }
@@ -594,16 +665,16 @@ EffectInstance::getInputHint(int /*inputNb*/) const
 
 bool
 EffectInstance::retrieveGetImageDataUponFailure(const double time,
-                                                const ViewIdx view,
-                                                const RenderScale & scale,
-                                                const RectD* optionalBoundsParam,
-                                                U64* nodeHash_p,
-                                                bool* isIdentity_p,
-                                                EffectInstancePtr* identityInput_p,
-                                                bool* duringPaintStroke_p,
-                                                RectD* rod_p,
-                                                RoIMap* inputRois_p, //!< output, only set if optionalBoundsParam != NULL
-                                                RectD* optionalBounds_p) //!< output, only set if optionalBoundsParam != NULL
+        const ViewIdx view,
+        const RenderScale & scale,
+        const RectD* optionalBoundsParam,
+        U64* nodeHash_p,
+        bool* isIdentity_p,
+        EffectInstancePtr* identityInput_p,
+        bool* duringPaintStroke_p,
+        RectD* rod_p,
+        RoIMap* inputRois_p, //!< output, only set if optionalBoundsParam != NULL
+        RectD* optionalBounds_p) //!< output, only set if optionalBoundsParam != NULL
 {
     /////Update 09/02/14
     /// We now AUTHORIZE GetRegionOfDefinition and isIdentity and getRegionsOfInterest to be called recursively.
@@ -629,6 +700,7 @@ EffectInstance::retrieveGetImageDataUponFailure(const double time,
     {
         RECURSIVE_ACTION();
         StatusEnum stat = getRegionOfDefinition(nodeHash, time, scale, view, rod_p);
+
         if (stat == eStatusFailed) {
             return false;
         }
@@ -656,11 +728,13 @@ EffectInstance::retrieveGetImageDataUponFailure(const double time,
 
     assert(isSupportedRenderScale(supportsRenderScaleMaybe(), scale));
     const RectI pixelRod = rod.toPixelEnclosing(scale, getAspectRatio(-1));
+
     try {
         int identityInputNb;
         double identityTime;
         ViewIdx identityView;
         *isIdentity_p = isIdentity_public(true, nodeHash, time, scale, pixelRod, view, &identityTime, &identityView, &identityInputNb);
+
         if (*isIdentity_p) {
             if (identityInputNb >= 0) {
                 *identityInput_p = getInput(identityInputNb);
@@ -683,6 +757,7 @@ EffectInstance::getThreadLocalInputImages(InputImagesMap* images) const
     if (!tls) {
         return;
     }
+
     *images = tls->currentRenderArgs.inputImages;
 }
 
@@ -694,22 +769,12 @@ EffectInstance::getThreadLocalRegionsOfInterests(RoIMap & roiMap) const
     if (!tls) {
         return false;
     }
+
     roiMap = tls->currentRenderArgs.regionOfInterestResults;
 
     return true;
 }
 
-OSGLContextPtr
-EffectInstance::getThreadLocalOpenGLContext() const
-{
-    EffectTLSDataPtr tls = _imp->tlsData->getTLSData();
-
-    if ( !tls || tls->frameArgs.empty() ) {
-        return OSGLContextPtr();
-    }
-
-    return tls->frameArgs.back()->openGLContext.lock();
-}
 
 ImagePtr
 EffectInstance::getImage(int inputNb,
@@ -721,7 +786,7 @@ EffectInstance::getImage(int inputNb,
                          const bool mapToClipPrefs,
                          const bool dontUpscale,
                          const StorageModeEnum returnStorage,
-                         const ImageBitDepthEnum* /*textureDepth*/, // < ignore requested texture depth because internally we use 32bit fp textures, so we offer the highest possible quality anyway.
+                         const ImageBitDepthEnum * /*textureDepth*/, // < ignore requested texture depth because internally we use 32bit fp textures, so we offer the highest possible quality anyway.
                          RectI* roiPixel,
                          Transform::Matrix3x3Ptr* transform)
 {
@@ -736,12 +801,16 @@ EffectInstance::getImage(int inputNb,
     //Check for transform redirections
     InputMatrixMapPtr transformRedirections;
     EffectTLSDataPtr tls = _imp->tlsData->getTLSData();
+
     if (tls && tls->currentRenderArgs.validArgs) {
         transformRedirections = tls->currentRenderArgs.transformRedirections;
+
         if (transformRedirections) {
             InputMatrixMap::const_iterator foundRedirection = transformRedirections->find(inputNb);
-            if ( ( foundRedirection != transformRedirections->end() ) && foundRedirection->second.newInputEffect ) {
+
+            if ((foundRedirection != transformRedirections->end()) && foundRedirection->second.newInputEffect) {
                 inputEffect = foundRedirection->second.newInputEffect->getInput(foundRedirection->second.newInputNbToFetchFrom);
+
                 if (transform) {
                     *transform = foundRedirection->second.cat;
                 }
@@ -768,16 +837,19 @@ EffectInstance::getImage(int inputNb,
     if (attachedStroke) {
         roto = attachedStroke->getContext();
     }
+
     bool useRotoInput = false;
     bool inputIsRotoBrush = roto && isInputRotoBrush(inputNb);
     bool supportsOnlyAlpha = node->isInputOnlyAlpha(inputNb);
+
     if (roto) {
         useRotoInput = isMask || inputIsRotoBrush;
     }
 
     ///This is the actual layer that we are fetching in input
     ImagePlaneDesc maskComps;
-    if ( !isMaskEnabled(inputNb) ) {
+
+    if (!isMaskEnabled(inputNb)) {
         return ImagePtr();
     }
 
@@ -795,18 +867,19 @@ EffectInstance::getImage(int inputNb,
     }
 
     //Invalid mask
-    if ( isMask && ( (channelForMask == -1) || (maskComps.getNumComponents() == 0) ) ) {
+    if (isMask && ((channelForMask == -1) || (maskComps.getNumComponents() == 0))) {
         return ImagePtr();
     }
 
 
-    if ( ( !roto || (roto && !useRotoInput) ) && !inputEffect ) {
+    if ((!roto || (roto && !useRotoInput)) && !inputEffect) {
         //Disconnected input
         return ImagePtr();
     }
 
     ///If optionalBounds have been set, use this for the RoI instead of the data int the TLS
     RectD optionalBounds;
+
     if (optionalBoundsParam) {
         optionalBounds = *optionalBoundsParam;
     }
@@ -839,50 +912,54 @@ EffectInstance::getImage(int inputNb,
 
     ///Try to find in the input images thread-local storage if we already pre-computed the image
     EffectInstance::InputImagesMap inputImagesThreadLocal;
-    OSGLContextPtr glContext;
     AbortableRenderInfoPtr renderInfo;
-    if ( !tls || ( !tls->currentRenderArgs.validArgs && tls->frameArgs.empty() ) ) {
+
+    if (!tls || (!tls->currentRenderArgs.validArgs && tls->frameArgs.empty())) {
         /*
            This is either a huge bug or an unknown thread that called clipGetImage from the OpenFX plug-in.
            Make-up some reasonable arguments
          */
-        if ( !retrieveGetImageDataUponFailure(time, view, scale, optionalBoundsParam, &nodeHash, &isIdentity, &identityInput, &duringPaintStroke, &thisRod, &inputsRoI, &optionalBounds) ) {
+        if (!retrieveGetImageDataUponFailure(time, view, scale, optionalBoundsParam, &nodeHash, &isIdentity, &identityInput, &duringPaintStroke, &thisRod, &inputsRoI, &optionalBounds)) {
             return ImagePtr();
         }
     } else {
-        assert( tls->currentRenderArgs.validArgs || !tls->frameArgs.empty() );
+        assert(tls->currentRenderArgs.validArgs || !tls->frameArgs.empty());
 
         if (inputEffect) {
             //When analysing we do not compute a request pass so we do not enter this condition
             ParallelRenderArgsPtr inputFrameArgs = inputEffect->getParallelRenderArgsTLS();
             const FrameViewRequest* request = 0;
+
             if (inputFrameArgs && inputFrameArgs->request) {
                 request = inputFrameArgs->request->getFrameViewRequest(time, view);
             }
+
             if (request) {
                 roiWasInRequestPass = true;
                 roi = request->finalData.finalRoi;
             }
         }
 
-        if ( !tls->frameArgs.empty() ) {
+        if (!tls->frameArgs.empty()) {
             const ParallelRenderArgsPtr& frameRenderArgs = tls->frameArgs.back();
             nodeHash = frameRenderArgs->nodeHash;
             duringPaintStroke = frameRenderArgs->isDuringPaintStrokeCreation;
             isAnalysisPass = frameRenderArgs->isAnalysis;
-            glContext = frameRenderArgs->openGLContext.lock();
             renderInfo = frameRenderArgs->abortInfo.lock();
         } else {
             //This is a bug, when entering here, frameArgs TLS should always have been set, except for unknown threads.
             nodeHash = getHash();
             duringPaintStroke = false;
         }
+
         if (tls->currentRenderArgs.validArgs) {
             //This will only be valid for render pass, not analysis
             const RenderArgs& renderArgs = tls->currentRenderArgs;
+
             if (!roiWasInRequestPass) {
                 inputsRoI = renderArgs.regionOfInterestResults;
             }
+
             thisEffectRenderTime = renderArgs.time;
             isIdentity = renderArgs.isIdentity;
             identityInput = renderArgs.identityInput;
@@ -891,16 +968,10 @@ EffectInstance::getImage(int inputNb,
         }
     }
 
-    if ( (!glContext || !renderInfo) && returnStorage == eStorageModeGLTex ) {
-        qDebug() << "[BUG]: " << getScriptName_mt_safe().c_str() << "is doing an OpenGL render but no context is bound to the current render.";
-
-        return ImagePtr();
-    }
-
-
 
     RectD inputRoD;
     bool inputRoDSet = false;
+
     if (optionalBoundsParam) {
         //Set the RoI from the parameters given to clipGetImage
         roi = optionalBounds;
@@ -908,8 +979,9 @@ EffectInstance::getImage(int inputNb,
         //We did not have a request pass, use if possible the result of getRegionsOfInterest found in the TLS
         //If not, fallback on input RoD
         EffectInstancePtr inputToFind;
+
         if (useRotoInput) {
-            if ( node->getRotoContext() ) {
+            if (node->getRotoContext()) {
                 inputToFind = shared_from_this();
             } else {
                 assert(attachedStroke);
@@ -918,26 +990,29 @@ EffectInstance::getImage(int inputNb,
         } else {
             inputToFind = inputEffect;
         }
+
         RoIMap::iterator found = inputsRoI.find(inputToFind);
-        if ( found != inputsRoI.end() ) {
+
+        if (found != inputsRoI.end()) {
             ///RoI is in canonical coordinates since the results of getRegionsOfInterest is in canonical coords.
             roi = found->second;
         } else {
             ///Oops, we didn't find the roi in the thread-storage... use  the RoD instead...
             if (inputEffect && !isAnalysisPass) {
                 qDebug() << QThread::currentThread() << getScriptName_mt_safe().c_str() << "[Bug] RoI not found in TLS...falling back on RoD when calling getImage() on" <<
-                    inputEffect->getScriptName_mt_safe().c_str();
+                         inputEffect->getScriptName_mt_safe().c_str();
             }
 
 
             //We are either in analysis or in an unknown thread
             //do not set identity flags, request for RoI the full RoD of the input
             if (useRotoInput) {
-                assert( !thisRod.isNull() );
+                assert(!thisRod.isNull());
                 roi = thisRod;
             } else {
                 if (inputEffect) {
                     StatusEnum stat = inputEffect->getRegionOfDefinition_public(inputEffect->getRenderHash(), time, scale, view, &inputRoD, 0);
+
                     if (stat != eStatusFailed) {
                         inputRoDSet = true;
                     }
@@ -948,29 +1023,33 @@ EffectInstance::getImage(int inputNb,
         }
     }
 
-    if ( roi.isNull() ) {
+    if (roi.isNull()) {
         return ImagePtr();
     }
 
 
     if (isIdentity) {
         assert(identityInput.get() != this);
+
         ///If the effect is an identity but it didn't ask for the effect's image of which it is identity
         ///return a null image (only when non analysis)
-        if ( (identityInput != inputEffect) && !isAnalysisPass ) {
+        if ((identityInput != inputEffect) && !isAnalysisPass) {
             return ImagePtr();
         }
     }
 
 
     ///Does this node supports images at a scale different than 1
-    bool renderFullScaleThenDownscale = (!supportsRenderScale() && mipmapLevel != 0 && returnStorage == eStorageModeRAM);
+    bool renderFullScaleThenDownscale = (!supportsRenderScale() && mipmapLevel != 0 &&
+                                         (returnStorage == eStorageModeRAM || returnStorage == eStorageModeVulkan));
 
     ///Do we want to render the graph upstream at scale 1 or at the requested render scale ? (user setting)
     bool renderScaleOneUpstreamIfRenderScaleSupportDisabled = false;
     unsigned int renderMappedMipmapLevel = mipmapLevel;
+
     if (renderFullScaleThenDownscale) {
         renderScaleOneUpstreamIfRenderScaleSupportDisabled = node->useScaleOneImagesWhenRenderScaleSupportIsDisabled();
+
         if (renderScaleOneUpstreamIfRenderScaleSupportDisabled) {
             renderMappedMipmapLevel = 0;
         }
@@ -999,16 +1078,20 @@ EffectInstance::getImage(int inputNb,
     if (useRotoInput) {
         ///Usage of roto outside of the rotopaint node is no longer handled
         assert(attachedStroke);
+
         if (attachedStroke) {
             if (duringPaintStroke) {
                 inputImg = node->getOrRenderLastStrokeImage(mipmapLevel, par, components, depth);
             } else {
                 RectD rotoSrcRod;
+
                 if (inputIsRotoBrush) {
                     //If the roto is inverted, we need to fill the full RoD of the input
                     bool inverted = attachedStroke->getInverted(time);
+
                     if (inverted) {
                         EffectInstancePtr rotoInput = getInput(0);
+
                         if (rotoInput) {
                             bool isProjectFormat;
                             StatusEnum st = rotoInput->getRegionOfDefinition_public(rotoInput->getRenderHash(), time, scale, view, &rotoSrcRod, &isProjectFormat);
@@ -1018,36 +1101,34 @@ EffectInstance::getImage(int inputNb,
                 }
 
                 inputImg = attachedStroke->renderMaskFromStroke(components,
-                                                                time, view, depth, mipmapLevel, rotoSrcRod);
+                           time, view, depth, mipmapLevel, rotoSrcRod);
 
-                if ( roto->isDoingNeatRender() ) {
+                if (roto->isDoingNeatRender()) {
                     getApp()->updateStrokeImage(inputImg, 0, false);
                 }
             }
         }
+
         if (roiPixel) {
             *roiPixel = pixelRoI;
         }
 
-        if ( inputImg && !pixelRoI.intersects( inputImg->getBounds() ) ) {
+        if (inputImg && !pixelRoI.intersects(inputImg->getBounds())) {
             //The RoI requested does not intersect with the bounds of the input image, return a NULL image.
 #ifdef DEBUG
             RectI inputBounds = inputImg->getBounds();
             qDebug() << node->getScriptName_mt_safe().c_str() << ": The RoI requested to the roto mask does not intersect with the bounds of the input image: Pixel RoI x1=" << pixelRoI.x1 << "y1=" << pixelRoI.y1 << "x2=" << pixelRoI.x2 << "y2=" << pixelRoI.y2 <<
-                "Bounds x1=" << inputBounds.x1 << "y1=" << inputBounds.y1 << "x2=" << inputBounds.x2 << "y2=" << inputBounds.y2;
+                                                                 "Bounds x1=" << inputBounds.x1 << "y1=" << inputBounds.y1 << "x2=" << inputBounds.x2 << "y2=" << inputBounds.y2;
 #endif
 
             return ImagePtr();
         }
 
-        if ( inputImg && inputImagesThreadLocal.empty() ) {
+        if (inputImg && inputImagesThreadLocal.empty()) {
             ///If the effect is analysis (e.g: Tracker) there's no input images in the thread-local storage, hence add it
             tls->currentRenderArgs.inputImages[inputNb].push_back(inputImg);
         }
 
-        if ( returnStorage == eStorageModeGLTex && (inputImg->getStorageMode() != eStorageModeGLTex) ) {
-            inputImg = convertRAMImageToOpenGLTexture(inputImg);
-        }
 
         if (mapToClipPrefs) {
             inputImg = convertPlanesFormatsIfNeeded(getApp(), inputImg, pixelRoI, clipPrefComps, depth, node->usesAlpha0ToConvertFromRGBToRGBA(), eImagePremultiplicationPremultiplied, channelForMask);
@@ -1064,28 +1145,29 @@ EffectInstance::getImage(int inputNb,
     requestedComps.push_back(isMask ? maskComps : components);
     std::map<ImagePlaneDesc, ImagePtr> inputImages;
     RenderRoIRetCode retCode = inputEffect->renderRoI(RenderRoIArgs(time,
-                                                                    scale,
-                                                                    renderMappedMipmapLevel,
-                                                                    view,
-                                                                    byPassCache,
-                                                                    pixelRoI,
-                                                                    RectD(),
-                                                                    requestedComps,
-                                                                    depth,
-                                                                    true,
-                                                                    this,
-                                                                    returnStorage,
-                                                                    thisEffectRenderTime,
-                                                                    inputImagesThreadLocal), &inputImages);
+                               scale,
+                               renderMappedMipmapLevel,
+                               view,
+                               byPassCache,
+                               pixelRoI,
+                               RectD(),
+                               requestedComps,
+                               depth,
+                               true,
+                               this,
+                               returnStorage,
+                               thisEffectRenderTime,
+                               inputImagesThreadLocal), &inputImages);
 
-    if ( inputImages.empty() || (retCode != eRenderRoIRetCodeOk) ) {
+    if (inputImages.empty() || (retCode != eRenderRoIRetCodeOk)) {
         return ImagePtr();
     }
+
     assert(inputImages.size() == 1);
 
     inputImg = inputImages.begin()->second;
 
-    if ( !pixelRoI.intersects( inputImg->getBounds() ) ) {
+    if (!pixelRoI.intersects(inputImg->getBounds())) {
         //The RoI requested does not intersect with the bounds of the input image, return a NULL image.
 #ifdef DEBUG
         qDebug() << node->getScriptName_mt_safe().c_str() << ": The RoI requested to" << inputEffect->getScriptName_mt_safe().c_str() << "does not intersect with the bounds of the input image";
@@ -1104,19 +1186,32 @@ EffectInstance::getImage(int inputNb,
     if (roiPixel) {
         *roiPixel = pixelRoI;
     }
+
     unsigned int inputImgMipmapLevel = inputImg->getMipmapLevel();
 
     ///If the plug-in doesn't support the render scale, but the image is downscaled, up-scale it.
     ///Note that we do NOT cache it because it is really low def!
-    ///For OpenGL textures, we do not do it because GL_TEXTURE_2D uses normalized texture coordinates anyway, so any OpenGL plug-in should support render scale.
-    if (!dontUpscale  && renderFullScaleThenDownscale && (inputImgMipmapLevel != 0) && returnStorage == eStorageModeRAM) {
+    if (!dontUpscale  && renderFullScaleThenDownscale && (inputImgMipmapLevel != 0) &&
+        (returnStorage == eStorageModeRAM || returnStorage == eStorageModeVulkan)) {
         assert(inputImgMipmapLevel != 0);
         ///Resize the image according to the requested scale
         ImageBitDepthEnum bitdepth = inputImg->getBitDepth();
         const RectI bounds = inputImg->getRoD().toPixelEnclosing(0, par);
-        ImagePtr rescaledImg = std::make_shared<Image>( inputImg->getComponents(), inputImg->getRoD(),
-                                                         bounds, 0, par, bitdepth, inputImg->getPremultiplication(), inputImg->getFieldingOrder() );
-        inputImg->upscaleMipmap( inputImg->getBounds(), inputImgMipmapLevel, 0, rescaledImg.get() );
+        ImagePtr rescaledImg;
+
+        if (returnStorage == eStorageModeVulkan) {
+            auto params = Image::makeParams(inputImg->getRoD(), bounds, par, 0, false, inputImg->getComponents(), bitdepth,
+                                            inputImg->getPremultiplication(), inputImg->getFieldingOrder(), eStorageModeVulkan);
+            params->getStorageInfo().vulkanContext = sharedVulkanImageContext();
+            rescaledImg = std::make_shared<Image>(inputImg->getKey(), params);
+            rescaledImg->allocateMemory();
+        } else {
+            rescaledImg = std::make_shared<Image>(inputImg->getComponents(), inputImg->getRoD(),
+                                                  bounds, 0, par, bitdepth, inputImg->getPremultiplication(), inputImg->getFieldingOrder());
+        }
+
+        inputImg->upscaleMipmap(inputImg->getBounds(), inputImgMipmapLevel, 0, rescaledImg.get());
+
         if (roiPixel) {
             if (!inputRoDSet) {
                 bool isProjectFormat;
@@ -1134,7 +1229,8 @@ EffectInstance::getImage(int inputNb,
 
     //Remap if needed
     ImagePremultiplicationEnum outputPremult;
-    if ( components.isColorPlane() ) {
+
+    if (components.isColorPlane()) {
         outputPremult = inputEffect->getPremult();
     } else {
         outputPremult = eImagePremultiplicationOpaque;
@@ -1146,21 +1242,24 @@ EffectInstance::getImage(int inputNb,
     }
 
 #ifdef DEBUG
+
     ///Check that the rendered image contains what we requested.
-    if ( !mapToClipPrefs && ( ( !isMask && (inputImg->getComponents() != components) ) || ( isMask && (inputImg->getComponents() != maskComps) ) ) ) {
+    if (!mapToClipPrefs && ((!isMask && (inputImg->getComponents() != components)) || (isMask && (inputImg->getComponents() != maskComps)))) {
         ImagePlaneDesc cc;
+
         if (isMask) {
             cc = maskComps;
         } else {
             cc = components;
         }
+
         qDebug() << "WARNING:" << node->getScriptName_mt_safe().c_str() << "requested" << cc.getChannelsLabel().c_str() << "but" << inputEffect->getScriptName_mt_safe().c_str() << "returned an image with"
                  << inputImg->getComponents().getChannelsLabel().c_str();
     }
 
 #endif
 
-    if ( inputImagesThreadLocal.empty() ) {
+    if (inputImagesThreadLocal.empty()) {
         ///If the effect is analysis (e.g: Tracker) there's no input images in the thread-local storage, hence add it
         tls->currentRenderArgs.inputImages[inputNb].push_back(inputImg);
     }
@@ -1170,10 +1269,10 @@ EffectInstance::getImage(int inputNb,
 
 void
 EffectInstance::calcDefaultRegionOfDefinition(U64 /*hash*/,
-                                              double /*time*/,
-                                              const RenderScale & scale,
-                                              ViewIdx /*view*/,
-                                              RectD *rod)
+        double /*time*/,
+        const RenderScale & scale,
+        ViewIdx /*view*/,
+        RectD *rod)
 {
 
     unsigned int mipmapLevel = scale.toMipmapLevel();
@@ -1195,15 +1294,18 @@ EffectInstance::getRegionOfDefinition(U64 hash,
     assert(isSupportedRenderScale(supportsRenderScaleMaybe(), scale));
 
     for (int i = 0; i < getNInputs(); ++i) {
-        if ( isInputMask(i) ) {
+        if (isInputMask(i)) {
             continue;
         }
+
         EffectInstancePtr input = getInput(i);
+
         if (input) {
             RectD inputRod;
             bool isProjectFormat;
             StatusEnum st = input->getRegionOfDefinition_public(hash, time, renderMappedScale, view, &inputRod, &isProjectFormat);
             assert(inputRod.x2 >= inputRod.x1 && inputRod.y2 >= inputRod.y1);
+
             if (st == eStatusFailed) {
                 return st;
             }
@@ -1214,6 +1316,7 @@ EffectInstance::getRegionOfDefinition(U64 hash,
             } else {
                 rod->merge(inputRod);
             }
+
             assert(rod->x1 <= rod->x2 && rod->y1 <= rod->y2);
         }
     }
@@ -1224,19 +1327,21 @@ EffectInstance::getRegionOfDefinition(U64 hash,
 
 bool
 EffectInstance::ifInfiniteApplyHeuristic(U64 hash,
-                                         double time,
-                                         const RenderScale & scale,
-                                         ViewIdx view,
-                                         RectD* rod) //!< input/output
+        double time,
+        const RenderScale & scale,
+        ViewIdx view,
+        RectD* rod) //!< input/output
 {
     /*If the rod is infinite clip it to the format*/
 
 
     assert(rod);
-    if ( rod->isNull() ) {
+
+    if (rod->isNull()) {
         // if the RoD is empty, set it to a "standard" empty RoD (0,0,0,0)
         rod->clear();
     }
+
     assert(rod->x1 <= rod->x2 && rod->y1 <= rod->y2);
     bool x1Infinite = rod->x1 <= kOfxFlagInfiniteMin;
     bool y1Infinite = rod->y1 <= kOfxFlagInfiniteMin;
@@ -1251,16 +1356,21 @@ EffectInstance::ifInfiniteApplyHeuristic(U64 hash,
         // initialize with the effect's default RoD, because inputs may not be connected to other effects (e.g. Roto)
         calcDefaultRegionOfDefinition(hash, time, scale, view, &inputsUnion);
         bool firstInput = true;
+
         for (int i = 0; i < getNInputs(); ++i) {
             EffectInstancePtr input = getInput(i);
+
             if (input) {
                 RectD inputRod;
                 bool isProjectFormat;
                 RenderScale inputScale = scale;
+
                 if (input->supportsRenderScaleMaybe() == eSupportsNo) {
                     inputScale = RenderScale::identity;
                 }
+
                 StatusEnum st = input->getRegionOfDefinition_public(hash, time, inputScale, view, &inputRod, &isProjectFormat);
+
                 if (st != eStatusFailed) {
                     if (firstInput) {
                         inputsUnion = inputRod;
@@ -1272,6 +1382,7 @@ EffectInstance::ifInfiniteApplyHeuristic(U64 hash,
             }
         }
     }
+
     ///If infinite : clip to inputsUnion if not null, otherwise to project default
 
 
@@ -1288,45 +1399,55 @@ EffectInstance::ifInfiniteApplyHeuristic(U64 hash,
     // BE CAREFUL:
     // std::numeric_limits<int>::infinity() does not exist (check std::numeric_limits<int>::has_infinity)
     bool isProjectFormat = false;
+
     if (x1Infinite) {
-        if ( !inputsUnion.isNull() ) {
+        if (!inputsUnion.isNull()) {
             rod->x1 = std::min(inputsUnion.x1, canonicalFormat.x1);
         } else {
             rod->x1 = canonicalFormat.x1;
             isProjectFormat = true;
         }
+
         rod->x2 = std::max(rod->x1, rod->x2);
     }
+
     if (y1Infinite) {
-        if ( !inputsUnion.isNull() ) {
+        if (!inputsUnion.isNull()) {
             rod->y1 = std::min(inputsUnion.y1, canonicalFormat.y1);
         } else {
             rod->y1 = canonicalFormat.y1;
             isProjectFormat = true;
         }
+
         rod->y2 = std::max(rod->y1, rod->y2);
     }
+
     if (x2Infinite) {
-        if ( !inputsUnion.isNull() ) {
+        if (!inputsUnion.isNull()) {
             rod->x2 = std::max(inputsUnion.x2, canonicalFormat.x2);
         } else {
             rod->x2 = canonicalFormat.x2;
             isProjectFormat = true;
         }
+
         rod->x1 = std::min(rod->x1, rod->x2);
     }
+
     if (y2Infinite) {
-        if ( !inputsUnion.isNull() ) {
+        if (!inputsUnion.isNull()) {
             rod->y2 = std::max(inputsUnion.y2, canonicalFormat.y2);
         } else {
             rod->y2 = canonicalFormat.y2;
             isProjectFormat = true;
         }
+
         rod->y1 = std::min(rod->y1, rod->y2);
     }
-    if ( isProjectFormat && !isGenerator() ) {
+
+    if (isProjectFormat && !isGenerator()) {
         isProjectFormat = false;
     }
+
     assert(rod->x1 <= rod->x2 && rod->y1 <= rod->y2);
 
     return isProjectFormat;
@@ -1344,19 +1465,22 @@ EffectInstance::getRegionsOfInterest(double time,
 
     for (int i = 0; i < getNInputs(); ++i) {
         EffectInstancePtr input = getInput(i);
+
         if (input) {
             if (tilesSupported) {
-                ret->insert( std::make_pair(input, renderWindow) );
+                ret->insert(std::make_pair(input, renderWindow));
             } else {
                 //Tiles not supported: get the RoD as RoI
                 RectD rod;
                 bool isPF;
                 RenderScale inpScale = (input->supportsRenderScale() ? scale : RenderScale::identity);
                 StatusEnum stat = input->getRegionOfDefinition_public(input->getRenderHash(), time, inpScale, view, &rod, &isPF);
+
                 if (stat == eStatusFailed) {
                     return;
                 }
-                ret->insert( std::make_pair(input, rod) );
+
+                ret->insert(std::make_pair(input, rod));
             }
         }
     }
@@ -1373,14 +1497,16 @@ EffectInstance::getFramesNeeded(double time,
     std::vector<RangeD> ranges;
     ranges.push_back(defaultRange);
     FrameRangesMap defViewRange;
-    defViewRange.insert( std::make_pair(view, ranges) );
+    defViewRange.insert(std::make_pair(view, ranges));
+
     for (int i = 0; i < getNInputs(); ++i) {
-        if ( isInputRotoBrush(i) ) {
-            ret.insert( std::make_pair(i, defViewRange) );
+        if (isInputRotoBrush(i)) {
+            ret.insert(std::make_pair(i, defViewRange));
         } else {
             EffectInstancePtr input = getInput(i);
+
             if (input) {
-                ret.insert( std::make_pair(i, defViewRange) );
+                ret.insert(std::make_pair(i, defViewRange));
             }
         }
     }
@@ -1395,11 +1521,14 @@ EffectInstance::getFrameRange(double *first,
     // default is infinite if there are no non optional input clips
     *first = std::numeric_limits<int>::min();
     *last = std::numeric_limits<int>::max();
+
     for (int i = 0; i < getNInputs(); ++i) {
         EffectInstancePtr input = getInput(i);
+
         if (input) {
             double inpFirst, inpLast;
             input->getFrameRange(&inpFirst, &inpLast);
+
             if (i == 0) {
                 *first = inpFirst;
                 *last = inpLast;
@@ -1407,6 +1536,7 @@ EffectInstance::getFrameRange(double *first,
                 if (inpFirst < *first) {
                     *first = inpFirst;
                 }
+
                 if (inpLast > *last) {
                     *last = inpLast;
                 }
@@ -1423,8 +1553,10 @@ EffectInstance::NotifyRenderingStarted_RAII::NotifyRenderingStarted_RAII(Node* n
 
     // If the node is in a group, notify also the group
     NodeCollectionPtr group = node->getGroup();
+
     if (group) {
-        NodeGroup* isGroupNode = dynamic_cast<NodeGroup*>(group.get());
+        NodeGroup* isGroupNode = dynamic_cast<NodeGroup *>(group.get());
+
         if (isGroupNode) {
             _didGroupEmit = isGroupNode->getNode()->notifyRenderingStarted();
         }
@@ -1436,10 +1568,13 @@ EffectInstance::NotifyRenderingStarted_RAII::~NotifyRenderingStarted_RAII()
     if (_didEmit) {
         _node->notifyRenderingEnded();
     }
+
     if (_didGroupEmit) {
         NodeCollectionPtr group = _node->getGroup();
+
         if (group) {
-            NodeGroup* isGroupNode = dynamic_cast<NodeGroup*>(group.get());
+            NodeGroup* isGroupNode = dynamic_cast<NodeGroup *>(group.get());
+
             if (isGroupNode) {
                 isGroupNode->getNode()->notifyRenderingEnded();
             }
@@ -1448,7 +1583,7 @@ EffectInstance::NotifyRenderingStarted_RAII::~NotifyRenderingStarted_RAII()
 }
 
 EffectInstance::NotifyInputNRenderingStarted_RAII::NotifyInputNRenderingStarted_RAII(Node* node,
-                                                                                     int inputNumber)
+        int inputNumber)
     : _node(node)
     , _inputNumber(inputNumber)
 {
@@ -1471,9 +1606,9 @@ getOrCreateFromCacheInternal(const ImageKey & key,
     if (!useCache) {
         *image = std::make_shared<Image>(key, params);
     } else {
-        assert(params->getStorageInfo().mode != eStorageModeGLTex);
 
-        if (params->getStorageInfo().mode == eStorageModeRAM) {
+
+        if (params->getStorageInfo().mode == eStorageModeRAM || params->getStorageInfo().mode == eStorageModeVulkan) {
             appPTR->getImageOrCreate(key, params, image);
         } else if (params->getStorageInfo().mode == eStorageModeDisk) {
             appPTR->getImageOrCreate_diskCache(key, params, image);
@@ -1485,7 +1620,7 @@ getOrCreateFromCacheInternal(const ImageKey & key,
             const CacheEntryStorageInfo& info = params->getStorageInfo();
             std::size_t size = info.dataTypeSize * info.numComponents * info.bounds.area();
             ss << printAsRAM(size).toStdString();
-            Dialogs::errorDialog( QCoreApplication::translate("EffectInstance", "Out of memory").toStdString(), ss.str() );
+            Dialogs::errorDialog(QCoreApplication::translate("EffectInstance", "Out of memory").toStdString(), ss.str());
 
             return;
         }
@@ -1503,142 +1638,42 @@ getOrCreateFromCacheInternal(const ImageKey & key,
          */
 
 
-        (*image)->ensureBounds( params->getBounds() );
+        (*image)->ensureBounds(params->getBounds());
     }
 }
 
-ImagePtr
-EffectInstance::convertOpenGLTextureToCachedRAMImage(const ImagePtr& image)
-{
-    assert(image->getStorageMode() == eStorageModeGLTex);
 
-    ImageParamsPtr params = std::make_shared<ImageParams>( *image->getParams() );
-    CacheEntryStorageInfo& info = params->getStorageInfo();
-    info.mode = eStorageModeRAM;
-
-    ImagePtr ramImage;
-    getOrCreateFromCacheInternal(image->getKey(), params, true /*useCache*/, &ramImage);
-    if (!ramImage) {
-        return ramImage;
-    }
-
-    OSGLContextPtr context = getThreadLocalOpenGLContext();
-    assert(context);
-    if (!context) {
-        throw std::runtime_error("No OpenGL context attached");
-    }
-
-    ramImage->pasteFrom(*image, image->getBounds(), false, context);
-    ramImage->markForRendered(image->getBounds());
-
-    return ramImage;
-}
-
-ImagePtr
-EffectInstance::convertRAMImageToOpenGLTexture(const ImagePtr& image)
-{
-    assert(image->getStorageMode() != eStorageModeGLTex);
-
-    ImageParamsPtr params = std::make_shared<ImageParams>( *image->getParams() );
-    CacheEntryStorageInfo& info = params->getStorageInfo();
-    info.mode = eStorageModeGLTex;
-    info.textureTarget = GL_TEXTURE_2D;
-
-    RectI bounds = image->getBounds();
-    OSGLContextPtr context = getThreadLocalOpenGLContext();
-    assert(context);
-    if (!context) {
-        throw std::runtime_error("No OpenGL context attached");
-    }
-
-    GLuint pboID = context->getPBOId();
-    assert(pboID != 0);
-    glEnable(GL_TEXTURE_2D);
-    // bind PBO to update texture source
-    glBindBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB, pboID);
-
-    std::size_t dataSize = bounds.area() * 4 * info.dataTypeSize;
-
-    // Note that glMapBufferARB() causes sync issue.
-    // If GPU is working with this buffer, glMapBufferARB() will wait(stall)
-    // until GPU to finish its job. To avoid waiting (idle), you can call
-    // first glBufferDataARB() with NULL pointer before glMapBufferARB().
-    // If you do that, the previous data in PBO will be discarded and
-    // glMapBufferARB() returns a new allocated pointer immediately
-    // even if GPU is still working with the previous data.
-    glBufferDataARB(GL_PIXEL_UNPACK_BUFFER_ARB, dataSize, 0, GL_DYNAMIC_DRAW_ARB);
-
-    bool useTmpImage = image->getComponentsCount() != 4;
-    ImagePtr tmpImg;
-    if (useTmpImage) {
-#ifdef BOOST_NO_CXX11_VARIADIC_TEMPLATES
-        tmpImg.reset( new Image( ImagePlaneDesc::getRGBAComponents(), image->getRoD(), bounds, 0, image->getPixelAspectRatio(), image->getBitDepth(), image->getPremultiplication(), image->getFieldingOrder(), false, eStorageModeRAM) );
-#else
-        tmpImg = std::make_shared<Image>( ImagePlaneDesc::getRGBAComponents(), image->getRoD(), bounds, 0, image->getPixelAspectRatio(), image->getBitDepth(), image->getPremultiplication(), image->getFieldingOrder(), false, eStorageModeRAM);
-#endif
-        tmpImg->setKey(image->getKey());
-        if (tmpImg->getComponents() == image->getComponents()) {
-            tmpImg->pasteFrom(*image, bounds);
-        } else {
-            image->convertToFormat(bounds, eViewerColorSpaceLinear, eViewerColorSpaceLinear, -1, false, false, tmpImg.get());
-        }
-    }
-
-    Image::ReadAccess racc( tmpImg ? tmpImg.get() : image.get() );
-    const unsigned char* srcdata = racc.pixelAt(bounds.x1, bounds.y1);
-    assert(srcdata);
-
-    GLvoid* gpuData = glMapBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB, GL_WRITE_ONLY_ARB);
-    if (gpuData) {
-            // update data directly on the mapped buffer
-        memcpy(gpuData, srcdata, dataSize);
-        GLboolean result = glUnmapBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB); // release the mapped buffer
-        assert(result == GL_TRUE);
-        Q_UNUSED(result);
-    }
-    glCheckError();
-
-    // The creation of the image will use glTexImage2D and will get filled with the PBO
-    ImagePtr gpuImage;
-    getOrCreateFromCacheInternal(image->getKey(), params, false /*useCache*/, &gpuImage);
-
-    // it is good idea to release PBOs with ID 0 after use.
-    // Once bound with 0, all pixel operations are back to normal ways.
-    glBindBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
-    //glBindTexture(GL_TEXTURE_2D, 0); // useless, we didn't bind anything
-    glCheckError();
-
-
-    return gpuImage;
-} // convertRAMImageToOpenGLTexture
+// convertRAMImageToOpenGLTexture
 
 void
 EffectInstance::getImageFromCacheAndConvertIfNeeded(bool /*useCache*/,
-                                                    StorageModeEnum storage,
-                                                    StorageModeEnum returnStorage,
-                                                    const ImageKey & key,
-                                                    unsigned int mipmapLevel,
-                                                    const RectI* boundsParam,
-                                                    const RectD* rodParam,
-                                                    const RectI& roi,
-                                                    ImageBitDepthEnum bitdepth,
-                                                    const ImagePlaneDesc & components,
-                                                    const EffectInstance::InputImagesMap & inputImages,
-                                                    const RenderStatsPtr & stats,
-                                                    const OSGLContextAttacherPtr& glContextAttacher,
-                                                    ImagePtr* image)
+        StorageModeEnum storage,
+        StorageModeEnum returnStorage,
+        const ImageKey & key,
+        unsigned int mipmapLevel,
+        const RectI* boundsParam,
+        const RectD* rodParam,
+        const RectI& roi,
+        ImageBitDepthEnum bitdepth,
+        const ImagePlaneDesc & components,
+        const EffectInstance::InputImagesMap & inputImages,
+        const RenderStatsPtr & stats,
+        ImagePtr* image,
+        const ImagePlaneDesc* returnComponents)
 {
     ImageList cachedImages;
     bool isCached = false;
 
     ///Find first something in the input images list
-    if ( !inputImages.empty() ) {
+    if (!inputImages.empty()) {
         for (InputImagesMap::const_iterator it = inputImages.begin(); it != inputImages.end(); ++it) {
             for (ImageList::const_iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-                if ( !it2->get() ) {
+                if (!it2->get()) {
                     continue;
                 }
+
                 const ImageKey & imgKey = (*it2)->getKey();
+
                 if (imgKey == key) {
                     cachedImages.push_back(*it2);
                     isCached = true;
@@ -1649,11 +1684,35 @@ EffectInstance::getImageFromCacheAndConvertIfNeeded(bool /*useCache*/,
 
     if (!isCached) {
         // For textures, we lookup for a RAM image, if found we convert it to a texture
-        if ( (storage == eStorageModeRAM) || (storage == eStorageModeGLTex) ) {
+        if ((storage == eStorageModeRAM) || storage == eStorageModeVulkan) {
             isCached = appPTR->getImage(key, &cachedImages);
         } else if (storage == eStorageModeDisk) {
             isCached = appPTR->getImage_diskCache(key, &cachedImages);
         }
+    }
+
+    if (isCached && returnStorage == eStorageModeVulkan) {
+        // Prefer the resident cache allocation over a CPU snapshot supplied by
+        // a downstream effect, so a native chain never uploads that snapshot.
+        ImageList residentImages;
+        appPTR->getImage(key, &residentImages);
+        cachedImages.splice(cachedImages.end(), residentImages);
+        cachedImages.sort([](const ImagePtr & a, const ImagePtr & b) {
+            return a->getStorageMode() == eStorageModeVulkan && b->getStorageMode() != eStorageModeVulkan;
+        });
+    } else if (isCached && returnStorage == eStorageModeRAM) {
+        // Reuse a prefetched CPU boundary snapshot before downloading another
+        // native candidate with the same key, including shared color/mask inputs.
+        cachedImages.sort([mipmapLevel](const ImagePtr & a, const ImagePtr & b) {
+            const bool aSnapshot = a->getStorageMode() == eStorageModeRAM && a->getMipmapLevel() == mipmapLevel;
+            const bool bSnapshot = b->getStorageMode() == eStorageModeRAM && b->getMipmapLevel() == mipmapLevel;
+
+            if (aSnapshot != bSnapshot) {
+                return aSnapshot;
+            }
+
+            return a->getStorageMode() == eStorageModeVulkan && b->getStorageMode() != eStorageModeVulkan;
+        });
     }
 
     if (stats && stats->isInDepthProfilingEnabled() && !isCached) {
@@ -1668,14 +1727,71 @@ EffectInstance::getImageFromCacheAndConvertIfNeeded(bool /*useCache*/,
             unsigned int imgMMlevel = (*it)->getMipmapLevel();
             const ImagePlaneDesc & imgComps = (*it)->getComponents();
             ImageBitDepthEnum imgDepth = (*it)->getBitDepth();
+            // A downstream CPU effect may already hold the exact component
+            // conversion of a completed native render. Reuse only its requested
+            // format; an RGB snapshot cannot satisfy a request that needs alpha.
+            const bool exactCpuSnapshot = returnStorage == eStorageModeRAM && (*it)->getStorageMode() == eStorageModeRAM &&
+                                          returnComponents && imgComps == *returnComponents && imgDepth == bitdepth;
 
-            if ( (*it)->getParams()->isRodProjectFormat() ) {
+            // Incomplete images must be completed on their original storage.
+            // A CPU render must never receive a native image with null CPU data.
+            if ((*it)->getStorageMode() == eStorageModeVulkan || storage == eStorageModeVulkan) {
+                const auto runtime = sharedVulkanImageContext();
+
+                if ((*it)->getStorageMode() == eStorageModeVulkan) {
+                    const auto& cachedContext = (*it)->getParams()->getStorageInfo().vulkanContext;
+                    if (!cachedContext || cachedContext != runtime || cachedContext->device()->lost()) {
+                        // Check before allocateMemory(): an unpublished/partial
+                        // entry may still refer to the retired allocator.
+                        continue;
+                    }
+                    // Cache entries are published before their allocation. A
+                    // concurrent Viewer render may find one in that interval.
+                    // allocateMemory() serializes allocation with the entry lock.
+                    (*it)->allocateMemory();
+
+                    if (!(*it)->isAllocated() || (*it)->getVulkanImage()->context() != runtime) {
+                        continue;
+                    }
+                }
+
+                if (imgMMlevel > mipmapLevel) {
+                    continue;
+                }
+
+                if ((*it)->getStorageMode() != storage || imgMMlevel < mipmapLevel) {
+                    std::list<RectI> missing;
+                    const RectI sourceRoi = imgMMlevel < mipmapLevel ? roi.upscalePowerOfTwo(mipmapLevel - imgMMlevel) : roi;
+                    const RectI needed = sourceRoi.intersect((*it)->getRoD().toPixelEnclosing(imgMMlevel, (*it)->getPixelAspectRatio()));
+                    (*it)->getRestToRender(needed, missing);
+
+                    if (!missing.empty() || !(*it)->getBounds().contains(needed)) {
+                        continue;
+                    }
+                }
+
+                if (storage == eStorageModeVulkan && !exactCpuSnapshot && (imgDepth != eImageBitDepthFloat || imgComps.getNumComponents() != 4)) {
+                    continue;
+                }
+
+                if (exactCpuSnapshot && storage == eStorageModeVulkan && imgComps.getNumComponents() != 4) {
+                    std::list<RectI> missing;
+                    (*it)->getRestToRender((*it)->getBounds(), missing);
+
+                    if (!missing.empty()) {
+                        continue;
+                    }
+                }
+            }
+
+            if ((*it)->getParams()->isRodProjectFormat()) {
                 ////If the image was cached with a RoD dependent on the project format, but the project format changed,
                 ////just discard this entry
                 Format projectFormat;
                 getApp()->getProject()->getProjectDefaultFormat(&projectFormat);
                 const RectD canonicalProject = projectFormat.toCanonicalFormat();
-                if ( canonicalProject != (*it)->getRoD() ) {
+
+                if (canonicalProject != (*it)->getRoD()) {
                     appPTR->removeFromNodeCache(*it);
                     continue;
                 }
@@ -1692,15 +1808,33 @@ EffectInstance::getImageFromCacheAndConvertIfNeeded(bool /*useCache*/,
             }*/
 
             bool convertible = (imgComps.isColorPlane() && components.isColorPlane()) || (imgComps == components);
-            if ( (imgMMlevel == mipmapLevel) && convertible &&
-                 ( getSizeOfForBitDepth(imgDepth) >= getSizeOfForBitDepth(bitdepth) ) /* && imgComps == components && imgDepth == bitdepth*/ ) {
+
+            if ((imgMMlevel == mipmapLevel) && convertible &&
+                (getSizeOfForBitDepth(imgDepth) >= getSizeOfForBitDepth(bitdepth)) /* && imgComps == components && imgDepth == bitdepth*/) {
                 ///We found  a matching image
 
                 *image = *it;
+
+                if (storage == eStorageModeVulkan || (*image)->getStorageMode() == eStorageModeVulkan) {
+                    // Exact CPU component snapshots stay on RAM: RGB/Alpha
+                    // snapshots cannot be promoted to RGBA-only native storage.
+                    StorageModeEnum targetStorage = storage == eStorageModeVulkan && !exactCpuSnapshot ? eStorageModeVulkan : eStorageModeRAM;
+                    std::list<RectI> missing;
+                    const RectI needed = roi.intersect((*image)->getRoD().toPixelEnclosing(mipmapLevel, (*image)->getPixelAspectRatio()));
+                    (*image)->getRestToRender(needed, missing);
+
+                    if (missing.empty() && (*image)->getBounds().contains(needed) &&
+                        (returnStorage == eStorageModeRAM || (returnStorage == eStorageModeVulkan && imgDepth == eImageBitDepthFloat && imgComps.getNumComponents() == 4))) {
+                        targetStorage = returnStorage;
+                    }
+
+                    *image = Image::convertToStorage(*image, targetStorage, sharedVulkanImageContext());
+                }
+
                 break;
             } else {
-                if ( (*it)->getStorageMode() != eStorageModeRAM || (imgMMlevel >= mipmapLevel) || !convertible ||
-                     ( getSizeOfForBitDepth(imgDepth) < getSizeOfForBitDepth(bitdepth) ) ) {
+                if (((*it)->getStorageMode() != eStorageModeRAM && (*it)->getStorageMode() != eStorageModeVulkan) || (imgMMlevel >= mipmapLevel) || !convertible ||
+                    (getSizeOfForBitDepth(imgDepth) < getSizeOfForBitDepth(bitdepth))) {
                     ///Either smaller resolution or not enough components or bit-depth is not as deep, don't use the image
                     continue;
                 }
@@ -1711,7 +1845,7 @@ EffectInstance::getImageFromCacheAndConvertIfNeeded(bool /*useCache*/,
                     imageToConvert = *it;
                 } else {
                     ///We found an image which scale is closer to the requested mipmap level we want, use it instead
-                    if ( imgMMlevel > imageToConvert->getMipmapLevel() ) {
+                    if (imgMMlevel > imageToConvert->getMipmapLevel()) {
                         imageToConvert = *it;
                     }
                 }
@@ -1741,20 +1875,24 @@ EffectInstance::getImageFromCacheAndConvertIfNeeded(bool /*useCache*/,
                 }
 
                 ImageParamsPtr imageParams = Image::makeParams(rod,
-                                                                               downscaledBounds,
-                                                                               oldParams->getPixelAspectRatio(),
-                                                                               mipmapLevel,
-                                                                               oldParams->isRodProjectFormat(),
-                                                                               oldParams->getComponents(),
-                                                                               oldParams->getBitDepth(),
-                                                                               oldParams->getPremultiplication(),
-                                                                               oldParams->getFieldingOrder(),
-                                                                               eStorageModeRAM);
+                                             downscaledBounds,
+                                             oldParams->getPixelAspectRatio(),
+                                             mipmapLevel,
+                                             oldParams->isRodProjectFormat(),
+                                             oldParams->getComponents(),
+                                             oldParams->getBitDepth(),
+                                             oldParams->getPremultiplication(),
+                                             oldParams->getFieldingOrder(),
+                                             imageToConvert->getStorageMode() == eStorageModeVulkan ? eStorageModeVulkan : eStorageModeRAM);
 
+                if (imageToConvert->getStorageMode() == eStorageModeVulkan) {
+                    imageParams->getStorageInfo().vulkanContext = imageToConvert->getVulkanImage()->context();
+                }
 
 
                 ImagePtr img;
                 getOrCreateFromCacheInternal(key, imageParams, imageToConvert->usesBitMap(), &img);
+
                 if (!img) {
                     return;
                 }
@@ -1772,75 +1910,47 @@ EffectInstance::getImageFromCacheAndConvertIfNeeded(bool /*useCache*/,
                 dstRoi = dstRoi.upscalePowerOfTwo(downscaleLevels);
                 dstRoi.clipIfOverlaps(imgToConvertBounds);
 
-                if (imgToConvertBounds.area() > 1) {
-                    imageToConvert->downscaleMipmap( rod,
-                                                     dstRoi,
-                                                     imageToConvert->getMipmapLevel(), img->getMipmapLevel(),
-                                                     imageToConvert->usesBitMap(),
-                                                     img.get() );
-                } else {
-                    img->pasteFrom(*imageToConvert, imgToConvertBounds);
+                if (!dstRoi.isNull()) {
+                    imageToConvert->downscaleMipmap(rod,
+                                                    dstRoi,
+                                                    imageToConvert->getMipmapLevel(), img->getMipmapLevel(),
+                                                    imageToConvert->usesBitMap(),
+                                                    img.get());
                 }
 
                 imageToConvert = img;
             }
 
-            if (storage == eStorageModeGLTex) {
+            *image = imageToConvert;
 
-                // When using the GPU, we don't want to retrieve partially rendered image because rendering the portion
-                // needed then reading it back to put it in the CPU image would take much more effort than just computing
-                // the GPU image.
-                std::list<RectI> restToRender;
-                imageToConvert->getRestToRender(roi, restToRender);
-                if ( restToRender.empty() ) {
-                    if (returnStorage == eStorageModeGLTex) {
-                        assert(glContextAttacher);
-                        glContextAttacher->attach();
-                        *image = convertRAMImageToOpenGLTexture(imageToConvert);
-                    } else {
-                        assert(returnStorage == eStorageModeRAM && (imageToConvert->getStorageMode() == eStorageModeRAM || imageToConvert->getStorageMode() == eStorageModeDisk));
-                        // If renderRoI must return a RAM image, don't convert it back again!
-                        *image = imageToConvert;
-                    }
+            if (storage == eStorageModeVulkan || imageToConvert->getStorageMode() == eStorageModeVulkan) {
+                std::list<RectI> missing;
+                imageToConvert->getRestToRender(roi, missing);
+                const RectI needed = roi.intersect(imageToConvert->getRoD().toPixelEnclosing(mipmapLevel, imageToConvert->getPixelAspectRatio()));
+
+                if (missing.empty() && imageToConvert->getBounds().contains(needed)) {
+                    *image = Image::convertToStorage(imageToConvert, returnStorage, sharedVulkanImageContext());
+                } else if (imageToConvert->getStorageMode() != storage) {
+                    image->reset();
+                    return;
                 }
-            } else {
-                *image = imageToConvert;
             }
+
+
             //assert(imageToConvert->getBounds().contains(bounds));
-            if ( stats && stats->isInDepthProfilingEnabled() ) {
+            if (stats && stats->isInDepthProfilingEnabled()) {
                 stats->addCacheInfosForNode(getNode(), false, true);
             }
         } else if (*image) { //  else if (imageToConvert && !*image)
             ///Ensure the image is allocated
-            if ( (*image)->getStorageMode() != eStorageModeGLTex ) {
-                (*image)->allocateMemory();
+            (*image)->allocateMemory();
 
-                if (storage == eStorageModeGLTex) {
 
-                    // When using the GPU, we don't want to retrieve partially rendered image because rendering the portion
-                    // needed then reading it back to put it in the CPU image would take much more effort than just computing
-                    // the GPU image.
-                    std::list<RectI> restToRender;
-                    (*image)->getRestToRender(roi, restToRender);
-                    if ( restToRender.empty() ) {
-                        // If renderRoI must return a RAM image, don't convert it back again!
-                        if (returnStorage == eStorageModeGLTex) {
-                            assert(glContextAttacher);
-                            glContextAttacher->attach();
-                            *image = convertRAMImageToOpenGLTexture(*image);
-                        }
-                    } else {
-                        image->reset();
-                        return;
-                    }
-                }
-            }
-
-            if ( stats && stats->isInDepthProfilingEnabled() ) {
+            if (stats && stats->isInDepthProfilingEnabled()) {
                 stats->addCacheInfosForNode(getNode(), false, false);
             }
         } else {
-            if ( stats && stats->isInDepthProfilingEnabled() ) {
+            if (stats && stats->isInDepthProfilingEnabled()) {
                 stats->addCacheInfosForNode(getNode(), true, false);
             }
         }
@@ -1849,10 +1959,10 @@ EffectInstance::getImageFromCacheAndConvertIfNeeded(bool /*useCache*/,
 
 void
 EffectInstance::tryConcatenateTransforms(double time,
-                                         bool draftRender,
-                                         ViewIdx view,
-                                         const RenderScale & scale,
-                                         InputMatrixMap* inputTransforms)
+        bool draftRender,
+        ViewIdx view,
+        const RenderScale & scale,
+        InputMatrixMap* inputTransforms)
 {
     bool canTransform = getNode()->getCurrentCanTransform();
 
@@ -1871,18 +1981,21 @@ EffectInstance::tryConcatenateTransforms(double time,
          * If getting the transform does not succeed, then this effect is treated as any other ones.
          */
         StatusEnum stat = getTransform_public(time, scale, draftRender, view, &inputToTransform, &thisNodeTransform);
+
         if (stat == eStatusOK) {
             getTransformSucceeded = true;
         }
     }
 
 
-    if ( (canTransform && getTransformSucceeded) || ( !canTransform && canApplyTransform && !inputHoldingTransforms.empty() ) ) {
+    if ((canTransform && getTransformSucceeded) || (!canTransform && canApplyTransform && !inputHoldingTransforms.empty())) {
         for (std::list<int>::iterator it = inputHoldingTransforms.begin(); it != inputHoldingTransforms.end(); ++it) {
             EffectInstancePtr input = getInput(*it);
+
             if (!input) {
                 continue;
             }
+
             std::list<Transform::Matrix3x3> matricesByOrder; // from downstream to upstream
             InputMatrix im;
             im.newInputEffect = input;
@@ -1898,12 +2011,13 @@ EffectInstance::tryConcatenateTransforms(double time,
             }
 
 
-            while ( input && (inputCanTransform || inputIsDisabled) ) {
+            while (input && (inputCanTransform || inputIsDisabled)) {
                 //input is either disabled, or identity or can concatenate a transform too
                 if (inputIsDisabled) {
                     int prefInput;
                     input = input->getNearestNonDisabled();
                     prefInput = input ? input->getNode()->getPreferredInput() : -1;
+
                     if (prefInput == -1) {
                         break;
                     }
@@ -1916,10 +2030,12 @@ EffectInstance::tryConcatenateTransforms(double time,
                     Transform::Matrix3x3 m;
                     inputToTransform.reset();
                     StatusEnum stat = input->getTransform_public(time, scale, draftRender, view, &inputToTransform, &m);
+
                     if (stat == eStatusOK) {
                         matricesByOrder.push_back(m);
+
                         if (inputToTransform) {
-                            im.newInputNbToFetchFrom = input->getInputNumber( inputToTransform.get() );
+                            im.newInputNbToFetchFrom = input->getInputNumber(inputToTransform.get());
                             im.newInputEffect = input;
                             input = inputToTransform;
                         }
@@ -1932,26 +2048,28 @@ EffectInstance::tryConcatenateTransforms(double time,
 
                 if (input) {
                     inputIsDisabled = input->getNode()->isNodeDisabled();
+
                     if (!inputIsDisabled) {
                         inputCanTransform = input->getNode()->getCurrentCanTransform();
                     }
                 }
             }
 
-            if ( input && !matricesByOrder.empty() ) {
+            if (input && !matricesByOrder.empty()) {
                 assert(im.newInputEffect);
 
                 ///Now actually concatenate matrices together
-                im.cat= std::make_shared<Transform::Matrix3x3>();
+                im.cat = std::make_shared<Transform::Matrix3x3>();
                 std::list<Transform::Matrix3x3>::iterator it2 = matricesByOrder.begin();
                 *im.cat = *it2;
                 ++it2;
-                while ( it2 != matricesByOrder.end() ) {
+
+                while (it2 != matricesByOrder.end()) {
                     *im.cat = Transform::matMul(*im.cat, *it2);
                     ++it2;
                 }
 
-                inputTransforms->insert( std::make_pair(*it, im) );
+                inputTransforms->insert(std::make_pair(*it, im));
             }
         } //  for (std::list<int>::iterator it = inputHoldingTransforms.begin(); it != inputHoldingTransforms.end(); ++it)
     } // if ((canTransform && getTransformSucceeded) || (canApplyTransform && !inputHoldingTransforms.empty()))
@@ -1978,18 +2096,35 @@ EffectInstance::allocateImagePlane(const ImageKey & key,
     //If we're rendering full scale and with input images at full scale, don't cache the downscale image since it is cheap to
     //recreate, instead cache the full-scale image
     if (renderFullScaleThenDownscale) {
-        *downscaleImage = std::make_shared<Image>(components, rod, downscaleImageBounds, mipmapLevel, par, depth, premult, fielding, true);
+        if (storage == eStorageModeVulkan) {
+            auto params = Image::makeParams(rod, downscaleImageBounds, par, mipmapLevel, isProjectFormat,
+                                            components, depth, premult, fielding, storage);
+            params->getStorageInfo().vulkanContext = sharedVulkanImageContext();
+            *downscaleImage = std::make_shared<Image>(key, params, nullptr);
+            (*downscaleImage)->allocateMemory();
+        } else {
+            *downscaleImage = std::make_shared<Image>(components, rod, downscaleImageBounds, mipmapLevel, par, depth, premult, fielding, true);
+            // Prefetched proxy images must retain their render key so clipGetImage
+            // can reuse a completed CPU/Reader boundary snapshot.
+            (*downscaleImage)->setKey(key);
+        }
+
         ImageParamsPtr upscaledImageParams = Image::makeParams(rod,
-                                                                               fullScaleImageBounds,
-                                                                               par,
-                                                                               0,
-                                                                               isProjectFormat,
-                                                                               components,
-                                                                               depth,
-                                                                               premult,
-                                                                               fielding,
-                                                                               storage,
-                                                                               GL_TEXTURE_2D);
+                                             fullScaleImageBounds,
+                                             par,
+                                             0,
+                                             isProjectFormat,
+                                             components,
+                                             depth,
+                                             premult,
+                                             fielding,
+                                             storage,
+                                             0);
+
+        if (storage == eStorageModeVulkan) {
+            upscaledImageParams->getStorageInfo().vulkanContext = sharedVulkanImageContext();
+        }
+
         //The upscaled image will be rendered with input images at full def, it is then the best possibly rendered image so cache it!
 
         fullScaleImage->reset();
@@ -2001,16 +2136,20 @@ EffectInstance::allocateImagePlane(const ImageKey & key,
     } else {
         ///Cache the image with the requested components instead of the remapped ones
         ImageParamsPtr cachedImgParams = Image::makeParams(rod,
-                                                                           downscaleImageBounds,
-                                                                           par,
-                                                                           mipmapLevel,
-                                                                           isProjectFormat,
-                                                                           components,
-                                                                           depth,
-                                                                           premult,
-                                                                           fielding,
-                                                                           storage,
-                                                                           GL_TEXTURE_2D);
+                                         downscaleImageBounds,
+                                         par,
+                                         mipmapLevel,
+                                         isProjectFormat,
+                                         components,
+                                         depth,
+                                         premult,
+                                         fielding,
+                                         storage,
+                                         0);
+
+        if (storage == eStorageModeVulkan) {
+            cachedImgParams->getStorageInfo().vulkanContext = sharedVulkanImageContext();
+        }
 
         //Take the lock after getting the image from the cache or while allocating it
         ///to make sure a thread will not attempt to write to the image while its being allocated.
@@ -2018,9 +2157,11 @@ EffectInstance::allocateImagePlane(const ImageKey & key,
         ///so taking this lock now ensures the image will be allocated completely
 
         getOrCreateFromCacheInternal(key, cachedImgParams, createInCache, downscaleImage);
+
         if (!*downscaleImage) {
             return false;
         }
+
         *fullScaleImage = *downscaleImage;
     }
 
@@ -2033,11 +2174,12 @@ EffectInstance::transformInputRois(const EffectInstance* self,
                                    double par,
                                    const RenderScale & scale,
                                    RoIMap* inputsRoi,
-                                   std::map<int, EffectInstancePtr>* reroutesMap)
+                                   std::map<int, EffectInstancePtr> *reroutesMap)
 {
     if (!inputTransforms) {
         return;
     }
+
     //Transform the RoIs by the inverse of the transform matrix (which is in pixel coordinates)
     for (InputMatrixMap::const_iterator it = inputTransforms->begin(); it != inputTransforms->end(); ++it) {
         RectD transformedRenderWindow;
@@ -2046,7 +2188,8 @@ EffectInstance::transformInputRois(const EffectInstance* self,
 
 
         RoIMap::iterator foundRoI = inputsRoi->find(effectInTransformInput);
-        if ( foundRoI == inputsRoi->end() ) {
+
+        if (foundRoI == inputsRoi->end()) {
             //There might be no RoI because it was null
             continue;
         }
@@ -2054,23 +2197,24 @@ EffectInstance::transformInputRois(const EffectInstance* self,
         // invert it
         Transform::Matrix3x3 invertTransform;
         double det = Transform::matDeterminant(*it->second.cat);
+
         if (det != 0.) {
             invertTransform = Transform::matInverse(*it->second.cat, det);
         }
 
         const auto scalePt = scale.toOfxPointD();
         Transform::Matrix3x3 canonicalToPixel = Transform::matCanonicalToPixel(par, scalePt.x,
-                                                                               scalePt.y, false);
+                                                scalePt.y, false);
         Transform::Matrix3x3 pixelToCanonical = Transform::matPixelToCanonical(par,  scalePt.x,
-                                                                               scalePt.y, false);
+                                                scalePt.y, false);
 
         invertTransform = Transform::matMul(Transform::matMul(pixelToCanonical, invertTransform), canonicalToPixel);
         Transform::transformRegionFromRoD(foundRoI->second, invertTransform, transformedRenderWindow);
 
         //Replace the original RoI by the transformed RoI
         inputsRoi->erase(foundRoI);
-        inputsRoi->insert( std::make_pair(it->second.newInputEffect->getInput(it->second.newInputNbToFetchFrom), transformedRenderWindow) );
-        reroutesMap->insert( std::make_pair(it->first, it->second.newInputEffect) );
+        inputsRoi->insert(std::make_pair(it->second.newInputEffect->getInput(it->second.newInputNbToFetchFrom), transformedRenderWindow));
+        reroutesMap->insert(std::make_pair(it->first, it->second.newInputEffect));
     }
 }
 
@@ -2095,11 +2239,14 @@ EffectInstance::renderInputImagesForRoI(const FrameViewRequest* request,
     if (!request) {
         getRegionsOfInterest_public(time, renderMappedScale, rod, canonicalRenderWindow, view, inputsRoi);
     }
+
 #ifdef DEBUG
-    if ( !inputsRoi->empty() && framesNeeded.empty() && !isReader() && !isRotoPaintNode() ) {
+
+    if (!inputsRoi->empty() && framesNeeded.empty() && !isReader() && !isRotoPaintNode()) {
         qDebug() << getNode()->getScriptName_mt_safe().c_str() << ": getRegionsOfInterestAction returned 1 or multiple input RoI(s) but returned "
                  << "an empty list with getFramesNeededAction";
     }
+
 #endif
 
 
@@ -2123,8 +2270,8 @@ EffectInstance::renderInputImagesForRoI(const FrameViewRequest* request,
 
 EffectInstance::RenderingFunctorRetEnum
 EffectInstance::Implementation::tiledRenderingFunctor(EffectInstance::Implementation::TiledRenderingFunctorArgs & args,
-                                                      const RectToRender & specificData,
-                                                      QThread* callingThread)
+        const RectToRender & specificData,
+        QThread* callingThread)
 {
     ///Make the thread-storage live as long as the render action is called if we're in a newly launched thread in eRenderSafetyFullySafeFrame mode
     QThread* curThread = QThread::currentThread();
@@ -2138,24 +2285,24 @@ EffectInstance::Implementation::tiledRenderingFunctor(EffectInstance::Implementa
 
 
     EffectInstance::RenderingFunctorRetEnum ret = tiledRenderingFunctor(specificData,
-                                                                        args.renderFullScaleThenDownscale,
-                                                                        args.isSequentialRender,
-                                                                        args.isRenderResponseToUserInteraction,
-                                                                        args.firstFrame,
-                                                                        args.lastFrame,
-                                                                        args.preferredInput,
-                                                                        args.mipmapLevel,
-                                                                        args.renderMappedMipmapLevel,
-                                                                        args.rod,
-                                                                        args.time,
-                                                                        args.view,
-                                                                        args.par,
-                                                                        args.byPassCache,
-                                                                        args.outputClipPrefDepth,
-                                                                        args.outputClipPrefsComps,
-                                                                        args.compsNeeded,
-                                                                        args.processChannels,
-                                                                        args.planes);
+        args.renderFullScaleThenDownscale,
+        args.isSequentialRender,
+        args.isRenderResponseToUserInteraction,
+        args.firstFrame,
+        args.lastFrame,
+        args.preferredInput,
+        args.mipmapLevel,
+        args.renderMappedMipmapLevel,
+        args.rod,
+        args.time,
+        args.view,
+        args.par,
+        args.byPassCache,
+        args.outputClipPrefDepth,
+        args.outputClipPrefsComps,
+        args.compsNeeded,
+        args.processChannels,
+        args.planes);
 
     //Exit of the host frame threading thread
     appPTR->getAppTLS()->cleanupTLSForThread();
@@ -2165,24 +2312,24 @@ EffectInstance::Implementation::tiledRenderingFunctor(EffectInstance::Implementa
 
 EffectInstance::RenderingFunctorRetEnum
 EffectInstance::Implementation::tiledRenderingFunctor(const RectToRender & rectToRender,
-                                                      const bool renderFullScaleThenDownscale,
-                                                      const bool isSequentialRender,
-                                                      const bool isRenderResponseToUserInteraction,
-                                                      const int firstFrame,
-                                                      const int lastFrame,
-                                                      const int preferredInput,
-                                                      const unsigned int mipmapLevel,
-                                                      const unsigned int renderMappedMipmapLevel,
-                                                      const RectD & rod,
-                                                      const double time,
-                                                      const ViewIdx view,
-                                                      const double par,
-                                                      const bool byPassCache,
-                                                      const ImageBitDepthEnum outputClipPrefDepth,
-                                                      const ImagePlaneDesc & outputClipPrefsComps,
-                                                      const ComponentsNeededMapPtr & compsNeeded,
-                                                      const std::bitset<4>& processChannels,
-                                                      const ImagePlanesToRenderPtr & planes) // when MT, planes is a copy so there's is no data race
+        const bool renderFullScaleThenDownscale,
+        const bool isSequentialRender,
+        const bool isRenderResponseToUserInteraction,
+        const int firstFrame,
+        const int lastFrame,
+        const int preferredInput,
+        const unsigned int mipmapLevel,
+        const unsigned int renderMappedMipmapLevel,
+        const RectD & rod,
+        const double time,
+        const ViewIdx view,
+        const double par,
+        const bool byPassCache,
+        const ImageBitDepthEnum outputClipPrefDepth,
+        const ImagePlaneDesc & outputClipPrefsComps,
+        const ComponentsNeededMapPtr & compsNeeded,
+        const std::bitset<4> &processChannels,
+        const ImagePlanesToRenderPtr & planes) // when MT, planes is a copy so there's is no data race
 {
     ///There cannot be the same thread running 2 concurrent instances of renderRoI on the same effect.
 #ifdef DEBUG
@@ -2193,7 +2340,7 @@ EffectInstance::Implementation::tiledRenderingFunctor(const RectToRender & rectT
 #endif
     EffectTLSDataPtr tls = tlsData->getOrCreateTLSData();
 
-    if ( rectToRender.rect.isNull() ) {
+    if (rectToRender.rect.isNull()) {
         // should never happen, but crashes when loading
         // https://github.com/NatronGitHub/Natron/files/4630686/maskissue.log
         //assert(false);
@@ -2229,47 +2376,49 @@ EffectInstance::Implementation::tiledRenderingFunctor(const RectToRender & rectT
     const ParallelRenderArgsPtr& frameArgs = tls->frameArgs.back();
 #endif
 
-      ///It might have been already rendered now
-    if ( renderMappedRectToRender.isNull() ) {
+    ///It might have been already rendered now
+    if (renderMappedRectToRender.isNull()) {
         return eRenderingFunctorRetOK;
     }
 
 
     ///This RAII struct controls the lifetime of the validArgs Flag in tls->currentRenderArgs
     Implementation::ScopedRenderArgs scopedArgs(tls,
-                                                rod,
-                                                renderMappedRectToRender,
-                                                time,
-                                                view,
-                                                rectToRender.isIdentity,
-                                                rectToRender.identityTime,
-                                                rectToRender.identityInput,
-                                                compsNeeded,
-                                                rectToRender.imgs,
-                                                rectToRender.inputRois,
-                                                firstFrame,
-                                                lastFrame,
-                                                planes->useOpenGL);
+            rod,
+            renderMappedRectToRender,
+            time,
+            view,
+            rectToRender.isIdentity,
+            rectToRender.identityTime,
+            rectToRender.identityInput,
+            compsNeeded,
+            rectToRender.imgs,
+            rectToRender.inputRois,
+            firstFrame,
+            lastFrame);
     ImagePtr originalInputImage, maskImage;
     ImagePremultiplicationEnum originalImagePremultiplication;
     EffectInstance::InputImagesMap::const_iterator foundPrefInput = rectToRender.imgs.find(preferredInput);
     EffectInstance::InputImagesMap::const_iterator foundMaskInput = rectToRender.imgs.end();
 
-    if ( _publicInterface->isHostMaskingEnabled() ) {
+    if (_publicInterface->isHostMaskingEnabled()) {
         foundMaskInput = rectToRender.imgs.find(_publicInterface->getNInputs() - 1);
     }
-    if ( ( foundPrefInput != rectToRender.imgs.end() ) && !foundPrefInput->second.empty() ) {
+
+    if ((foundPrefInput != rectToRender.imgs.end()) && !foundPrefInput->second.empty()) {
         originalInputImage = foundPrefInput->second.front();
     }
+
     std::map<int, ImagePremultiplicationEnum>::const_iterator foundPrefPremult = planes->inputPremult.find(preferredInput);
-    if ( ( foundPrefPremult != planes->inputPremult.end() ) && originalInputImage ) {
+
+    if ((foundPrefPremult != planes->inputPremult.end()) && originalInputImage) {
         originalImagePremultiplication = foundPrefPremult->second;
     } else {
         originalImagePremultiplication = eImagePremultiplicationOpaque;
     }
 
 
-    if ( ( foundMaskInput != rectToRender.imgs.end() ) && !foundMaskInput->second.empty() ) {
+    if ((foundMaskInput != rectToRender.imgs.end()) && !foundMaskInput->second.empty()) {
         maskImage = foundMaskInput->second.front();
     }
 
@@ -2278,6 +2427,7 @@ EffectInstance::Implementation::tiledRenderingFunctor(const RectToRender & rectT
     // check the dimensions of all input and output images
     const RectD & dstRodCanonical = firstPlaneToRender.renderMappedImage->getRoD();
     const RectI dstBounds = dstRodCanonical.toPixelEnclosing(firstPlaneToRender.renderMappedImage->getMipmapLevel(), par); // compute dstRod at level 0
+
     if (!frameArgs->tilesSupported) {
         const RectI dstRealBounds = firstPlaneToRender.renderMappedImage->getBounds();
         assert(dstRealBounds.x1 == dstBounds.x1);
@@ -2291,7 +2441,7 @@ EffectInstance::Implementation::tiledRenderingFunctor(const RectToRender & rectT
          ++it) {
         for (ImageList::const_iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
             const RectD & srcRodCanonical = (*it2)->getRoD();
-            const RectI srcBounds = srcRodCanonical.toPixelEnclosing( (*it2)->getMipmapLevel(), (*it2)->getPixelAspectRatio() ); // compute srcRod at level 0
+            const RectI srcBounds = srcRodCanonical.toPixelEnclosing((*it2)->getMipmapLevel(), (*it2)->getPixelAspectRatio());   // compute srcRod at level 0
 
             if (!frameArgs->tilesSupported) {
                 // http://openfx.sourceforge.net/Documentation/1.3/ofxProgrammingReference.html#kOfxImageEffectPropSupportsTiles
@@ -2317,7 +2467,8 @@ EffectInstance::Implementation::tiledRenderingFunctor(const RectToRender & rectT
                    assert(srcRealBounds.y1 == srcBounds.y1);
                    assert(srcRealBounds.y2 == srcBounds.y2);*/
             }
-            if ( !_publicInterface->supportsMultiResolution() ) {
+
+            if (!_publicInterface->supportsMultiResolution()) {
                 // http://openfx.sourceforge.net/Documentation/1.3/ofxProgrammingReference.html#kOfxImageEffectPropSupportsMultiResolution
                 //   Multiple resolution images mean...
                 //    input and output images can be of any size
@@ -2338,23 +2489,25 @@ EffectInstance::Implementation::tiledRenderingFunctor(const RectToRender & rectT
         assert(firstPlaneToRender.renderMappedImage->getMipmapLevel() == 0);
         assert(renderMappedMipmapLevel == 0);
     }
+
 #endif // !NDEBUG
 
     RenderingFunctorRetEnum handlerRet =  renderHandler(tls,
-                                                        mipmapLevel,
-                                                        renderFullScaleThenDownscale,
-                                                        isSequentialRender,
-                                                        isRenderResponseToUserInteraction,
-                                                        renderMappedRectToRender,
-                                                        downscaledRectToRender,
-                                                        byPassCache,
-                                                        outputClipPrefDepth,
-                                                        outputClipPrefsComps,
-                                                        processChannels,
-                                                        originalInputImage,
-                                                        maskImage,
-                                                        originalImagePremultiplication,
-                                                        *planes);
+                                          mipmapLevel,
+                                          renderFullScaleThenDownscale,
+                                          isSequentialRender,
+                                          isRenderResponseToUserInteraction,
+                                          renderMappedRectToRender,
+                                          downscaledRectToRender,
+                                          byPassCache,
+                                          outputClipPrefDepth,
+                                          outputClipPrefsComps,
+                                          processChannels,
+                                          originalInputImage,
+                                          maskImage,
+                                          originalImagePremultiplication,
+                                          *planes);
+
     if (handlerRet == eRenderingFunctorRetOK) {
         return eRenderingFunctorRetOK;
     } else {
@@ -2364,20 +2517,20 @@ EffectInstance::Implementation::tiledRenderingFunctor(const RectToRender & rectT
 
 EffectInstance::RenderingFunctorRetEnum
 EffectInstance::Implementation::renderHandler(const EffectTLSDataPtr& tls,
-                                              const unsigned int mipmapLevel,
-                                              const bool renderFullScaleThenDownscale,
-                                              const bool isSequentialRender,
-                                              const bool isRenderResponseToUserInteraction,
-                                              const RectI & renderMappedRectToRender,
-                                              const RectI & downscaledRectToRender,
-                                              const bool byPassCache,
-                                              const ImageBitDepthEnum outputClipPrefDepth,
-                                              const ImagePlaneDesc & outputClipPrefsComps,
-                                              const std::bitset<4>& processChannels,
-                                              const ImagePtr & originalInputImage,
-                                              const ImagePtr & maskImage,
-                                              const ImagePremultiplicationEnum originalImagePremultiplication,
-                                              ImagePlanesToRender & planes)
+        const unsigned int mipmapLevel,
+        const bool renderFullScaleThenDownscale,
+        const bool isSequentialRender,
+        const bool isRenderResponseToUserInteraction,
+        const RectI & renderMappedRectToRender,
+        const RectI & downscaledRectToRender,
+        const bool byPassCache,
+        const ImageBitDepthEnum outputClipPrefDepth,
+        const ImagePlaneDesc & outputClipPrefsComps,
+        const std::bitset<4> &processChannels,
+        const ImagePtr & originalInputImage,
+        const ImagePtr & maskImage,
+        const ImagePremultiplicationEnum originalImagePremultiplication,
+        ImagePlanesToRender & planes)
 {
     TimeLapsePtr timeRecorder;
     const ParallelRenderArgsPtr& frameArgs = tls->frameArgs.back();
@@ -2404,7 +2557,6 @@ EffectInstance::Implementation::renderHandler(const EffectTLSDataPtr& tls,
     assert(isSupportedRenderScale(_publicInterface->supportsRenderScaleMaybe(), actionArgs.mappedScale));
     actionArgs.originalScale = RenderScale::fromMipmapLevel(mipmapLevel);
     actionArgs.draftMode = frameArgs->draftMode;
-    actionArgs.useOpenGL = planes.useOpenGL;
 
     std::list<std::pair<ImagePlaneDesc, ImagePtr> > tmpPlanes;
     bool multiPlanar = _publicInterface->isMultiPlanar();
@@ -2412,67 +2564,43 @@ EffectInstance::Implementation::renderHandler(const EffectTLSDataPtr& tls,
     actionArgs.roi = renderMappedRectToRender;
 
 
-    // Setup the context when rendering using OpenGL
-    OSGLContextPtr glContext;
-    std::unique_ptr<OSGLContextAttacher> glContextAttacher;
-    if (planes.useOpenGL) {
-        // Setup the viewport and the framebuffer
-        glContext = frameArgs->openGLContext.lock();
-        AbortableRenderInfoPtr abortInfo = frameArgs->abortInfo.lock();
-        assert(abortInfo);
-        assert(glContext);
-
-        // Ensure the context is current
-        // scoped_ptr
-        glContextAttacher.reset( new OSGLContextAttacher(glContext, abortInfo
-#ifdef DEBUG
-                                                         , frameArgs->time
-#endif
-                                                         ) );
-        glContextAttacher->attach();
-
-
-        GLuint fboID = glContext->getFBOId();
-        glBindFramebuffer(GL_FRAMEBUFFER, fboID);
-        glCheckError();
-    }
-
-
     if (tls->currentRenderArgs.isIdentity) {
         std::list<ImagePlaneDesc> comps;
 
         for (std::map<ImagePlaneDesc, EffectInstance::PlaneToRender>::iterator it = planes.planes.begin(); it != planes.planes.end(); ++it) {
             //If color plane, request the preferred comp of the identity input
-            if ( tls->currentRenderArgs.identityInput && it->second.renderMappedImage->getComponents().isColorPlane() ) {
+            if (tls->currentRenderArgs.identityInput && it->second.renderMappedImage->getComponents().isColorPlane()) {
                 ImagePlaneDesc prefInputComps, prefInputCompsPaired;
                 tls->currentRenderArgs.identityInput->getMetadataComponents(-1, &prefInputComps, &prefInputCompsPaired);
                 comps.push_back(prefInputComps);
             } else {
-                comps.push_back( it->second.renderMappedImage->getComponents() );
+                comps.push_back(it->second.renderMappedImage->getComponents());
             }
         }
-        assert( !comps.empty() );
+
+        assert(!comps.empty());
         std::map<ImagePlaneDesc, ImagePtr> identityPlanes;
         // scoped_ptr
-        std::unique_ptr<EffectInstance::RenderRoIArgs> renderArgs( new EffectInstance::RenderRoIArgs(tls->currentRenderArgs.identityTime,
-                                                                                                       actionArgs.originalScale,
-                                                                                                       mipmapLevel,
-                                                                                                       view,
-                                                                                                       false,
-                                                                                                       downscaledRectToRender,
-                                                                                                       RectD(),
-                                                                                                       comps,
-                                                                                                       outputClipPrefDepth,
-                                                                                                       false,
-                                                                                                       _publicInterface,
-                                                                                                       planes.useOpenGL ? eStorageModeGLTex : eStorageModeRAM,
-                                                                                                       time) );
+        std::unique_ptr<EffectInstance::RenderRoIArgs> renderArgs(new EffectInstance::RenderRoIArgs(tls->currentRenderArgs.identityTime,
+                actionArgs.originalScale,
+                mipmapLevel,
+                view,
+                false,
+                downscaledRectToRender,
+                RectD(),
+                comps,
+                outputClipPrefDepth,
+                false,
+                _publicInterface,
+                firstPlane.renderMappedImage->getStorageMode() == eStorageModeVulkan ? eStorageModeVulkan : eStorageModeRAM,
+                time));
+
         if (!tls->currentRenderArgs.identityInput) {
             for (std::map<ImagePlaneDesc, EffectInstance::PlaneToRender>::iterator it = planes.planes.begin(); it != planes.planes.end(); ++it) {
-                it->second.renderMappedImage->fillZero(renderMappedRectToRender, glContext);
+                it->second.renderMappedImage->fillZero(renderMappedRectToRender);
 
-                if ( frameArgs->stats && frameArgs->stats->isInDepthProfilingEnabled() ) {
-                    frameArgs->stats->addRenderInfosForNode( _publicInterface->getNode(),  NodePtr(), it->first.getChannelsLabel(), renderMappedRectToRender, timeRecorder->getTimeSinceCreation() );
+                if (frameArgs->stats && frameArgs->stats->isInDepthProfilingEnabled()) {
+                    frameArgs->stats->addRenderInfosForNode(_publicInterface->getNode(),  NodePtr(), it->first.getChannelsLabel(), renderMappedRectToRender, timeRecorder->getTimeSinceCreation());
                 }
             }
 
@@ -2480,51 +2608,53 @@ EffectInstance::Implementation::renderHandler(const EffectTLSDataPtr& tls,
         } else {
             EffectInstance::RenderRoIRetCode renderOk;
             renderOk = tls->currentRenderArgs.identityInput->renderRoI(*renderArgs, &identityPlanes);
+
             if (renderOk == eRenderRoIRetCodeAborted) {
                 return eRenderingFunctorRetAborted;
             } else if (renderOk == eRenderRoIRetCodeFailed) {
                 return eRenderingFunctorRetFailed;
-            } else if ( identityPlanes.empty() ) {
+            } else if (identityPlanes.empty()) {
                 for (std::map<ImagePlaneDesc, EffectInstance::PlaneToRender>::iterator it = planes.planes.begin(); it != planes.planes.end(); ++it) {
-                    it->second.renderMappedImage->fillZero(renderMappedRectToRender, glContext);
+                    it->second.renderMappedImage->fillZero(renderMappedRectToRender);
 
-                    if ( frameArgs->stats && frameArgs->stats->isInDepthProfilingEnabled() ) {
-                        frameArgs->stats->addRenderInfosForNode( _publicInterface->getNode(),  tls->currentRenderArgs.identityInput->getNode(), it->first.getChannelsLabel(), renderMappedRectToRender, timeRecorder->getTimeSinceCreation() );
+                    if (frameArgs->stats && frameArgs->stats->isInDepthProfilingEnabled()) {
+                        frameArgs->stats->addRenderInfosForNode(_publicInterface->getNode(),  tls->currentRenderArgs.identityInput->getNode(), it->first.getChannelsLabel(), renderMappedRectToRender, timeRecorder->getTimeSinceCreation());
                     }
                 }
 
                 return eRenderingFunctorRetOK;
             } else {
-                assert( identityPlanes.size() == planes.planes.size() );
+                assert(identityPlanes.size() == planes.planes.size());
 
                 std::map<ImagePlaneDesc, ImagePtr>::iterator idIt = identityPlanes.begin();
+
                 for (std::map<ImagePlaneDesc, EffectInstance::PlaneToRender>::iterator it = planes.planes.begin(); it != planes.planes.end(); ++it, ++idIt) {
-                    if ( renderFullScaleThenDownscale && ( idIt->second->getMipmapLevel() > it->second.fullscaleImage->getMipmapLevel() ) ) {
+                    if (renderFullScaleThenDownscale && (idIt->second->getMipmapLevel() > it->second.fullscaleImage->getMipmapLevel())) {
                         // We cannot be rendering using OpenGL in this case
-                        assert(!planes.useOpenGL);
 
 
-                        if ( !idIt->second->getBounds().contains(renderMappedRectToRender) ) {
+                        if (!idIt->second->getBounds().contains(renderMappedRectToRender)) {
                             ///Fill the RoI with 0's as the identity input image might have bounds contained into the RoI
-                            it->second.fullscaleImage->fillZero(renderMappedRectToRender, glContext);
+                            it->second.fullscaleImage->fillZero(renderMappedRectToRender);
                         }
 
                         ///Convert format first if needed
                         ImagePtr sourceImage;
-                        if ( ( it->second.fullscaleImage->getComponents() != idIt->second->getComponents() ) || ( it->second.fullscaleImage->getBitDepth() != idIt->second->getBitDepth() ) ) {
-                            sourceImage = std::make_shared<Image>(it->second.fullscaleImage->getComponents(),
-                                                                    idIt->second->getRoD(),
-                                                                    idIt->second->getBounds(),
-                                                                    idIt->second->getMipmapLevel(),
-                                                                    idIt->second->getPixelAspectRatio(),
-                                                                    it->second.fullscaleImage->getBitDepth(),
-                                                                    idIt->second->getPremultiplication(),
-                                                                    idIt->second->getFieldingOrder(),
-                                                                    false);
 
-                            ViewerColorSpaceEnum colorspace = _publicInterface->getApp()->getDefaultColorSpaceForBitDepth( idIt->second->getBitDepth() );
-                            ViewerColorSpaceEnum dstColorspace = _publicInterface->getApp()->getDefaultColorSpaceForBitDepth( it->second.fullscaleImage->getBitDepth() );
-                            idIt->second->convertToFormat( idIt->second->getBounds(), colorspace, dstColorspace, 3, false, false, sourceImage.get() );
+                        if ((it->second.fullscaleImage->getComponents() != idIt->second->getComponents()) || (it->second.fullscaleImage->getBitDepth() != idIt->second->getBitDepth())) {
+                            sourceImage = std::make_shared<Image>(it->second.fullscaleImage->getComponents(),
+                                                                  idIt->second->getRoD(),
+                                                                  idIt->second->getBounds(),
+                                                                  idIt->second->getMipmapLevel(),
+                                                                  idIt->second->getPixelAspectRatio(),
+                                                                  it->second.fullscaleImage->getBitDepth(),
+                                                                  idIt->second->getPremultiplication(),
+                                                                  idIt->second->getFieldingOrder(),
+                                                                  false);
+
+                            ViewerColorSpaceEnum colorspace = _publicInterface->getApp()->getDefaultColorSpaceForBitDepth(idIt->second->getBitDepth());
+                            ViewerColorSpaceEnum dstColorspace = _publicInterface->getApp()->getDefaultColorSpaceForBitDepth(it->second.fullscaleImage->getBitDepth());
+                            idIt->second->convertToFormat(idIt->second->getBounds(), colorspace, dstColorspace, 3, false, false, sourceImage.get());
                         } else {
                             sourceImage = idIt->second;
                         }
@@ -2533,35 +2663,35 @@ EffectInstance::Implementation::renderHandler(const EffectTLSDataPtr& tls,
                         const RectD & rod = sourceImage->getRoD();
                         const RectI bounds = rod.toPixelEnclosing(it->second.renderMappedImage->getMipmapLevel(), it->second.renderMappedImage->getPixelAspectRatio());
                         ImagePtr inputPlane = std::make_shared<Image>(it->first,
-                                                       rod,
-                                                       bounds,
-                                                       it->second.renderMappedImage->getMipmapLevel(),
-                                                       it->second.renderMappedImage->getPixelAspectRatio(),
-                                                       it->second.renderMappedImage->getBitDepth(),
-                                                       it->second.renderMappedImage->getPremultiplication(),
-                                                       it->second.renderMappedImage->getFieldingOrder(),
-                                                       false);
-                        sourceImage->upscaleMipmap( sourceImage->getBounds(), sourceImage->getMipmapLevel(), inputPlane->getMipmapLevel(), inputPlane.get() );
+                                              rod,
+                                              bounds,
+                                              it->second.renderMappedImage->getMipmapLevel(),
+                                              it->second.renderMappedImage->getPixelAspectRatio(),
+                                              it->second.renderMappedImage->getBitDepth(),
+                                              it->second.renderMappedImage->getPremultiplication(),
+                                              it->second.renderMappedImage->getFieldingOrder(),
+                                              false);
+                        sourceImage->upscaleMipmap(sourceImage->getBounds(), sourceImage->getMipmapLevel(), inputPlane->getMipmapLevel(), inputPlane.get());
                         it->second.fullscaleImage->pasteFrom(*inputPlane, renderMappedRectToRender, false);
                     } else {
-                        if ( !idIt->second->getBounds().contains(downscaledRectToRender) ) {
+                        if (!idIt->second->getBounds().contains(downscaledRectToRender)) {
                             ///Fill the RoI with 0's as the identity input image might have bounds contained into the RoI
-                            it->second.downscaleImage->fillZero(downscaledRectToRender, glContext);
+                            it->second.downscaleImage->fillZero(downscaledRectToRender);
                         }
 
                         ///Convert format if needed or copy
-                        if ( ( it->second.downscaleImage->getComponents() != idIt->second->getComponents() ) || ( it->second.downscaleImage->getBitDepth() != idIt->second->getBitDepth() ) ) {
-                            ViewerColorSpaceEnum colorspace = _publicInterface->getApp()->getDefaultColorSpaceForBitDepth( idIt->second->getBitDepth() );
-                            ViewerColorSpaceEnum dstColorspace = _publicInterface->getApp()->getDefaultColorSpaceForBitDepth( it->second.fullscaleImage->getBitDepth() );
+                        if ((it->second.downscaleImage->getComponents() != idIt->second->getComponents()) || (it->second.downscaleImage->getBitDepth() != idIt->second->getBitDepth())) {
+                            ViewerColorSpaceEnum colorspace = _publicInterface->getApp()->getDefaultColorSpaceForBitDepth(idIt->second->getBitDepth());
+                            ViewerColorSpaceEnum dstColorspace = _publicInterface->getApp()->getDefaultColorSpaceForBitDepth(it->second.fullscaleImage->getBitDepth());
                             const RectI convertWindow = idIt->second->getBounds().intersect(downscaledRectToRender);
-                            idIt->second->convertToFormat( convertWindow, colorspace, dstColorspace, 3, false, false, it->second.downscaleImage.get() );
+                            idIt->second->convertToFormat(convertWindow, colorspace, dstColorspace, 3, false, false, it->second.downscaleImage.get());
                         } else {
-                            it->second.downscaleImage->pasteFrom(*(idIt->second), downscaledRectToRender, false, glContext);
+                            it->second.downscaleImage->pasteFrom(*(idIt->second), downscaledRectToRender, false);
                         }
                     }
 
-                    if ( frameArgs->stats && frameArgs->stats->isInDepthProfilingEnabled() ) {
-                        frameArgs->stats->addRenderInfosForNode( _publicInterface->getNode(),  tls->currentRenderArgs.identityInput->getNode(), it->first.getChannelsLabel(), renderMappedRectToRender, timeRecorder->getTimeSinceCreation() );
+                    if (frameArgs->stats && frameArgs->stats->isInDepthProfilingEnabled()) {
+                        frameArgs->stats->addRenderInfosForNode(_publicInterface->getNode(),  tls->currentRenderArgs.identityInput->getNode(), it->first.getChannelsLabel(), renderMappedRectToRender, timeRecorder->getTimeSinceCreation());
                     }
                 }
 
@@ -2571,6 +2701,7 @@ EffectInstance::Implementation::renderHandler(const EffectTLSDataPtr& tls,
     } // if (identity) {
 
     tls->currentRenderArgs.outputPlanes = planes.planes;
+
     for (std::map<ImagePlaneDesc, EffectInstance::PlaneToRender>::iterator it = tls->currentRenderArgs.outputPlanes.begin(); it != tls->currentRenderArgs.outputPlanes.end(); ++it) {
         /*
          * When using the cache, allocate a local temporary buffer onto which the plug-in will render, and then safely
@@ -2578,28 +2709,40 @@ EffectInstance::Implementation::renderHandler(const EffectTLSDataPtr& tls,
          * This is also needed if the plug-in does not support the number of components of the renderMappedImage
          */
         ImagePlaneDesc prefComp;
+
         if (multiPlanar) {
-            prefComp = _publicInterface->getNode()->findClosestSupportedComponents( -1, it->second.renderMappedImage->getComponents() );
+            prefComp = _publicInterface->getNode()->findClosestSupportedComponents(-1, it->second.renderMappedImage->getComponents());
         } else {
             prefComp = outputClipPrefsComps;
         }
 
-        // OpenGL render never use the cache and bitmaps, all images are local to a render.
-        if ( ( it->second.renderMappedImage->usesBitMap() || ( prefComp != it->second.renderMappedImage->getComponents() ) ||
-               ( outputClipPrefDepth != it->second.renderMappedImage->getBitDepth() ) ) && !_publicInterface->isPaintingOverItselfEnabled() && !planes.useOpenGL ) {
-            it->second.tmpImage = std::make_shared<Image>(prefComp,
-                                                            it->second.renderMappedImage->getRoD(),
-                                                            actionArgs.roi,
-                                                            it->second.renderMappedImage->getMipmapLevel(),
-                                                            it->second.renderMappedImage->getPixelAspectRatio(),
-                                                            outputClipPrefDepth,
-                                                            it->second.renderMappedImage->getPremultiplication(),
-                                                            it->second.renderMappedImage->getFieldingOrder(),
-                                                 false); //< no bitmap
+        if ((it->second.renderMappedImage->usesBitMap() || (prefComp != it->second.renderMappedImage->getComponents()) ||
+             (outputClipPrefDepth != it->second.renderMappedImage->getBitDepth())) && !_publicInterface->isPaintingOverItselfEnabled()) {
+            if (it->second.renderMappedImage->getStorageMode() == eStorageModeVulkan) {
+                auto params = Image::makeParams(it->second.renderMappedImage->getRoD(), actionArgs.roi,
+                                                it->second.renderMappedImage->getPixelAspectRatio(),
+                                                it->second.renderMappedImage->getMipmapLevel(), false, prefComp,
+                                                outputClipPrefDepth, it->second.renderMappedImage->getPremultiplication(),
+                                                it->second.renderMappedImage->getFieldingOrder(), eStorageModeVulkan, 0);
+                params->getStorageInfo().vulkanContext = it->second.renderMappedImage->getVulkanImage()->context();
+                it->second.tmpImage = std::make_shared<Image>(ImageKey(), params);
+                it->second.tmpImage->allocateMemory();
+            } else {
+                it->second.tmpImage = std::make_shared<Image>(prefComp,
+                                      it->second.renderMappedImage->getRoD(),
+                                      actionArgs.roi,
+                                      it->second.renderMappedImage->getMipmapLevel(),
+                                      it->second.renderMappedImage->getPixelAspectRatio(),
+                                      outputClipPrefDepth,
+                                      it->second.renderMappedImage->getPremultiplication(),
+                                      it->second.renderMappedImage->getFieldingOrder(),
+                                      false); //< no bitmap
+            }
         } else {
             it->second.tmpImage = it->second.renderMappedImage;
         }
-        tmpPlanes.push_back( std::make_pair(it->second.renderMappedImage->getComponents(), it->second.tmpImage) );
+
+        tmpPlanes.push_back(std::make_pair(it->second.renderMappedImage->getComponents(), it->second.tmpImage));
     }
 
 
@@ -2613,6 +2756,7 @@ EffectInstance::Implementation::renderHandler(const EffectTLSDataPtr& tls,
     actionArgs.inputImages = tls->currentRenderArgs.inputImages;
 
     std::list<std::list<std::pair<ImagePlaneDesc, ImagePtr> > > planesLists;
+
     if (!multiPlanar) {
         for (std::list<std::pair<ImagePlaneDesc, ImagePtr> >::iterator it = tmpPlanes.begin(); it != tmpPlanes.end(); ++it) {
             std::list<std::pair<ImagePlaneDesc, ImagePtr> > tmp;
@@ -2625,66 +2769,18 @@ EffectInstance::Implementation::renderHandler(const EffectTLSDataPtr& tls,
 
     bool renderAborted = false;
     std::map<ImagePlaneDesc, EffectInstance::PlaneToRender> outputPlanes;
+
     for (std::list<std::list<std::pair<ImagePlaneDesc, ImagePtr> > >::iterator it = planesLists.begin(); it != planesLists.end(); ++it) {
         if (!multiPlanar) {
-            assert( !it->empty() );
+            assert(!it->empty());
             tls->currentRenderArgs.outputPlaneBeingRendered = it->front().first;
         }
+
         actionArgs.outputPlanes = *it;
 
-        int textureTarget = 0;
-        if (planes.useOpenGL) {
-            actionArgs.glContextData = planes.glContextData;
-
-            // Effects that render multiple planes at once are NOT supported by the OpenGL render suite
-            // We only bind to the framebuffer color attachment 0 the "main" output image plane
-            assert(actionArgs.outputPlanes.size() == 1);
-
-            const ImagePtr& mainImagePlane = actionArgs.outputPlanes.front().second;
-            assert(mainImagePlane->getStorageMode() == eStorageModeGLTex);
-            textureTarget = mainImagePlane->getGLTextureTarget();
-            glEnable(textureTarget);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture( textureTarget, mainImagePlane->getGLTextureID() );
-            glCheckError();
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, textureTarget, mainImagePlane->getGLTextureID(), 0 /*LoD*/);
-            glCheckError();
-            glCheckFramebufferError();
-
-            // setup the output viewport
-            RectI imageBounds = mainImagePlane->getBounds();
-            glViewport( actionArgs.roi.x1 - imageBounds.x1, actionArgs.roi.y1 - imageBounds.y1, actionArgs.roi.width(), actionArgs.roi.height() );
-
-            glMatrixMode(GL_PROJECTION);
-            glLoadIdentity();
-            glOrtho(actionArgs.roi.x1, actionArgs.roi.x2, actionArgs.roi.y1, actionArgs.roi.y2, -1, 1);
-            glMatrixMode(GL_MODELVIEW);
-            glLoadIdentity();
-
-
-            glCheckError();
-
-            // Enable scissor to make the plug-in doesn't render outside of the viewport...
-            glEnable(GL_SCISSOR_TEST);
-            glScissor( actionArgs.roi.x1 - imageBounds.x1, actionArgs.roi.y1 - imageBounds.y1, actionArgs.roi.width(), actionArgs.roi.height() );
-
-            if (_publicInterface->getNode()->isGLFinishRequiredBeforeRender()) {
-                // Ensure that previous asynchronous operations are done (e.g: glTexImage2D) some plug-ins seem to require it (Hitfilm Ignite plugin-s)
-                glFinish();
-            }
-        }
 
         StatusEnum st = _publicInterface->render_public(actionArgs);
 
-        if (planes.useOpenGL) {
-            glDisable(GL_SCISSOR_TEST);
-            glCheckError();
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(textureTarget, 0);
-            glCheckError();
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            glCheckError();
-        }
 
         renderAborted = _publicInterface->aborted();
 
@@ -2692,30 +2788,35 @@ EffectInstance::Implementation::renderHandler(const EffectTLSDataPtr& tls,
          * Since new planes can have been allocated on the fly by allocateImagePlaneAndSetInThreadLocalStorage(), refresh
          * the planes map from the thread-local storage once the render action is finished
          */
-        if ( it == planesLists.begin() ) {
+        if (it == planesLists.begin()) {
             outputPlanes = tls->currentRenderArgs.outputPlanes;
-            assert( !outputPlanes.empty() );
+            assert(!outputPlanes.empty());
         }
 
-        if ( (st != eStatusOK) || renderAborted ) {
+        if ((st != eStatusOK) || renderAborted) {
 #if NATRON_ENABLE_TRIMAP
+
             //if ( frameArgs->isCurrentFrameRenderNotAbortable() ) {
-                /*
-                   At this point, another thread might have already gotten this image from the cache and could end-up
-                   using it while it has still pixels marked to PIXEL_UNAVAILABLE, hence clear the bitmap
-                 */
-                for (std::map<ImagePlaneDesc, EffectInstance::PlaneToRender>::const_iterator it = outputPlanes.begin(); it != outputPlanes.end(); ++it) {
-                    it->second.renderMappedImage->clearBitmap(renderMappedRectToRender);
-                }
+            /*
+               At this point, another thread might have already gotten this image from the cache and could end-up
+               using it while it has still pixels marked to PIXEL_UNAVAILABLE, hence clear the bitmap
+             */
+            for (std::map<ImagePlaneDesc, EffectInstance::PlaneToRender>::const_iterator it = outputPlanes.begin(); it != outputPlanes.end(); ++it) {
+                it->second.renderMappedImage->clearBitmap(renderMappedRectToRender);
+            }
+
             //}
 #endif
+
             switch (st) {
             case eStatusFailed:
 
                 return eRenderingFunctorRetFailed;
+
             case eStatusOutOfMemory:
 
                 return eRenderingFunctorRetOutOfGPUMemory;
+
             case eStatusOK:
             default:
 
@@ -2735,35 +2836,36 @@ EffectInstance::Implementation::renderHandler(const EffectTLSDataPtr& tls,
     for (std::map<ImagePlaneDesc, EffectInstance::PlaneToRender>::const_iterator it = outputPlanes.begin(); it != outputPlanes.end(); ++it) {
         bool unPremultRequired = unPremultIfNeeded && it->second.tmpImage->getComponentsCount() == 4 && it->second.renderMappedImage->getComponentsCount() == 3;
 
-        if ( frameArgs->doNansHandling && it->second.tmpImage->checkForNaNsAndFix(actionArgs.roi) ) {
-            QString warning = QString::fromUtf8( _publicInterface->getNode()->getScriptName_mt_safe().c_str() );
-            warning.append( QString::fromUtf8(": ") );
-            warning.append( tr("rendered rectangle (") );
-            warning.append( QString::number(actionArgs.roi.x1) );
-            warning.append( QChar::fromLatin1(',') );
-            warning.append( QString::number(actionArgs.roi.y1) );
-            warning.append( QString::fromUtf8(")-(") );
-            warning.append( QString::number(actionArgs.roi.x2) );
-            warning.append( QChar::fromLatin1(',') );
-            warning.append( QString::number(actionArgs.roi.y2) );
-            warning.append( QString::fromUtf8(") ") );
-            warning.append( tr("contains NaN values. They have been converted to 1.") );
-            _publicInterface->setPersistentMessage( eMessageTypeWarning, warning.toStdString() );
+        if (frameArgs->doNansHandling && it->second.tmpImage->checkForNaNsAndFix(actionArgs.roi)) {
+            QString warning = QString::fromUtf8(_publicInterface->getNode()->getScriptName_mt_safe().c_str());
+            warning.append(QString::fromUtf8(": "));
+            warning.append(tr("rendered rectangle ("));
+            warning.append(QString::number(actionArgs.roi.x1));
+            warning.append(QChar::fromLatin1(','));
+            warning.append(QString::number(actionArgs.roi.y1));
+            warning.append(QString::fromUtf8(")-("));
+            warning.append(QString::number(actionArgs.roi.x2));
+            warning.append(QChar::fromLatin1(','));
+            warning.append(QString::number(actionArgs.roi.y2));
+            warning.append(QString::fromUtf8(") "));
+            warning.append(tr("contains NaN values. They have been converted to 1."));
+            _publicInterface->setPersistentMessage(eMessageTypeWarning, warning.toStdString());
         }
+
         if (it->second.isAllocatedOnTheFly) {
             ///Plane allocated on the fly only have a temp image if using the cache and it is defined over the render window only
             if (it->second.tmpImage != it->second.renderMappedImage) {
                 // We cannot be rendering using OpenGL in this case
-                assert(!planes.useOpenGL);
+
 
                 assert(it->second.tmpImage->getBounds() == actionArgs.roi);
 
-                if ( ( it->second.renderMappedImage->getComponents() != it->second.tmpImage->getComponents() ) ||
-                     ( it->second.renderMappedImage->getBitDepth() != it->second.tmpImage->getBitDepth() ) ) {
-                    it->second.tmpImage->convertToFormat( it->second.tmpImage->getBounds(),
-                                                          _publicInterface->getApp()->getDefaultColorSpaceForBitDepth( it->second.tmpImage->getBitDepth() ),
-                                                          _publicInterface->getApp()->getDefaultColorSpaceForBitDepth( it->second.renderMappedImage->getBitDepth() ),
-                                                          -1, false, unPremultRequired, it->second.renderMappedImage.get() );
+                if ((it->second.renderMappedImage->getComponents() != it->second.tmpImage->getComponents()) ||
+                    (it->second.renderMappedImage->getBitDepth() != it->second.tmpImage->getBitDepth())) {
+                    it->second.tmpImage->convertToFormat(it->second.tmpImage->getBounds(),
+                                                         _publicInterface->getApp()->getDefaultColorSpaceForBitDepth(it->second.tmpImage->getBitDepth()),
+                                                         _publicInterface->getApp()->getDefaultColorSpaceForBitDepth(it->second.renderMappedImage->getBitDepth()),
+                                                         -1, false, unPremultRequired, it->second.renderMappedImage.get());
                 } else {
                     it->second.renderMappedImage->pasteFrom(*(it->second.tmpImage), it->second.tmpImage->getBounds(), false);
                 }
@@ -2771,7 +2873,7 @@ EffectInstance::Implementation::renderHandler(const EffectTLSDataPtr& tls,
         } else {
             if (renderFullScaleThenDownscale) {
                 // We cannot be rendering using OpenGL in this case
-                assert(!planes.useOpenGL);
+
 
                 ///copy the rectangle rendered in the full scale image to the downscaled output
                 assert(mipmapLevel != 0);
@@ -2779,74 +2881,100 @@ EffectInstance::Implementation::renderHandler(const EffectTLSDataPtr& tls,
                 assert(it->second.fullscaleImage != it->second.downscaleImage && it->second.renderMappedImage == it->second.fullscaleImage);
 
                 ImagePtr mappedOriginalInputImage = originalInputImage;
+                ImagePtr mappedMaskImage = maskImage;
 
-                if ( originalInputImage && (originalInputImage->getMipmapLevel() != 0) ) {
+                if (maskImage && maskImage->getMipmapLevel() != 0 && useMaskMix) {
+                    const RectI bounds = maskImage->getRoD().toPixelEnclosing(0, maskImage->getPixelAspectRatio());
+                    mappedMaskImage = std::make_shared<Image>(maskImage->getComponents(), maskImage->getRoD(), bounds,
+                                      0, maskImage->getPixelAspectRatio(), maskImage->getBitDepth(),
+                                      maskImage->getPremultiplication(), maskImage->getFieldingOrder(), false);
+                    maskImage->upscaleMipmap(maskImage->getBounds(), maskImage->getMipmapLevel(), 0, mappedMaskImage.get());
+                }
+
+                if (originalInputImage && (originalInputImage->getMipmapLevel() != 0)) {
                     bool mustCopyUnprocessedChannels = it->second.tmpImage->canCallCopyUnProcessedChannels(processChannels);
+
                     if (mustCopyUnprocessedChannels || useMaskMix) {
                         ///there is some processing to be done by copyUnProcessedChannels or applyMaskMix
                         ///but originalInputImage is not in the correct mipmapLevel, upscale it
                         assert(originalInputImage->getMipmapLevel() > it->second.tmpImage->getMipmapLevel() &&
                                originalInputImage->getMipmapLevel() == mipmapLevel);
-                        ImagePtr tmp = std::make_shared<Image>(it->second.tmpImage->getComponents(),
-                                                it->second.tmpImage->getRoD(),
-                                                renderMappedRectToRender,
-                                                0,
-                                                it->second.tmpImage->getPixelAspectRatio(),
-                                                it->second.tmpImage->getBitDepth(),
-                                                it->second.tmpImage->getPremultiplication(),
-                                                it->second.tmpImage->getFieldingOrder(),
-                                                false);
-                        originalInputImage->upscaleMipmap( downscaledRectToRender, originalInputImage->getMipmapLevel(), 0, tmp.get() );
+                        ImagePtr tmp;
+
+                        if (it->second.tmpImage->getStorageMode() == eStorageModeVulkan) {
+                            auto params = Image::makeParams(it->second.tmpImage->getRoD(), renderMappedRectToRender,
+                                                            it->second.tmpImage->getPixelAspectRatio(), 0, false, it->second.tmpImage->getComponents(),
+                                                            it->second.tmpImage->getBitDepth(), it->second.tmpImage->getPremultiplication(),
+                                                            it->second.tmpImage->getFieldingOrder(), eStorageModeVulkan);
+                            params->getStorageInfo().vulkanContext = it->second.tmpImage->getVulkanImage()->context();
+                            tmp = std::make_shared<Image>(it->second.tmpImage->getKey(), params);
+                            tmp->allocateMemory();
+                        } else {
+                            tmp = std::make_shared<Image>(it->second.tmpImage->getComponents(),
+                                                          it->second.tmpImage->getRoD(),
+                                                          renderMappedRectToRender,
+                                                          0,
+                                                          it->second.tmpImage->getPixelAspectRatio(),
+                                                          it->second.tmpImage->getBitDepth(),
+                                                          it->second.tmpImage->getPremultiplication(),
+                                                          it->second.tmpImage->getFieldingOrder(),
+                                                          false);
+                        }
+
+                        originalInputImage->upscaleMipmap(downscaledRectToRender, originalInputImage->getMipmapLevel(), 0, tmp.get());
                         mappedOriginalInputImage = tmp;
                     }
                 }
 
                 if (mappedOriginalInputImage) {
                     it->second.tmpImage->copyUnProcessedChannels(renderMappedRectToRender, planes.outputPremult, originalImagePremultiplication, processChannels, mappedOriginalInputImage, true);
+
                     if (useMaskMix) {
-                        it->second.tmpImage->applyMaskMix(renderMappedRectToRender, maskImage.get(), mappedOriginalInputImage.get(), doMask, false, mix);
+                        it->second.tmpImage->applyMaskMix(renderMappedRectToRender, mappedMaskImage.get(), mappedOriginalInputImage.get(), doMask, false, mix);
                     }
                 }
-                if ( ( it->second.fullscaleImage->getComponents() != it->second.tmpImage->getComponents() ) ||
-                     ( it->second.fullscaleImage->getBitDepth() != it->second.tmpImage->getBitDepth() ) ) {
+
+                if ((it->second.fullscaleImage->getComponents() != it->second.tmpImage->getComponents()) ||
+                    (it->second.fullscaleImage->getBitDepth() != it->second.tmpImage->getBitDepth())) {
                     /*
                      * BitDepth/Components conversion required as well as downscaling, do conversion to a tmp buffer
                      */
 #ifdef BOOST_NO_CXX11_VARIADIC_TEMPLATES
-                    ImagePtr tmp( new Image(it->second.fullscaleImage->getComponents(),
-                                            it->second.tmpImage->getRoD(),
-                                            renderMappedRectToRender,
-                                            mipmapLevel,
-                                            it->second.tmpImage->getPixelAspectRatio(),
-                                            it->second.fullscaleImage->getBitDepth(),
-                                            it->second.fullscaleImage->getPremultiplication(),
-                                            it->second.fullscaleImage->getFieldingOrder(),
-                                            false) );
+                    ImagePtr tmp(new Image(it->second.fullscaleImage->getComponents(),
+                                           it->second.tmpImage->getRoD(),
+                                           renderMappedRectToRender,
+                                           mipmapLevel,
+                                           it->second.tmpImage->getPixelAspectRatio(),
+                                           it->second.fullscaleImage->getBitDepth(),
+                                           it->second.fullscaleImage->getPremultiplication(),
+                                           it->second.fullscaleImage->getFieldingOrder(),
+                                           false));
 #else
                     ImagePtr tmp = std::make_shared<Image>(it->second.fullscaleImage->getComponents(),
-                                                             it->second.tmpImage->getRoD(),
-                                                             renderMappedRectToRender,
-                                                             mipmapLevel,
-                                                             it->second.tmpImage->getPixelAspectRatio(),
-                                                             it->second.fullscaleImage->getBitDepth(),
-                                                             it->second.fullscaleImage->getPremultiplication(),
-                                                             it->second.fullscaleImage->getFieldingOrder(),
-                                                             false);
+                                                           it->second.tmpImage->getRoD(),
+                                                           renderMappedRectToRender,
+                                                           mipmapLevel,
+                                                           it->second.tmpImage->getPixelAspectRatio(),
+                                                           it->second.fullscaleImage->getBitDepth(),
+                                                           it->second.fullscaleImage->getPremultiplication(),
+                                                           it->second.fullscaleImage->getFieldingOrder(),
+                                                           false);
 #endif
 
-                    it->second.tmpImage->convertToFormat( renderMappedRectToRender,
-                                                          _publicInterface->getApp()->getDefaultColorSpaceForBitDepth( it->second.tmpImage->getBitDepth() ),
-                                                          _publicInterface->getApp()->getDefaultColorSpaceForBitDepth( it->second.fullscaleImage->getBitDepth() ),
-                                                          -1, false, unPremultRequired, tmp.get() );
-                    tmp->downscaleMipmap( it->second.tmpImage->getRoD(),
-                                          renderMappedRectToRender, 0, mipmapLevel, false, it->second.downscaleImage.get() );
+                    it->second.tmpImage->convertToFormat(renderMappedRectToRender,
+                                                         _publicInterface->getApp()->getDefaultColorSpaceForBitDepth(it->second.tmpImage->getBitDepth()),
+                                                         _publicInterface->getApp()->getDefaultColorSpaceForBitDepth(it->second.fullscaleImage->getBitDepth()),
+                                                         -1, false, unPremultRequired, tmp.get());
+                    tmp->downscaleMipmap(it->second.tmpImage->getRoD(),
+                                         renderMappedRectToRender, 0, mipmapLevel, false, it->second.downscaleImage.get());
                     it->second.fullscaleImage->pasteFrom(*tmp, renderMappedRectToRender, false);
                 } else {
                     /*
                      *  Downscaling required only
                      */
-                    it->second.tmpImage->downscaleMipmap( it->second.tmpImage->getRoD(),
-                                                          actionArgs.roi, 0, mipmapLevel, false, it->second.downscaleImage.get() );
+                    it->second.tmpImage->downscaleMipmap(it->second.tmpImage->getRoD(),
+                                                         actionArgs.roi, 0, mipmapLevel, false, it->second.downscaleImage.get());
+
                     if (it->second.tmpImage != it->second.fullscaleImage) {
                         it->second.fullscaleImage->pasteFrom(*(it->second.tmpImage), renderMappedRectToRender, false);
                     }
@@ -2857,19 +2985,19 @@ EffectInstance::Implementation::renderHandler(const EffectTLSDataPtr& tls,
                 ///Copy the rectangle rendered in the downscaled image
                 if (it->second.tmpImage != it->second.downscaleImage) {
                     // We cannot be rendering using OpenGL in this case
-                    assert(!planes.useOpenGL);
 
-                    if ( ( it->second.downscaleImage->getComponents() != it->second.tmpImage->getComponents() ) ||
-                         ( it->second.downscaleImage->getBitDepth() != it->second.tmpImage->getBitDepth() ) ) {
+
+                    if ((it->second.downscaleImage->getComponents() != it->second.tmpImage->getComponents()) ||
+                        (it->second.downscaleImage->getBitDepth() != it->second.tmpImage->getBitDepth())) {
                         /*
                          * BitDepth/Components conversion required
                          */
 
 
-                        it->second.tmpImage->convertToFormat( it->second.tmpImage->getBounds(),
-                                                              _publicInterface->getApp()->getDefaultColorSpaceForBitDepth( it->second.tmpImage->getBitDepth() ),
-                                                              _publicInterface->getApp()->getDefaultColorSpaceForBitDepth( it->second.downscaleImage->getBitDepth() ),
-                                                              -1, false, unPremultRequired, it->second.downscaleImage.get() );
+                        it->second.tmpImage->convertToFormat(it->second.tmpImage->getBounds(),
+                                                             _publicInterface->getApp()->getDefaultColorSpaceForBitDepth(it->second.tmpImage->getBitDepth()),
+                                                             _publicInterface->getApp()->getDefaultColorSpaceForBitDepth(it->second.downscaleImage->getBitDepth()),
+                                                             -1, false, unPremultRequired, it->second.downscaleImage.get());
                     } else {
                         /*
                          * No conversion required, copy to output
@@ -2879,15 +3007,16 @@ EffectInstance::Implementation::renderHandler(const EffectTLSDataPtr& tls,
                     }
                 }
 
-                it->second.downscaleImage->copyUnProcessedChannels(actionArgs.roi, planes.outputPremult, originalImagePremultiplication, processChannels, originalInputImage, true, glContext);
+                it->second.downscaleImage->copyUnProcessedChannels(actionArgs.roi, planes.outputPremult, originalImagePremultiplication, processChannels, originalInputImage, true);
+
                 if (useMaskMix) {
-                    it->second.downscaleImage->applyMaskMix(actionArgs.roi, maskImage.get(), originalInputImage.get(), doMask, false, mix, glContext);
+                    it->second.downscaleImage->applyMaskMix(actionArgs.roi, maskImage.get(), originalInputImage.get(), doMask, false, mix);
                 }
             } // if (renderFullScaleThenDownscale) {
         } // if (it->second.isAllocatedOnTheFly) {
 
-        if ( frameArgs->stats && frameArgs->stats->isInDepthProfilingEnabled() ) {
-            frameArgs->stats->addRenderInfosForNode( _publicInterface->getNode(),  NodePtr(), it->first.getChannelsLabel(), renderMappedRectToRender, timeRecorder->getTimeSinceCreation() );
+        if (frameArgs->stats && frameArgs->stats->isInDepthProfilingEnabled()) {
+            frameArgs->stats->addRenderInfosForNode(_publicInterface->getNode(),  NodePtr(), it->first.getChannelsLabel(), renderMappedRectToRender, timeRecorder->getTimeSinceCreation());
         }
     } // for (std::map<ImagePlaneDesc,PlaneToRender>::const_iterator it = outputPlanes.begin(); it != outputPlanes.end(); ++it) {
 
@@ -2915,14 +3044,16 @@ EffectInstance::allocateImagePlaneAndSetInThreadLocalStorage(const ImagePlaneDes
         return ImagePtr();
     }
 
-    assert( !tls->currentRenderArgs.outputPlanes.empty() );
+    assert(!tls->currentRenderArgs.outputPlanes.empty());
 
     const EffectInstance::PlaneToRender & firstPlane = tls->currentRenderArgs.outputPlanes.begin()->second;
     bool useCache = firstPlane.fullscaleImage->usesBitMap() || firstPlane.downscaleImage->usesBitMap();
-    if ( getNode()->getPluginID().rfind("uk.co.thefoundry.furnace", 0) != std::string::npos ) {
+
+    if (getNode()->getPluginID().rfind("uk.co.thefoundry.furnace", 0) != std::string::npos) {
         //Furnace plug-ins are bugged and do not render properly both planes, just wipe the image.
         useCache = false;
     }
+
     const ImagePtr & img = firstPlane.fullscaleImage->usesBitMap() ? firstPlane.fullscaleImage : firstPlane.downscaleImage;
     ImageParamsPtr params = img->getParams();
     EffectInstance::PlaneToRender p;
@@ -2942,6 +3073,7 @@ EffectInstance::allocateImagePlaneAndSetInThreadLocalStorage(const ImagePlaneDes
                                  useCache,
                                  &p.fullscaleImage,
                                  &p.downscaleImage);
+
     if (!ok) {
         return ImagePtr();
     } else {
@@ -2953,32 +3085,33 @@ EffectInstance::allocateImagePlaneAndSetInThreadLocalStorage(const ImagePlaneDes
          */
         if (useCache) {
 #ifdef BOOST_NO_CXX11_VARIADIC_TEMPLATES
-            p.tmpImage.reset( new Image(p.renderMappedImage->getComponents(),
-                                        p.renderMappedImage->getRoD(),
-                                        tls->currentRenderArgs.renderWindowPixel,
-                                        p.renderMappedImage->getMipmapLevel(),
-                                        p.renderMappedImage->getPixelAspectRatio(),
-                                        p.renderMappedImage->getBitDepth(),
-                                        p.renderMappedImage->getPremultiplication(),
-                                        p.renderMappedImage->getFieldingOrder(),
-                                        false /*useBitmap*/,
-                                        img->getParams()->getStorageInfo().mode) );
+            p.tmpImage.reset(new Image(p.renderMappedImage->getComponents(),
+                                       p.renderMappedImage->getRoD(),
+                                       tls->currentRenderArgs.renderWindowPixel,
+                                       p.renderMappedImage->getMipmapLevel(),
+                                       p.renderMappedImage->getPixelAspectRatio(),
+                                       p.renderMappedImage->getBitDepth(),
+                                       p.renderMappedImage->getPremultiplication(),
+                                       p.renderMappedImage->getFieldingOrder(),
+                                       false /*useBitmap*/,
+                                       img->getParams()->getStorageInfo().mode));
 #else
             p.tmpImage = std::make_shared<Image>(p.renderMappedImage->getComponents(),
-                                                   p.renderMappedImage->getRoD(),
-                                                   tls->currentRenderArgs.renderWindowPixel,
-                                                   p.renderMappedImage->getMipmapLevel(),
-                                                   p.renderMappedImage->getPixelAspectRatio(),
-                                                   p.renderMappedImage->getBitDepth(),
-                                                   p.renderMappedImage->getPremultiplication(),
-                                                   p.renderMappedImage->getFieldingOrder(),
-                                                   false /*useBitmap*/,
-                                                   img->getParams()->getStorageInfo().mode);
+                                                 p.renderMappedImage->getRoD(),
+                                                 tls->currentRenderArgs.renderWindowPixel,
+                                                 p.renderMappedImage->getMipmapLevel(),
+                                                 p.renderMappedImage->getPixelAspectRatio(),
+                                                 p.renderMappedImage->getBitDepth(),
+                                                 p.renderMappedImage->getPremultiplication(),
+                                                 p.renderMappedImage->getFieldingOrder(),
+                                                 false /*useBitmap*/,
+                                                 img->getParams()->getStorageInfo().mode);
 #endif
         } else {
             p.tmpImage = p.renderMappedImage;
         }
-        tls->currentRenderArgs.outputPlanes.insert( std::make_pair(plane, p) );
+
+        tls->currentRenderArgs.outputPlanes.insert(std::make_pair(plane, p));
 
         return p.downscaleImage;
     }
@@ -2987,27 +3120,33 @@ EffectInstance::allocateImagePlaneAndSetInThreadLocalStorage(const ImagePlaneDes
 void
 EffectInstance::openImageFileKnob()
 {
-    const std::vector<KnobIPtr> & knobs = getKnobs();
+    const std::vector<KnobIPtr> &knobs = getKnobs();
 
     for (U32 i = 0; i < knobs.size(); ++i) {
-        if ( knobs[i]->typeName() == KnobFile::typeNameStatic() ) {
+        if (knobs[i]->typeName() == KnobFile::typeNameStatic()) {
             KnobFilePtr fk = std::dynamic_pointer_cast<KnobFile>(knobs[i]);
             assert(fk);
-            if ( fk->isInputImageFile() ) {
+
+            if (fk->isInputImageFile()) {
                 std::string file = fk->getValue();
-                if ( file.empty() ) {
+
+                if (file.empty()) {
                     fk->open_file();
                 }
+
                 break;
             }
-        } else if ( knobs[i]->typeName() == KnobOutputFile::typeNameStatic() ) {
+        } else if (knobs[i]->typeName() == KnobOutputFile::typeNameStatic()) {
             KnobOutputFilePtr fk = std::dynamic_pointer_cast<KnobOutputFile>(knobs[i]);
             assert(fk);
-            if ( fk->isOutputImageFile() ) {
+
+            if (fk->isOutputImageFile()) {
                 std::string file = fk->getValue();
-                if ( file.empty() ) {
+
+                if (file.empty()) {
                     fk->open_file();
                 }
+
                 break;
             }
         }
@@ -3021,13 +3160,14 @@ EffectInstance::onSignificantEvaluateAboutToBeCalled(KnobI* knob)
     abortAnyEvaluation();
 
     NodePtr node = getNode();
-    if ( !node->isNodeCreated() ) {
+
+    if (!node->isNodeCreated()) {
         return;
     }
 
     bool isMT = QThread::currentThread() == qApp->thread();
 
-    if ( isMT && ( !knob || knob->getEvaluateOnChange() ) ) {
+    if (isMT && (!knob || knob->getEvaluateOnChange())) {
         getApp()->triggerAutoSave();
     }
 
@@ -3046,7 +3186,7 @@ EffectInstance::evaluate(bool isSignificant,
 {
     NodePtr node = getNode();
 
-    if ( refreshMetadatas && node->isNodeCreated() ) {
+    if (refreshMetadatas && node->isNodeCreated()) {
         refreshMetadata_public(true);
     }
 
@@ -3061,9 +3201,10 @@ EffectInstance::evaluate(bool isSignificant,
 
 
     double time = getCurrentTime();
-    std::list<ViewerInstance* > viewers;
+    std::list<ViewerInstance * > viewers;
     node->hasViewersConnected(&viewers);
-    for (std::list<ViewerInstance* >::iterator it = viewers.begin();
+
+    for (std::list<ViewerInstance * >::iterator it = viewers.begin();
          it != viewers.end();
          ++it) {
         if (isSignificant) {
@@ -3072,6 +3213,7 @@ EffectInstance::evaluate(bool isSignificant,
             (*it)->redrawViewer();
         }
     }
+
     if (isSignificant) {
         node->refreshPreviewsRecursivelyDownstream(time);
     }
@@ -3092,6 +3234,7 @@ EffectInstance::setPersistentMessage(MessageTypeEnum type,
 {
     NodePtr node = getNode();
     assert(node);
+
     if (node) {
         node->setPersistentMessage(type, content);
     }
@@ -3110,10 +3253,12 @@ EffectInstance::clearPersistentMessage(bool recurse)
 {
     NodePtr node = getNode();
     assert(node);
+
     if (node) {
         node->clearPersistentMessage(recurse);
     }
-    assert( !hasPersistentMessage() );
+
+    assert(!hasPersistentMessage());
 }
 
 int
@@ -3165,23 +3310,25 @@ EffectInstance::setSupportsRenderScaleMaybe(EffectInstance::SupportsEnum s) cons
     NodePtr node = getNode();
 
     if (node) {
-        node->onSetSupportRenderScaleMaybeSet( (int)s );
+        node->onSetSupportRenderScaleMaybeSet((int)s);
     }
 }
 
 void
 EffectInstance::setOutputFilesForWriter(const std::string & pattern)
 {
-    if ( !isWriter() ) {
+    if (!isWriter()) {
         return;
     }
 
     const KnobsVec & knobs = getKnobs();
+
     for (U32 i = 0; i < knobs.size(); ++i) {
-        if ( knobs[i]->typeName() == KnobOutputFile::typeNameStatic() ) {
+        if (knobs[i]->typeName() == KnobOutputFile::typeNameStatic()) {
             KnobOutputFilePtr fk = std::dynamic_pointer_cast<KnobOutputFile>(knobs[i]);
             assert(fk);
-            if ( fk->isOutputImageFile() ) {
+
+            if (fk->isOutputImageFile()) {
                 fk->setValue(pattern);
                 break;
             }
@@ -3192,7 +3339,7 @@ EffectInstance::setOutputFilesForWriter(const std::string & pattern)
 PluginMemoryPtr
 EffectInstance::newMemoryInstance(size_t nBytes)
 {
-    PluginMemoryPtr ret = std::make_shared<PluginMemory>( shared_from_this() ); //< hack to get "this" as a shared ptr
+    PluginMemoryPtr ret = std::make_shared<PluginMemory>(shared_from_this());   //< hack to get "this" as a shared ptr
 
     addPluginMemoryPointer(ret);
     bool wasntLocked = ret->alloc(nBytes);
@@ -3222,10 +3369,13 @@ EffectInstance::removePluginMemoryPointer(const PluginMemory* mem)
 
         for (std::list<PluginMemoryWPtr>::iterator it = _imp->pluginMemoryChunks.begin(); it != _imp->pluginMemoryChunks.end(); ++it) {
             PluginMemoryPtr p = it->lock();
+
             if (!p) {
                 continue;
             }
+
             safeCopy.push_back(p);
+
             if (p.get() == mem) {
                 _imp->pluginMemoryChunks.erase(it);
 
@@ -3266,16 +3416,16 @@ EffectInstance::onKnobSlaved(const KnobIPtr& slave,
 void
 EffectInstance::setCurrentViewportForOverlays_public(OverlaySupport* viewport)
 {
-    assert( QThread::currentThread() == qApp->thread() );
+    assert(QThread::currentThread() == qApp->thread());
     getNode()->setCurrentViewportForHostOverlays(viewport);
     _imp->overlaysViewport = viewport;
     setCurrentViewportForOverlays(viewport);
 }
 
-OverlaySupport*
+OverlaySupport *
 EffectInstance::getCurrentViewportForOverlays() const
 {
-    assert( QThread::currentThread() == qApp->thread() );
+    assert(QThread::currentThread() == qApp->thread());
 
     return _imp->overlaysViewport;
 }
@@ -3286,21 +3436,30 @@ EffectInstance::setDoingInteractAction(bool doing)
     _imp->setDuringInteractAction(doing);
 }
 
+bool
+EffectInstance::isCurrentOverlayBackendSupported() const
+{
+    const auto* viewport = getCurrentViewportForOverlays();
+    return !viewport || !viewport->supportsOverlayDrawList() || supportsOverlayDrawList();
+}
+
 void
 EffectInstance::drawOverlay_public(double time,
                                    const RenderScale & renderScale,
                                    ViewIdx view)
 {
     ///cannot be run in another thread
-    assert( QThread::currentThread() == qApp->thread() );
-    if ( !hasOverlay() && !getNode()->hasHostOverlay() ) {
+    assert(QThread::currentThread() == qApp->thread());
+
+    if (!hasOverlay() && !getNode()->hasHostOverlay()) {
         return;
     }
 
     RECURSIVE_ACTION();
 
     RenderScale actualScale;
-    if ( !canHandleRenderScaleForOverlays() ) {
+
+    if (!canHandleRenderScaleForOverlays()) {
         actualScale = RenderScale::identity;
     } else {
         actualScale = renderScale;
@@ -3308,10 +3467,15 @@ EffectInstance::drawOverlay_public(double time,
 
     _imp->setDuringInteractAction(true);
     bool drawHostOverlay = shouldDrawHostOverlay();
-    drawOverlay(time, actualScale, view);
+
+    if (isCurrentOverlayBackendSupported()) {
+        drawOverlay(time, actualScale, view);
+    }
+
     if (drawHostOverlay) {
         getNode()->drawHostOverlay(time, actualScale, view);
     }
+
     _imp->setDuringInteractAction(false);
 }
 
@@ -3326,13 +3490,15 @@ EffectInstance::onOverlayPenDown_public(double time,
                                         PenType pen)
 {
     ///cannot be run in another thread
-    assert( QThread::currentThread() == qApp->thread() );
-    if ( !hasOverlay()  && !getNode()->hasHostOverlay() ) {
+    assert(QThread::currentThread() == qApp->thread());
+
+    if (!hasOverlay()  && !getNode()->hasHostOverlay()) {
         return false;
     }
 
     RenderScale actualScale;
-    if ( !canHandleRenderScaleForOverlays() ) {
+
+    if (!canHandleRenderScaleForOverlays()) {
         actualScale = RenderScale::identity;
     } else {
         actualScale = renderScale;
@@ -3343,13 +3509,16 @@ EffectInstance::onOverlayPenDown_public(double time,
         NON_RECURSIVE_ACTION();
         _imp->setDuringInteractAction(true);
         bool drawHostOverlay = shouldDrawHostOverlay();
+
         if (!shouldPreferPluginOverlayOverHostOverlay()) {
             ret = drawHostOverlay ? getNode()->onOverlayPenDownDefault(time, actualScale, view, viewportPos, pos, pressure) : false;
+
             if (!ret) {
-                ret |= onOverlayPenDown(time, actualScale, view, viewportPos, pos, pressure, timestamp, pen);
+                ret |= isCurrentOverlayBackendSupported() && onOverlayPenDown(time, actualScale, view, viewportPos, pos, pressure, timestamp, pen);
             }
         } else {
-            ret = onOverlayPenDown(time, actualScale, view, viewportPos, pos, pressure, timestamp, pen);
+            ret = isCurrentOverlayBackendSupported() && onOverlayPenDown(time, actualScale, view, viewportPos, pos, pressure, timestamp, pen);
+
             if (!ret && drawHostOverlay) {
                 ret |= getNode()->onOverlayPenDownDefault(time, actualScale, view, viewportPos, pos, pressure);
             }
@@ -3364,19 +3533,21 @@ EffectInstance::onOverlayPenDown_public(double time,
 
 bool
 EffectInstance::onOverlayPenDoubleClicked_public(double time,
-                                                 const RenderScale & renderScale,
-                                                 ViewIdx view,
-                                                 const QPointF & viewportPos,
-                                                 const QPointF & pos)
+        const RenderScale & renderScale,
+        ViewIdx view,
+        const QPointF & viewportPos,
+        const QPointF & pos)
 {
     ///cannot be run in another thread
-    assert( QThread::currentThread() == qApp->thread() );
-    if ( !hasOverlay()  && !getNode()->hasHostOverlay() ) {
+    assert(QThread::currentThread() == qApp->thread());
+
+    if (!hasOverlay()  && !getNode()->hasHostOverlay()) {
         return false;
     }
 
     RenderScale actualScale;
-    if ( !canHandleRenderScaleForOverlays() ) {
+
+    if (!canHandleRenderScaleForOverlays()) {
         actualScale = RenderScale::identity;
     } else {
         actualScale = renderScale;
@@ -3387,13 +3558,16 @@ EffectInstance::onOverlayPenDoubleClicked_public(double time,
         NON_RECURSIVE_ACTION();
         _imp->setDuringInteractAction(true);
         bool drawHostOverlay = shouldDrawHostOverlay();
+
         if (!shouldPreferPluginOverlayOverHostOverlay()) {
             ret = drawHostOverlay ? getNode()->onOverlayPenDoubleClickedDefault(time, actualScale, view, viewportPos, pos) : false;
+
             if (!ret) {
-                ret |= onOverlayPenDoubleClicked(time, actualScale, view, viewportPos, pos);
+                ret |= isCurrentOverlayBackendSupported() && onOverlayPenDoubleClicked(time, actualScale, view, viewportPos, pos);
             }
         } else {
-            ret = onOverlayPenDoubleClicked(time, actualScale, view, viewportPos, pos);
+            ret = isCurrentOverlayBackendSupported() && onOverlayPenDoubleClicked(time, actualScale, view, viewportPos, pos);
+
             if (!ret && drawHostOverlay) {
                 ret |= getNode()->onOverlayPenDoubleClickedDefault(time, actualScale, view, viewportPos, pos);
             }
@@ -3408,21 +3582,23 @@ EffectInstance::onOverlayPenDoubleClicked_public(double time,
 
 bool
 EffectInstance::onOverlayPenMotion_public(double time,
-                                          const RenderScale & renderScale,
-                                          ViewIdx view,
-                                          const QPointF & viewportPos,
-                                          const QPointF & pos,
-                                          double pressure,
-                                          double timestamp)
+        const RenderScale & renderScale,
+        ViewIdx view,
+        const QPointF & viewportPos,
+        const QPointF & pos,
+        double pressure,
+        double timestamp)
 {
     ///cannot be run in another thread
-    assert( QThread::currentThread() == qApp->thread() );
-    if ( !hasOverlay()  && !getNode()->hasHostOverlay() ) {
+    assert(QThread::currentThread() == qApp->thread());
+
+    if (!hasOverlay()  && !getNode()->hasHostOverlay()) {
         return false;
     }
 
     RenderScale actualScale;
-    if ( !canHandleRenderScaleForOverlays() ) {
+
+    if (!canHandleRenderScaleForOverlays()) {
         actualScale = RenderScale::identity;
     } else {
         actualScale = renderScale;
@@ -3433,13 +3609,16 @@ EffectInstance::onOverlayPenMotion_public(double time,
     _imp->setDuringInteractAction(true);
     bool ret;
     bool drawHostOverlay = shouldDrawHostOverlay();
+
     if (!shouldPreferPluginOverlayOverHostOverlay()) {
         ret = drawHostOverlay ? getNode()->onOverlayPenMotionDefault(time, actualScale, view, viewportPos, pos, pressure) : false;
+
         if (!ret) {
-            ret |= onOverlayPenMotion(time, actualScale, view, viewportPos, pos, pressure, timestamp);
+            ret |= isCurrentOverlayBackendSupported() && onOverlayPenMotion(time, actualScale, view, viewportPos, pos, pressure, timestamp);
         }
     } else {
-        ret = onOverlayPenMotion(time, actualScale, view, viewportPos, pos, pressure, timestamp);
+        ret = isCurrentOverlayBackendSupported() && onOverlayPenMotion(time, actualScale, view, viewportPos, pos, pressure, timestamp);
+
         if (!ret && drawHostOverlay) {
             ret |= getNode()->onOverlayPenMotionDefault(time, actualScale, view, viewportPos, pos, pressure);
         }
@@ -3462,13 +3641,15 @@ EffectInstance::onOverlayPenUp_public(double time,
                                       double timestamp)
 {
     ///cannot be run in another thread
-    assert( QThread::currentThread() == qApp->thread() );
-    if ( !hasOverlay()  && !getNode()->hasHostOverlay() ) {
+    assert(QThread::currentThread() == qApp->thread());
+
+    if (!hasOverlay()  && !getNode()->hasHostOverlay()) {
         return false;
     }
 
     RenderScale actualScale;
-    if ( !canHandleRenderScaleForOverlays() ) {
+
+    if (!canHandleRenderScaleForOverlays()) {
         actualScale = RenderScale::identity;
     } else {
         actualScale = renderScale;
@@ -3479,13 +3660,16 @@ EffectInstance::onOverlayPenUp_public(double time,
         NON_RECURSIVE_ACTION();
         _imp->setDuringInteractAction(true);
         bool drawHostOverlay = shouldDrawHostOverlay();
+
         if (!shouldPreferPluginOverlayOverHostOverlay()) {
             ret = drawHostOverlay ? getNode()->onOverlayPenUpDefault(time, actualScale, view, viewportPos, pos, pressure) : false;
+
             if (!ret) {
-                ret |= onOverlayPenUp(time, actualScale, view, viewportPos, pos, pressure, timestamp);
+                ret |= isCurrentOverlayBackendSupported() && onOverlayPenUp(time, actualScale, view, viewportPos, pos, pressure, timestamp);
             }
         } else {
-            ret = onOverlayPenUp(time, actualScale, view, viewportPos, pos, pressure, timestamp);
+            ret = isCurrentOverlayBackendSupported() && onOverlayPenUp(time, actualScale, view, viewportPos, pos, pressure, timestamp);
+
             if (!ret && drawHostOverlay) {
                 ret |= getNode()->onOverlayPenUpDefault(time, actualScale, view, viewportPos, pos, pressure);
             }
@@ -3506,13 +3690,15 @@ EffectInstance::onOverlayKeyDown_public(double time,
                                         KeyboardModifiers modifiers)
 {
     ///cannot be run in another thread
-    assert( QThread::currentThread() == qApp->thread() );
-    if ( !hasOverlay()  && !getNode()->hasHostOverlay() ) {
+    assert(QThread::currentThread() == qApp->thread());
+
+    if (!hasOverlay()  && !getNode()->hasHostOverlay()) {
         return false;
     }
 
     RenderScale actualScale;
-    if ( !canHandleRenderScaleForOverlays() ) {
+
+    if (!canHandleRenderScaleForOverlays()) {
         actualScale = RenderScale::identity;
     } else {
         actualScale = renderScale;
@@ -3523,10 +3709,12 @@ EffectInstance::onOverlayKeyDown_public(double time,
     {
         NON_RECURSIVE_ACTION();
         _imp->setDuringInteractAction(true);
-        ret = onOverlayKeyDown(time, actualScale, view, key, modifiers);
+        ret = isCurrentOverlayBackendSupported() && onOverlayKeyDown(time, actualScale, view, key, modifiers);
+
         if (!ret && shouldDrawHostOverlay()) {
             ret |= getNode()->onOverlayKeyDownDefault(time, actualScale, view, key, modifiers);
         }
+
         _imp->setDuringInteractAction(false);
     }
     checkIfRenderNeeded();
@@ -3542,13 +3730,15 @@ EffectInstance::onOverlayKeyUp_public(double time,
                                       KeyboardModifiers modifiers)
 {
     ///cannot be run in another thread
-    assert( QThread::currentThread() == qApp->thread() );
-    if ( !hasOverlay()  && !getNode()->hasHostOverlay() ) {
+    assert(QThread::currentThread() == qApp->thread());
+
+    if (!hasOverlay()  && !getNode()->hasHostOverlay()) {
         return false;
     }
 
     RenderScale actualScale;
-    if ( !canHandleRenderScaleForOverlays() ) {
+
+    if (!canHandleRenderScaleForOverlays()) {
         actualScale = RenderScale::identity;
     } else {
         actualScale = renderScale;
@@ -3559,10 +3749,12 @@ EffectInstance::onOverlayKeyUp_public(double time,
         NON_RECURSIVE_ACTION();
 
         _imp->setDuringInteractAction(true);
-        ret = onOverlayKeyUp(time, actualScale, view, key, modifiers);
+        ret = isCurrentOverlayBackendSupported() && onOverlayKeyUp(time, actualScale, view, key, modifiers);
+
         if (!ret && shouldDrawHostOverlay()) {
             ret |= getNode()->onOverlayKeyUpDefault(time, actualScale, view, key, modifiers);
         }
+
         _imp->setDuringInteractAction(false);
     }
     checkIfRenderNeeded();
@@ -3572,19 +3764,21 @@ EffectInstance::onOverlayKeyUp_public(double time,
 
 bool
 EffectInstance::onOverlayKeyRepeat_public(double time,
-                                          const RenderScale & renderScale,
-                                          ViewIdx view,
-                                          Key key,
-                                          KeyboardModifiers modifiers)
+        const RenderScale & renderScale,
+        ViewIdx view,
+        Key key,
+        KeyboardModifiers modifiers)
 {
     ///cannot be run in another thread
-    assert( QThread::currentThread() == qApp->thread() );
-    if ( !hasOverlay()  && !getNode()->hasHostOverlay() ) {
+    assert(QThread::currentThread() == qApp->thread());
+
+    if (!hasOverlay()  && !getNode()->hasHostOverlay()) {
         return false;
     }
 
     RenderScale actualScale;
-    if ( !canHandleRenderScaleForOverlays() ) {
+
+    if (!canHandleRenderScaleForOverlays()) {
         actualScale = RenderScale::identity;
     } else {
         actualScale = renderScale;
@@ -3594,10 +3788,12 @@ EffectInstance::onOverlayKeyRepeat_public(double time,
     {
         NON_RECURSIVE_ACTION();
         _imp->setDuringInteractAction(true);
-        ret = onOverlayKeyRepeat(time, actualScale, view, key, modifiers);
+        ret = isCurrentOverlayBackendSupported() && onOverlayKeyRepeat(time, actualScale, view, key, modifiers);
+
         if (!ret && shouldDrawHostOverlay()) {
             ret |= getNode()->onOverlayKeyRepeatDefault(time, actualScale, view, key, modifiers);
         }
+
         _imp->setDuringInteractAction(false);
     }
     checkIfRenderNeeded();
@@ -3607,17 +3803,19 @@ EffectInstance::onOverlayKeyRepeat_public(double time,
 
 bool
 EffectInstance::onOverlayFocusGained_public(double time,
-                                            const RenderScale & renderScale,
-                                            ViewIdx view)
+        const RenderScale & renderScale,
+        ViewIdx view)
 {
     ///cannot be run in another thread
-    assert( QThread::currentThread() == qApp->thread() );
-    if ( !hasOverlay() && !getNode()->hasHostOverlay() ) {
+    assert(QThread::currentThread() == qApp->thread());
+
+    if (!hasOverlay() && !getNode()->hasHostOverlay()) {
         return false;
     }
 
     RenderScale actualScale;
-    if ( !canHandleRenderScaleForOverlays() ) {
+
+    if (!canHandleRenderScaleForOverlays()) {
         actualScale = RenderScale::identity;
     } else {
         actualScale = renderScale;
@@ -3627,7 +3825,8 @@ EffectInstance::onOverlayFocusGained_public(double time,
     {
         NON_RECURSIVE_ACTION();
         _imp->setDuringInteractAction(true);
-        ret = onOverlayFocusGained(time, actualScale, view);
+        ret = isCurrentOverlayBackendSupported() && onOverlayFocusGained(time, actualScale, view);
+
         if (shouldDrawHostOverlay()) {
             ret |= getNode()->onOverlayFocusGainedDefault(time, actualScale, view);
         }
@@ -3641,17 +3840,19 @@ EffectInstance::onOverlayFocusGained_public(double time,
 
 bool
 EffectInstance::onOverlayFocusLost_public(double time,
-                                          const RenderScale & renderScale,
-                                          ViewIdx view)
+        const RenderScale & renderScale,
+        ViewIdx view)
 {
     ///cannot be run in another thread
-    assert( QThread::currentThread() == qApp->thread() );
-    if ( !hasOverlay() && !getNode()->hasHostOverlay() ) {
+    assert(QThread::currentThread() == qApp->thread());
+
+    if (!hasOverlay() && !getNode()->hasHostOverlay()) {
         return false;
     }
 
     RenderScale actualScale;
-    if ( !canHandleRenderScaleForOverlays() ) {
+
+    if (!canHandleRenderScaleForOverlays()) {
         actualScale = RenderScale::identity;
     } else {
         actualScale = renderScale;
@@ -3662,7 +3863,8 @@ EffectInstance::onOverlayFocusLost_public(double time,
     {
         NON_RECURSIVE_ACTION();
         _imp->setDuringInteractAction(true);
-        ret = onOverlayFocusLost(time, actualScale, view);
+        ret = isCurrentOverlayBackendSupported() && onOverlayFocusLost(time, actualScale, view);
+
         if (shouldDrawHostOverlay()) {
             ret |= getNode()->onOverlayFocusLostDefault(time, actualScale, view);
         }
@@ -3678,12 +3880,16 @@ void
 EffectInstance::setInteractColourPicker_public(const OfxRGBAColourD& color, bool setColor, bool hasColor)
 {
     const KnobsVec& knobs = getKnobs();
+
     for (KnobsVec::const_iterator it2 = knobs.begin(); it2 != knobs.end(); ++it2) {
         const KnobIPtr& k = *it2;
+
         if (!k) {
             continue;
         }
+
         OfxParamOverlayInteractPtr interact = k->getCustomInteract();
+
         if (!interact) {
             continue;
         }
@@ -3691,12 +3897,14 @@ EffectInstance::setInteractColourPicker_public(const OfxRGBAColourD& color, bool
         if (!interact->isColorPickerRequired()) {
             continue;
         }
+
         if (!hasColor) {
             interact->setHasColorPicker(false);
         } else {
             if (setColor) {
                 interact->setLastColorPickerColor(color);
             }
+
             interact->setHasColorPicker(true);
         }
 
@@ -3719,7 +3927,7 @@ StatusEnum
 EffectInstance::render_public(const RenderActionArgs & args)
 {
     NON_RECURSIVE_ACTION();
-    REPORT_CURRENT_THREAD_ACTION( kOfxImageEffectActionRender, getNode() );
+    REPORT_CURRENT_THREAD_ACTION(kOfxImageEffectActionRender, getNode());
 
     return render(args);
 }
@@ -3745,13 +3953,14 @@ EffectInstance::isIdentity_public(bool useIdentityCache, // only set to true whe
                                   const RenderScale & scale,
                                   const RectI & renderWindow,
                                   ViewIdx view,
-                                  double* inputTime,
+                                  double *inputTime,
                                   ViewIdx* inputView,
-                                  int* inputNb)
+                                  int *inputNb)
 {
     if (useIdentityCache) {
         double timeF = 0.;
         bool foundInCache = _imp->actionsCache->getIdentityResult(hash, time, view, inputNb, inputView, &timeF);
+
         if (foundInCache) {
             *inputTime = timeF;
 
@@ -3766,12 +3975,13 @@ EffectInstance::isIdentity_public(bool useIdentityCache, // only set to true whe
 
     bool ret = false;
     RotoDrawableItemPtr rotoItem = getNode()->getAttachedRotoItem();
-    if ( ( rotoItem && !rotoItem->isActivated(time) ) || getNode()->isNodeDisabled() || !getNode()->hasAtLeastOneChannelToProcess() ) {
+
+    if ((rotoItem && !rotoItem->isActivated(time)) || getNode()->isNodeDisabled() || !getNode()->hasAtLeastOneChannelToProcess()) {
         ret = true;
         *inputNb = getNode()->getPreferredInput();
         *inputTime = time;
         *inputView = view;
-    } else if ( appPTR->isBackground() && (dynamic_cast<DiskCacheNode*>(this) != NULL) ) {
+    } else if (appPTR->isBackground() && (dynamic_cast<DiskCacheNode * >(this) != NULL)) {
         ret = true;
         *inputNb = 0;
         *inputTime = time;
@@ -3787,6 +3997,7 @@ EffectInstance::isIdentity_public(bool useIdentityCache, // only set to true whe
             }
         }
     }
+
     if (!ret) {
         *inputNb = -1;
         *inputTime = time;
@@ -3807,11 +4018,11 @@ EffectInstance::onInputChanged(int /*inputNo*/)
 
 StatusEnum
 EffectInstance::getRegionOfDefinitionFromCache(U64 hash,
-                                               double time,
-                                               const RenderScale & scale,
-                                               ViewIdx view,
-                                               RectD* rod,
-                                               bool* isProjectFormat)
+        double time,
+        const RenderScale & scale,
+        ViewIdx view,
+        RectD* rod,
+        bool* isProjectFormat)
 {
     unsigned int mipmapLevel = scale.toMipmapLevel();
     bool foundInCache = _imp->actionsCache->getRoDResult(hash, time, view, mipmapLevel, rod);
@@ -3820,7 +4031,8 @@ EffectInstance::getRegionOfDefinitionFromCache(U64 hash,
         if (isProjectFormat) {
             *isProjectFormat = false;
         }
-        if ( rod->isNull() ) {
+
+        if (rod->isNull()) {
             return eStatusFailed;
         }
 
@@ -3832,24 +4044,26 @@ EffectInstance::getRegionOfDefinitionFromCache(U64 hash,
 
 StatusEnum
 EffectInstance::getRegionOfDefinition_public(U64 hash,
-                                             double time,
-                                             const RenderScale & scale,
-                                             ViewIdx view,
-                                             RectD* rod,
-                                             bool* isProjectFormat)
+        double time,
+        const RenderScale & scale,
+        ViewIdx view,
+        RectD* rod,
+        bool* isProjectFormat)
 {
-    if ( !isEffectCreated() ) {
+    if (!isEffectCreated()) {
         return eStatusFailed;
     }
 
     unsigned int mipmapLevel = scale.toMipmapLevel();
     bool foundInCache = _imp->actionsCache->getRoDResult(hash, time, view, mipmapLevel, rod);
+
     if (foundInCache) {
         if (isProjectFormat) {
             *isProjectFormat = false;
         }
+
 //#pragma message WARN("[FD] why is an empty RoD a failure case? this is ignored in renderRoI, search for 'if getRoD fails, this might be because the RoD is null after all (e.g: an empty Roto node), we don't want the render to fail'")
-        if ( rod->isNull() ) {
+        if (rod->isNull()) {
             return eStatusFailed;
         }
 
@@ -3857,10 +4071,12 @@ EffectInstance::getRegionOfDefinition_public(U64 hash,
     } else {
         ///If this is running on a render thread, attempt to find the RoD in the thread-local storage.
 
-        if ( QThread::currentThread() != qApp->thread() ) {
+        if (QThread::currentThread() != qApp->thread()) {
             EffectTLSDataPtr tls = _imp->tlsData->getTLSData();
+
             if (tls && tls->currentRenderArgs.validArgs) {
                 *rod = tls->currentRenderArgs.rod;
+
                 if (isProjectFormat) {
                     *isProjectFormat = false;
                 }
@@ -3869,8 +4085,9 @@ EffectInstance::getRegionOfDefinition_public(U64 hash,
             }
         }
 
-        if ( getNode()->isNodeDisabled() ) {
+        if (getNode()->isNodeDisabled()) {
             NodePtr preferredInput = getNode()->getPreferredInputNode();
+
             if (!preferredInput) {
                 return eStatusFailed;
             }
@@ -3885,29 +4102,31 @@ EffectInstance::getRegionOfDefinition_public(U64 hash,
 
             ret = getRegionOfDefinition(hash, time, supportsRenderScaleMaybe() == eSupportsNo ? RenderScale::identity : scale, view, rod);
 
-            if ( (ret != eStatusOK) && (ret != eStatusReplyDefault) ) {
+            if ((ret != eStatusOK) && (ret != eStatusReplyDefault)) {
                 // rod is not valid
                 //if (!isDuringStrokeCreation) {
                 _imp->actionsCache->invalidateAll(hash);
-                _imp->actionsCache->setRoDResult( hash, time, view, mipmapLevel, RectD() );
+                _imp->actionsCache->setRoDResult(hash, time, view, mipmapLevel, RectD());
 
                 // }
                 return ret;
             }
 
-            if ( rod->isNull() ) {
+            if (rod->isNull()) {
                 // RoD is empty, which means output is black and transparent
-                _imp->actionsCache->setRoDResult( hash, time, view, mipmapLevel, RectD() );
+                _imp->actionsCache->setRoDResult(hash, time, view, mipmapLevel, RectD());
 
                 return ret;
             }
 
-            assert( (ret == eStatusOK || ret == eStatusReplyDefault) && (rod->x1 <= rod->x2 && rod->y1 <= rod->y2) );
+            assert((ret == eStatusOK || ret == eStatusReplyDefault) && (rod->x1 <= rod->x2 && rod->y1 <= rod->y2));
         }
         bool isProject = ifInfiniteApplyHeuristic(hash, time, scale, view, rod);
+
         if (isProjectFormat) {
             *isProjectFormat = isProject;
         }
+
         assert(rod->x1 <= rod->x2 && rod->y1 <= rod->y2);
 
         //if (!isDuringStrokeCreation) {
@@ -3920,11 +4139,11 @@ EffectInstance::getRegionOfDefinition_public(U64 hash,
 
 void
 EffectInstance::getRegionsOfInterest_public(double time,
-                                            const RenderScale & scale,
-                                            const RectD & outputRoD, //!< effect RoD in canonical coordinates
-                                            const RectD & renderWindow, //!< the region to be rendered in the output image, in Canonical Coordinates
-                                            ViewIdx view,
-                                            RoIMap* ret)
+        const RenderScale & scale,
+        const RectD & outputRoD, //!< effect RoD in canonical coordinates
+        const RectD & renderWindow, //!< the region to be rendered in the output image, in Canonical Coordinates
+        ViewIdx view,
+        RoIMap* ret)
 {
     NON_RECURSIVE_ACTION();
     assert(outputRoD.x2 >= outputRoD.x1 && outputRoD.y2 >= outputRoD.y1);
@@ -3942,6 +4161,7 @@ EffectInstance::getFramesNeeded_public(U64 hash,
     NON_RECURSIVE_ACTION();
     FramesNeededMap framesNeeded;
     bool foundInCache = _imp->actionsCache->getFramesNeededResult(hash, time, view, mipmapLevel, &framesNeeded);
+
     if (foundInCache) {
         return framesNeeded;
     }
@@ -3949,8 +4169,8 @@ EffectInstance::getFramesNeeded_public(U64 hash,
     try {
         framesNeeded = getFramesNeeded(time, view);
     } catch (std::exception &e) {
-        if ( !hasPersistentMessage() ) { // plugin may already have set a message
-            setPersistentMessage( eMessageTypeError, e.what() );
+        if (!hasPersistentMessage()) {   // plugin may already have set a message
+            setPersistentMessage(eMessageTypeError, e.what());
         }
     }
 
@@ -3971,13 +4191,15 @@ EffectInstance::getFrameRange_public(U64 hash,
     if (!bypasscache) {
         foundInCache = _imp->actionsCache->getTimeDomainResult(hash, &fFirst, &fLast);
     }
+
     if (foundInCache) {
         *first = std::floor(fFirst + 0.5);
         *last = std::floor(fLast + 0.5);
     } else {
         ///If this is running on a render thread, attempt to find the info in the thread-local storage.
-        if ( QThread::currentThread() != qApp->thread() ) {
+        if (QThread::currentThread() != qApp->thread()) {
             EffectTLSDataPtr tls = _imp->tlsData->getTLSData();
+
             if (tls && tls->currentRenderArgs.validArgs) {
                 *first = tls->currentRenderArgs.firstFrame;
                 *last = tls->currentRenderArgs.lastFrame;
@@ -3994,59 +4216,57 @@ EffectInstance::getFrameRange_public(U64 hash,
 
 StatusEnum
 EffectInstance::beginSequenceRender_public(double first,
-                                           double last,
-                                           double step,
-                                           bool interactive,
-                                           const RenderScale & scale,
-                                           bool isSequentialRender,
-                                           bool isRenderResponseToUserInteraction,
-                                           bool draftMode,
-                                           ViewIdx view,
-                                           bool isOpenGLRender,
-                                           const EffectInstance::OpenGLContextEffectDataPtr& glContextData)
+        double last,
+        double step,
+        bool interactive,
+        const RenderScale & scale,
+        bool isSequentialRender,
+        bool isRenderResponseToUserInteraction,
+        bool draftMode,
+        ViewIdx view)
 {
     NON_RECURSIVE_ACTION();
-    REPORT_CURRENT_THREAD_ACTION( kOfxImageEffectActionBeginSequenceRender, getNode() );
+    REPORT_CURRENT_THREAD_ACTION(kOfxImageEffectActionBeginSequenceRender, getNode());
     EffectTLSDataPtr tls = _imp->tlsData->getOrCreateTLSData();
     assert(tls);
     ++tls->beginEndRenderCount;
 
     return beginSequenceRender(first, last, step, interactive, scale,
-                               isSequentialRender, isRenderResponseToUserInteraction, draftMode, view, isOpenGLRender, glContextData);
+                               isSequentialRender, isRenderResponseToUserInteraction, draftMode, view);
 }
 
 StatusEnum
 EffectInstance::endSequenceRender_public(double first,
-                                         double last,
-                                         double step,
-                                         bool interactive,
-                                         const RenderScale & scale,
-                                         bool isSequentialRender,
-                                         bool isRenderResponseToUserInteraction,
-                                         bool draftMode,
-                                         ViewIdx view,
-                                         bool isOpenGLRender,
-                                         const EffectInstance::OpenGLContextEffectDataPtr& glContextData)
+        double last,
+        double step,
+        bool interactive,
+        const RenderScale & scale,
+        bool isSequentialRender,
+        bool isRenderResponseToUserInteraction,
+        bool draftMode,
+        ViewIdx view)
 {
     NON_RECURSIVE_ACTION();
-    REPORT_CURRENT_THREAD_ACTION( kOfxImageEffectActionEndSequenceRender, getNode() );
+    REPORT_CURRENT_THREAD_ACTION(kOfxImageEffectActionEndSequenceRender, getNode());
     EffectTLSDataPtr tls = _imp->tlsData->getOrCreateTLSData();
     assert(tls);
     --tls->beginEndRenderCount;
     assert(tls->beginEndRenderCount >= 0);
 
-    return endSequenceRender(first, last, step, interactive, scale, isSequentialRender, isRenderResponseToUserInteraction, draftMode, view, isOpenGLRender, glContextData);
+    return endSequenceRender(first, last, step, interactive, scale, isSequentialRender, isRenderResponseToUserInteraction, draftMode, view);
 }
 
 EffectInstancePtr
 EffectInstance::getOrCreateRenderInstance()
 {
     QMutexLocker k(&_imp->renderClonesMutex);
+
     if (!_imp->isDoingInstanceSafeRender) {
         // The main instance is not rendering, use it
         _imp->isDoingInstanceSafeRender = true;
         return shared_from_this();
     }
+
     // Ok get a clone
     if (!_imp->renderClonesPool.empty()) {
         EffectInstancePtr ret =  _imp->renderClonesPool.front();
@@ -4056,11 +4276,13 @@ EffectInstance::getOrCreateRenderInstance()
     }
 
     EffectInstancePtr clone = createRenderClone();
+
     if (!clone) {
         // We have no way but to use this node since the effect does not support render clones
         _imp->isDoingInstanceSafeRender = true;
         return shared_from_this();
     }
+
     clone->_imp->isDoingInstanceSafeRender = true;
     return clone;
 }
@@ -4078,8 +4300,10 @@ EffectInstance::releaseRenderInstance(const EffectInstancePtr& instance)
     if (!instance) {
         return;
     }
+
     QMutexLocker k(&_imp->renderClonesMutex);
     instance->_imp->isDoingInstanceSafeRender = false;
+
     if (instance.get() == this) {
         return;
     }
@@ -4088,95 +4312,6 @@ EffectInstance::releaseRenderInstance(const EffectInstancePtr& instance)
     _imp->renderClonesPool.push_back(instance);
 }
 
-/**
- * @brief This function calls the implementation specific attachOpenGLContext()
- **/
-StatusEnum
-EffectInstance::attachOpenGLContext_public(const OSGLContextPtr& glContext,
-                                           EffectInstance::OpenGLContextEffectDataPtr* data)
-{
-    NON_RECURSIVE_ACTION();
-    bool concurrentGLRender = supportsConcurrentOpenGLRenders();
-    std::unique_ptr<QMutexLocker> locker;
-    if (concurrentGLRender) {
-        locker.reset( new QMutexLocker(&_imp->attachedContextsMutex) );
-    } else {
-        _imp->attachedContextsMutex.lock();
-    }
-
-    OpenGLContextEffectsMap::iterator found = _imp->attachedContexts.find(glContext);
-    if ( found != _imp->attachedContexts.end() ) {
-        // The context is already attached
-        *data = found->second;
-
-        return eStatusOK;
-    }
-
-
-    StatusEnum ret = attachOpenGLContext(data);
-
-    if ( (ret == eStatusOK) || (ret == eStatusReplyDefault) ) {
-        if (!concurrentGLRender) {
-            (*data)->setHasTakenLock(true);
-        }
-        _imp->attachedContexts.insert( std::make_pair(glContext, *data) );
-    } else {
-        _imp->attachedContextsMutex.unlock();
-    }
-
-    // Take the lock until dettach is called for plug-ins that do not support concurrent GL renders
-    return ret;
-}
-
-void
-EffectInstance::dettachAllOpenGLContexts()
-{
-    QMutexLocker locker(&_imp->attachedContextsMutex);
-
-    for (EffectInstance::OpenGLContextEffectsMap::iterator it = _imp->attachedContexts.begin(); it != _imp->attachedContexts.end(); ++it) {
-        OSGLContextPtr context = it->first.lock();
-        if (!context) {
-            continue;
-        }
-        context->setContextCurrentNoRender();
-        if (it->second.use_count() == 1) {
-            // If no render is using it, dettach the context
-            dettachOpenGLContext(it->second);
-        }
-    }
-    if ( !_imp->attachedContexts.empty() ) {
-        OSGLContext::unsetCurrentContextNoRender();
-    }
-    _imp->attachedContexts.clear();
-}
-
-/**
- * @brief This function calls the implementation specific dettachOpenGLContext()
- **/
-StatusEnum
-EffectInstance::dettachOpenGLContext_public(const OSGLContextPtr& glContext, const EffectInstance::OpenGLContextEffectDataPtr& data)
-{
-    NON_RECURSIVE_ACTION();
-    bool concurrentGLRender = supportsConcurrentOpenGLRenders();
-    std::unique_ptr<QMutexLocker> locker;
-    if (concurrentGLRender) {
-        locker.reset( new QMutexLocker(&_imp->attachedContextsMutex) );
-    }
-
-
-    bool mustUnlock = data->getHasTakenLock();
-    EffectInstance::OpenGLContextEffectsMap::iterator found = _imp->attachedContexts.find(glContext);
-    if ( found != _imp->attachedContexts.end() ) {
-        _imp->attachedContexts.erase(found);
-    }
-
-    StatusEnum ret = dettachOpenGLContext(data);
-    if (mustUnlock) {
-        _imp->attachedContextsMutex.unlock();
-    }
-
-    return ret;
-}
 
 bool
 EffectInstance::isSupportedComponent(int inputNb,
@@ -4199,7 +4334,7 @@ EffectInstance::isSupportedBitDepth(ImageBitDepthEnum depth) const
 
 ImagePlaneDesc
 EffectInstance::findClosestSupportedComponents(int inputNb,
-                                               const ImagePlaneDesc & comp) const
+        const ImagePlaneDesc & comp) const
 {
     return getNode()->findClosestSupportedComponents(inputNb, comp);
 }
@@ -4211,14 +4346,13 @@ EffectInstance::clearActionsCache()
 }
 
 
-
 void
 EffectInstance::getComponentsNeededAndProduced(double time,
-                                               ViewIdx view,
-                                               EffectInstance::ComponentsNeededMap* comps,
-                                               double* passThroughTime,
-                                               int* passThroughView,
-                                               int* passThroughInputNb)
+        ViewIdx view,
+        EffectInstance::ComponentsNeededMap* comps,
+        double *passThroughTime,
+        int *passThroughView,
+        int *passThroughInputNb)
 {
     bool processAllRequested;
     std::bitset<4> processChannels;
@@ -4229,13 +4363,13 @@ EffectInstance::getComponentsNeededAndProduced(double time,
 
 void
 EffectInstance::getComponentsNeededDefault(double time, ViewIdx view,
-                                           EffectInstance::ComponentsNeededMap* comps,
-                                           std::list<ImagePlaneDesc>* passThroughPlanes,
-                                           bool* processAllRequested,
-                                           double* passThroughTime,
-                                           int* passThroughView,
-                                           std::bitset<4> *processChannels,
-                                           int* passThroughInputNb)
+        EffectInstance::ComponentsNeededMap* comps,
+        std::list<ImagePlaneDesc> *passThroughPlanes,
+        bool* processAllRequested,
+        double *passThroughTime,
+        int *passThroughView,
+        std::bitset<4> *processChannels,
+        int *passThroughInputNb)
 {
     *passThroughTime = time;
     *passThroughView = view;
@@ -4244,6 +4378,7 @@ EffectInstance::getComponentsNeededDefault(double time, ViewIdx view,
 
     {
         std::list<ImagePlaneDesc> upstreamAvailableLayers;
+
         if (*passThroughInputNb != -1) {
             getAvailableLayers(time, view, *passThroughInputNb, &upstreamAvailableLayers);
         }
@@ -4253,7 +4388,7 @@ EffectInstance::getComponentsNeededDefault(double time, ViewIdx view,
 
     }
 
- 
+
     // Get the output needed components
     {
 
@@ -4272,14 +4407,17 @@ EffectInstance::getComponentsNeededDefault(double time, ViewIdx view,
         //
         ImagePlaneDesc metadataPlane, metadataPairedPlane;
         getMetadataComponents(-1, &metadataPlane, &metadataPairedPlane);
+
         // Some plug-ins, such as The Foundry Furnace set the meta-data to disparity/motion vector, requiring
         // both planes to be computed at once (Forward/Backard for motion vector) (Left/Right for Disparity)
         if (metadataPlane.getNumComponents() > 0) {
             clipPrefsAllComps.push_back(metadataPlane);
         }
+
         if (metadataPairedPlane.getNumComponents() > 0) {
             clipPrefsAllComps.push_back(metadataPairedPlane);
         }
+
         if (clipPrefsAllComps.empty()) {
             // If metada are not set yet, at least append RGBA
             clipPrefsAllComps.push_back(ImagePlaneDesc::getRGBAComponents());
@@ -4322,13 +4460,14 @@ EffectInstance::getComponentsNeededDefault(double time, ViewIdx view,
         if (gotUserSelectedPlane) {
             componentsSet.push_back(layer);
         } else {
-            componentsSet.insert( componentsSet.end(), clipPrefsAllComps.begin(), clipPrefsAllComps.end() );
+            componentsSet.insert(componentsSet.end(), clipPrefsAllComps.begin(), clipPrefsAllComps.end());
         }
 
     }
 
     // For each input get their needed components
     int maxInput = getNInputs();
+
     for (int i = 0; i < maxInput; ++i) {
 
         std::list<ImagePlaneDesc> upstreamAvailableLayers;
@@ -4363,16 +4502,18 @@ EffectInstance::getComponentsNeededDefault(double time, ViewIdx view,
             if (metadataPlane.getNumComponents() > 0) {
                 clipPrefsAllComps.push_back(metadataPlane);
             }
+
             if (metadataPairedPlane.getNumComponents() > 0) {
                 clipPrefsAllComps.push_back(metadataPairedPlane);
             }
+
             if (clipPrefsAllComps.empty()) {
                 // If metada are not set yet, at least append RGBA
                 clipPrefsAllComps.push_back(ImagePlaneDesc::getRGBAComponents());
             }
         }
 
-        if ( (channelMask != -1) && (maskComp.getNumComponents() > 0) ) {
+        if ((channelMask != -1) && (maskComp.getNumComponents() > 0)) {
 
             // If this is a mask, ask for the selected mask layer
             componentsSet.push_back(maskComp);
@@ -4381,23 +4522,23 @@ EffectInstance::getComponentsNeededDefault(double time, ViewIdx view,
             componentsSet.push_back(layer);
         } else {
             //Use regular clip preferences
-            componentsSet.insert( componentsSet.end(), clipPrefsAllComps.begin(), clipPrefsAllComps.end() );
+            componentsSet.insert(componentsSet.end(), clipPrefsAllComps.begin(), clipPrefsAllComps.end());
         }
-        
+
     } // for each input
 }
 
 void
 EffectInstance::getComponentsNeededAndProduced_public(U64 hash,
-                                                      double time,
-                                                      ViewIdx view,
-                                                      EffectInstance::ComponentsNeededMap* comps,
-                                                      std::list<ImagePlaneDesc>* passThroughPlanes,
-                                                      bool* processAllRequested,
-                                                      double* passThroughTime,
-                                                      int* passThroughView,
-                                                      std::bitset<4> *processChannels,
-                                                      int* passThroughInputNb)
+        double time,
+        ViewIdx view,
+        EffectInstance::ComponentsNeededMap* comps,
+        std::list<ImagePlaneDesc> *passThroughPlanes,
+        bool* processAllRequested,
+        double *passThroughTime,
+        int *passThroughView,
+        std::bitset<4> *processChannels,
+        int *passThroughInputNb)
 
 {
     RECURSIVE_ACTION();
@@ -4405,14 +4546,15 @@ EffectInstance::getComponentsNeededAndProduced_public(U64 hash,
     {
         ViewIdx ptView;
         bool foundInCache = _imp->actionsCache->getComponentsNeededResults(hash, time, view, comps, processChannels, processAllRequested, passThroughPlanes, passThroughInputNb, &ptView, passThroughTime);
+
         if (foundInCache) {
             *passThroughView = ptView;
             return;
         }
     }
-    
 
-    if ( !isMultiPlanar() ) {
+
+    if (!isMultiPlanar()) {
         getComponentsNeededDefault(time, view, comps, passThroughPlanes, processAllRequested, passThroughTime, passThroughView, processChannels, passThroughInputNb);
         _imp->actionsCache->setComponentsNeededResults(hash, time, view, *comps, *processChannels, *processAllRequested, *passThroughPlanes, *passThroughInputNb, ViewIdx(*passThroughView), *passThroughTime);
         return;
@@ -4426,27 +4568,31 @@ EffectInstance::getComponentsNeededAndProduced_public(U64 hash,
 
     // upstreamAvailableLayers now contain all available planes in input of this node
     // Remove from this list all layers produced from this node to get the pass-through planes list
-    std::list<ImagePlaneDesc>& outputLayers = (*comps)[-1];
+    std::list<ImagePlaneDesc> &outputLayers = (*comps)[-1];
 
     // Ensure the plug-in made the metadata plane available.
     {
         std::list<ImagePlaneDesc> metadataPlanes;
         ImagePlaneDesc metadataPlane, metadataPairedPlane;
         getMetadataComponents(-1, &metadataPlane, &metadataPairedPlane);
+
         if (metadataPairedPlane.getNumComponents() > 0) {
             metadataPlanes.push_back(metadataPairedPlane);
         }
+
         if (metadataPlane.getNumComponents() > 0) {
             metadataPlanes.push_back(metadataPlane);
         }
+
         mergeLayersList(metadataPlanes, &outputLayers);
     }
 
 
     // If the plug-in does not block upstream planes, recurse up-stream on the pass-through input to get available components.
     PassThroughEnum passThrough = isPassThroughForNonRenderedPlanes();
-    if (*passThroughInputNb != -1 && ( (passThrough == ePassThroughPassThroughNonRenderedPlanes) ||
-        ( passThrough == ePassThroughRenderAllRequestedPlanes)) ) {
+
+    if (*passThroughInputNb != -1 && ((passThrough == ePassThroughPassThroughNonRenderedPlanes) ||
+                                      (passThrough == ePassThroughRenderAllRequestedPlanes))) {
 
         std::list<ImagePlaneDesc> upstreamAvailableLayers;
         getAvailableLayers(time, view, *passThroughInputNb, &upstreamAvailableLayers);
@@ -4459,11 +4605,10 @@ EffectInstance::getComponentsNeededAndProduced_public(U64 hash,
     } // if pass-through for planes
 
 
-
     for (int i = 0; i < 4; ++i) {
         (*processChannels)[i] = getNode()->getProcessChannel(i);
     }
-    
+
     *processAllRequested = false;
 
     _imp->actionsCache->setComponentsNeededResults(hash, time, view, *comps, *processChannels, *processAllRequested, *passThroughPlanes, *passThroughInputNb, ViewIdx(*passThroughView), *passThroughTime);
@@ -4472,15 +4617,17 @@ EffectInstance::getComponentsNeededAndProduced_public(U64 hash,
 
 
 void
-EffectInstance::getAvailableLayers(double time, ViewIdx view, int inputNb, std::list<ImagePlaneDesc>* availableLayers)
+EffectInstance::getAvailableLayers(double time, ViewIdx view, int inputNb, std::list<ImagePlaneDesc> *availableLayers)
 {
 
     EffectInstancePtr effect;
+
     if (inputNb >= 0) {
         effect = getInput(inputNb);
     } else {
         effect = shared_from_this();
     }
+
     if (!effect) {
         return;
     }
@@ -4500,12 +4647,13 @@ EffectInstance::getAvailableLayers(double time, ViewIdx view, int inputNb, std::
 
         // Merge pass-through planes produced + pass-through available planes and make it as the pass-through planes for this node
         // if they are not produced by this node
-        std::list<ImagePlaneDesc>& outputLayers = (comps)[-1];
+        std::list<ImagePlaneDesc> &outputLayers = (comps)[-1];
         mergeLayersList(outputLayers, &passThroughLayers);
     }
 
     // Ensure the color layer is always the first one available in the list
     bool hasColorPlane = false;
+
     for (std::list<ImagePlaneDesc>::iterator it = passThroughLayers.begin(); it != passThroughLayers.end(); ++it) {
         if (it->isColorPlane()) {
             hasColorPlane = true;
@@ -4519,6 +4667,7 @@ EffectInstance::getAvailableLayers(double time, ViewIdx view, int inputNb, std::
     if (inputNb == -1) {
 
         std::list<ImagePlaneDesc> projectLayers = getApp()->getProject()->getProjectDefaultLayers();
+
         if (hasColorPlane) {
             // Don't add the color plane from the default alyers if already present
             for (std::list<ImagePlaneDesc>::iterator it = projectLayers.begin(); it != projectLayers.end(); ++it) {
@@ -4528,28 +4677,29 @@ EffectInstance::getAvailableLayers(double time, ViewIdx view, int inputNb, std::
                 }
             }
         }
+
         mergeLayersList(projectLayers, availableLayers);
     }
 
     mergeLayersList(passThroughLayers, availableLayers);
 
-     {
+    {
         std::list<ImagePlaneDesc> userCreatedLayers;
         getNode()->getUserCreatedComponents(&userCreatedLayers);
         mergeLayersList(userCreatedLayers, availableLayers);
     }
-    
+
 } // getAvailableLayers
 
 bool
 EffectInstance::getCreateChannelSelectorKnob() const
 {
-    return ( !isMultiPlanar() && !isReader() && !isWriter() && !isTrackerNodePlugin() &&
-             getPluginID().rfind("uk.co.thefoundry.furnace", 0) == std::string::npos );
+    return (!isMultiPlanar() && !isReader() && !isWriter() && !isTrackerNodePlugin() &&
+            getPluginID().rfind("uk.co.thefoundry.furnace", 0) == std::string::npos);
 }
 
 int
-EffectInstance::getMaskChannel(int inputNb, const std::list<ImagePlaneDesc>& availableLayers, ImagePlaneDesc* comps) const
+EffectInstance::getMaskChannel(int inputNb, const std::list<ImagePlaneDesc> &availableLayers, ImagePlaneDesc* comps) const
 {
     return getNode()->getMaskChannel(inputNb, availableLayers, comps);
 }
@@ -4572,13 +4722,13 @@ EffectInstance::onKnobValueChanged(KnobI* /*k*/,
 
 bool
 EffectInstance::getThreadLocalRenderedPlanes(std::map<ImagePlaneDesc, EffectInstance::PlaneToRender> *outputPlanes,
-                                             ImagePlaneDesc* planeBeingRendered,
-                                             RectI* renderWindow) const
+        ImagePlaneDesc* planeBeingRendered,
+        RectI* renderWindow) const
 {
     EffectTLSDataPtr tls = _imp->tlsData->getTLSData();
 
     if (tls && tls->currentRenderArgs.validArgs) {
-        assert( !tls->currentRenderArgs.outputPlanes.empty() );
+        assert(!tls->currentRenderArgs.outputPlanes.empty());
         *planeBeingRendered = tls->currentRenderArgs.outputPlaneBeingRendered;
         *outputPlanes = tls->currentRenderArgs.outputPlanes;
         *renderWindow = tls->currentRenderArgs.renderWindowPixel;
@@ -4590,12 +4740,30 @@ EffectInstance::getThreadLocalRenderedPlanes(std::map<ImagePlaneDesc, EffectInst
 }
 
 bool
+EffectInstance::isVulkanRenderThreadLocal() const
+{
+    const EffectTLSDataPtr tls = _imp->tlsData->getTLSData();
+
+    if (!tls || !tls->currentRenderArgs.validArgs || tls->currentRenderArgs.outputPlanes.empty()) {
+        return false;
+    }
+
+    for (const auto& plane : tls->currentRenderArgs.outputPlanes) {
+        if (!plane.second.tmpImage || plane.second.tmpImage->getStorageMode() != eStorageModeVulkan) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool
 EffectInstance::getThreadLocalNeededComponents(ComponentsNeededMapPtr* neededComps) const
 {
     EffectTLSDataPtr tls = _imp->tlsData->getTLSData();
 
     if (tls && tls->currentRenderArgs.validArgs) {
-        assert( !tls->currentRenderArgs.outputPlanes.empty() );
+        assert(!tls->currentRenderArgs.outputPlanes.empty());
         *neededComps = tls->currentRenderArgs.compsNeeded;
 
         return true;
@@ -4607,8 +4775,9 @@ EffectInstance::getThreadLocalNeededComponents(ComponentsNeededMapPtr* neededCom
 void
 EffectInstance::updateThreadLocalRenderTime(double time)
 {
-    if ( QThread::currentThread() != qApp->thread() ) {
+    if (QThread::currentThread() != qApp->thread()) {
         EffectTLSDataPtr tls = _imp->tlsData->getTLSData();
+
         if (tls && tls->currentRenderArgs.validArgs) {
             tls->currentRenderArgs.time = time;
         }
@@ -4620,7 +4789,7 @@ EffectInstance::isDuringPaintStrokeCreationThreadLocal() const
 {
     EffectTLSDataPtr tls = _imp->tlsData->getTLSData();
 
-    if ( tls && !tls->frameArgs.empty() ) {
+    if (tls && !tls->frameArgs.empty()) {
         return tls->frameArgs.back()->isDuringPaintStrokeCreation;
     }
 
@@ -4630,7 +4799,7 @@ EffectInstance::isDuringPaintStrokeCreationThreadLocal() const
 void
 EffectInstance::redrawOverlayInteract()
 {
-    if ( isDoingInteractAction() ) {
+    if (isDoingInteractAction()) {
         getApp()->queueRedrawForAllViewers();
     } else {
         getApp()->redrawAllViewers();
@@ -4666,9 +4835,10 @@ EffectInstance::pushUndoCommand(const UndoCommandPtr& command)
 bool
 EffectInstance::setCurrentCursor(CursorEnum defaultCursor)
 {
-    if ( !isDoingInteractAction() ) {
+    if (!isDoingInteractAction()) {
         return false;
     }
+
     getNode()->setCurrentCursor(defaultCursor);
 
     return true;
@@ -4677,7 +4847,7 @@ EffectInstance::setCurrentCursor(CursorEnum defaultCursor)
 bool
 EffectInstance::setCurrentCursor(const QString& customCursorFilePath)
 {
-    if ( !isDoingInteractAction() ) {
+    if (!isDoingInteractAction()) {
         return false;
     }
 
@@ -4695,9 +4865,11 @@ EffectInstance::isOverlaySlaveParam(const KnobI* knob) const
 {
     for (std::list<KnobIWPtr>::const_iterator it = _imp->overlaySlaves.begin(); it != _imp->overlaySlaves.end(); ++it) {
         KnobIPtr k = it->lock();
+
         if (!k) {
             continue;
         }
+
         if (k.get() == knob) {
             return true;
         }
@@ -4708,22 +4880,23 @@ EffectInstance::isOverlaySlaveParam(const KnobI* knob) const
 
 bool
 EffectInstance::onKnobValueChanged_public(KnobI* k,
-                                          ValueChangedReasonEnum reason,
-                                          double time,
-                                          ViewSpec view,
-                                          bool originatedFromMainThread)
+        ValueChangedReasonEnum reason,
+        double time,
+        ViewSpec view,
+        bool originatedFromMainThread)
 {
     NodePtr node = getNode();
 
     ///If the param changed is a button and the node is disabled don't do anything which might
     ///trigger an analysis
-    if ( (reason == eValueChangedReasonUserEdited) && dynamic_cast<KnobButton*>(k) && node->isNodeDisabled() ) {
+    if ((reason == eValueChangedReasonUserEdited) && dynamic_cast<KnobButton * >(k) && node->isNodeDisabled()) {
         return false;
     }
 
     // for image readers, image writers, and video writers, frame range must be updated before kOfxActionInstanceChanged is called on kOfxImageEffectFileParamName
     bool mustCallOnFileNameParameterChanged = false;
-    if ( (reason != eValueChangedReasonTimeChanged) && ( isReader() || isWriter() ) && k && (k->getName() == kOfxImageEffectFileParamName) ) {
+
+    if ((reason != eValueChangedReasonTimeChanged) && (isReader() || isWriter()) && k && (k->getName() == kOfxImageEffectFileParamName)) {
         node->computeFrameRangeForReader(k);
         mustCallOnFileNameParameterChanged = true;
     }
@@ -4732,11 +4905,11 @@ EffectInstance::onKnobValueChanged_public(KnobI* k,
     bool ret = false;
 
     // assert(!(view.isAll() || view.isCurrent())); // not yet implemented
-    const ViewIdx viewIdx( ( view.isAll() || view.isCurrent() ) ? 0 : view );
+    const ViewIdx viewIdx((view.isAll() || view.isCurrent()) ? 0 : view);
     bool wasFormatKnobCaught = node->handleFormatKnob(k);
-    KnobHelper* kh = dynamic_cast<KnobHelper*>(k);
+    KnobHelper* kh = dynamic_cast<KnobHelper *>(k);
     assert(kh);
-    
+
     // While creating a PyPlug, never handle changes, but call syncPrivateData before any other action,
     // fixes https://github.com/MrKepzie/Natron/issues/1637
     if (getApp()->isCreatingPythonGroup() && kh && kh->isDeclaredByPlugin() && !wasFormatKnobCaught) {
@@ -4747,49 +4920,55 @@ EffectInstance::onKnobValueChanged_public(KnobI* k,
         ////We set the thread storage render args so that if the instance changed action
         ////tries to call getImage it can render with good parameters.
         ParallelRenderArgsSetterPtr setter;
+
         if (reason != eValueChangedReasonTimeChanged) {
             AbortableRenderInfoPtr abortInfo = AbortableRenderInfo::create(false, 0);
             const bool isRenderUserInteraction = true;
             const bool isSequentialRender = false;
-            AbortableThread* isAbortable = dynamic_cast<AbortableThread*>( QThread::currentThread() );
+            AbortableThread* isAbortable = dynamic_cast<AbortableThread *>(QThread::currentThread());
+
             if (isAbortable) {
-                isAbortable->setAbortInfo( isRenderUserInteraction, abortInfo, node->getEffectInstance() );
+                isAbortable->setAbortInfo(isRenderUserInteraction, abortInfo, node->getEffectInstance());
             }
+
 #ifdef BOOST_NO_CXX11_VARIADIC_TEMPLATES
-            setter.reset( new ParallelRenderArgsSetter( time,
-                                                        viewIdx, //view
-                                                        isRenderUserInteraction, // isRenderUserInteraction
-                                                        isSequentialRender, // isSequential
-                                                        abortInfo, // abortInfo
-                                                        node, // treeRoot
-                                                        0, //texture index
-                                                        getApp()->getTimeLine().get(),
-                                                        NodePtr(), // activeRotoPaintNode
-                                                        true, // isAnalysis
-                                                        false, // draftMode
-                                                        RenderStatsPtr() ) );
+            setter.reset(new ParallelRenderArgsSetter(time,
+                         viewIdx, //view
+                         isRenderUserInteraction, // isRenderUserInteraction
+                         isSequentialRender, // isSequential
+                         abortInfo, // abortInfo
+                         node, // treeRoot
+                         0, //texture index
+                         getApp()->getTimeLine().get(),
+                         NodePtr(), // activeRotoPaintNode
+                         true, // isAnalysis
+                         false, // draftMode
+                         RenderStatsPtr()));
 #else
-            setter = std::make_shared<ParallelRenderArgsSetter>( time,
-                                                                  viewIdx, //view
-                                                                  isRenderUserInteraction, // isRenderUserInteraction
-                                                                  isSequentialRender, // isSequential
-                                                                  abortInfo, // abortInfo
-                                                                  node, // treeRoot
-                                                                  0, //texture index
-                                                                  getApp()->getTimeLine().get(),
-                                                                  NodePtr(), // activeRotoPaintNode
-                                                                  true, // isAnalysis
-                                                                  false, // draftMode
-                                                                  RenderStatsPtr() );
+            setter = std::make_shared<ParallelRenderArgsSetter>(time,
+                     viewIdx, //view
+                     isRenderUserInteraction, // isRenderUserInteraction
+                     isSequentialRender, // isSequential
+                     abortInfo, // abortInfo
+                     node, // treeRoot
+                     0, //texture index
+                     getApp()->getTimeLine().get(),
+                     NodePtr(), // activeRotoPaintNode
+                     true, // isAnalysis
+                     false, // draftMode
+                     RenderStatsPtr());
 #endif
         }
+
         {
             RECURSIVE_ACTION();
-            REPORT_CURRENT_THREAD_ACTION( kOfxActionInstanceChanged, getNode() );
+            REPORT_CURRENT_THREAD_ACTION(kOfxActionInstanceChanged, getNode());
+
             // Map to a plug-in known reason
             if (reason == eValueChangedReasonNatronGuiEdited) {
                 reason = eValueChangedReasonUserEdited;
-            } 
+            }
+
             ret |= knobChanged(k, reason, view, time, originatedFromMainThread);
         }
     }
@@ -4799,18 +4978,19 @@ EffectInstance::onKnobValueChanged_public(KnobI* k,
         node->onFileNameParameterChanged(k);
     }
 
-    if ( kh && ( QThread::currentThread() == qApp->thread() ) &&
-         originatedFromMainThread && ( reason != eValueChangedReasonTimeChanged) ) {
+    if (kh && (QThread::currentThread() == qApp->thread()) &&
+        originatedFromMainThread && (reason != eValueChangedReasonTimeChanged)) {
         ///Run the following only in the main-thread
-        if ( hasOverlay() && node->shouldDrawOverlay() && !node->hasHostOverlayForParam(k) ) {
+        if (hasOverlay() && node->shouldDrawOverlay() && !node->hasHostOverlayForParam(k)) {
             // Some plugins (e.g. by digital film tools) forget to set kOfxInteractPropSlaveToParam.
             // Most hosts trigger a redraw if the plugin has an active overlay.
             incrementRedrawNeededCounter();
 
-            if ( !isDequeueingValuesSet() && (getRecursionLevel() == 0) && checkIfOverlayRedrawNeeded() ) {
+            if (!isDequeueingValuesSet() && (getRecursionLevel() == 0) && checkIfOverlayRedrawNeeded()) {
                 redrawOverlayInteract();
             }
         }
+
         if (isOverlaySlaveParam(kh)) {
             kh->redraw();
         }
@@ -4826,7 +5006,7 @@ EffectInstance::onKnobValueChanged_public(KnobI* k,
     ///If there's a knobChanged Python callback, run it
     std::string pythonCB = getNode()->getKnobChangedCallback();
 
-    if ( !pythonCB.empty() ) {
+    if (!pythonCB.empty()) {
         bool userEdited = reason == eValueChangedReasonNatronGuiEdited ||
                           reason == eValueChangedReasonUserEdited;
         _imp->runChangedParamCallback(k, userEdited, pythonCB);
@@ -4860,7 +5040,7 @@ EffectInstance::aboutToRestoreDefaultValues()
 
     node->incrementKnobsAge();
 
-    if ( node->areKeyframesVisibleOnTimeline() ) {
+    if (node->areKeyframesVisibleOnTimeline()) {
         node->hideKeyframesFromTimeline(true);
     }
 }
@@ -4875,7 +5055,7 @@ EffectInstance::getNearestNonDisabled() const
 {
     NodePtr node = getNode();
 
-    if ( !node->isNodeDisabled() ) {
+    if (!node->isNodeDisabled()) {
         return node->getEffectInstance();
     } else {
         ///Test all inputs recursively, going from last to first, preferring non optional inputs.
@@ -4887,6 +5067,7 @@ EffectInstance::getNearestNonDisabled() const
 
         ///Find an input named A
         std::string inputNameToFind, otherName;
+
         if (useInputA) {
             inputNameToFind = "A";
             otherName = "B";
@@ -4894,12 +5075,16 @@ EffectInstance::getNearestNonDisabled() const
             inputNameToFind = "B";
             otherName = "A";
         }
+
         int foundOther = -1;
         int maxinputs = getNInputs();
+
         for (int i = 0; i < maxinputs; ++i) {
             std::string inputLabel = getInputLabel(i);
+
             if (inputLabel == inputNameToFind) {
                 EffectInstancePtr inp = getInput(i);
+
                 if (inp) {
                     nonOptionalInputs.push_front(inp);
                     break;
@@ -4909,8 +5094,9 @@ EffectInstance::getNearestNonDisabled() const
             }
         }
 
-        if ( (foundOther != -1) && nonOptionalInputs.empty() ) {
+        if ((foundOther != -1) && nonOptionalInputs.empty()) {
             EffectInstancePtr inp = getInput(foundOther);
+
             if (inp) {
                 nonOptionalInputs.push_front(inp);
             }
@@ -4919,6 +5105,7 @@ EffectInstance::getNearestNonDisabled() const
         ///If we found A or B so far, cycle through them
         for (std::list<EffectInstancePtr> ::iterator it = nonOptionalInputs.begin(); it != nonOptionalInputs.end(); ++it) {
             EffectInstancePtr inputRet = (*it)->getNearestNonDisabled();
+
             if (inputRet) {
                 return inputRet;
             }
@@ -4930,6 +5117,7 @@ EffectInstance::getNearestNonDisabled() const
         for (int i = 0; i < maxinputs; ++i) {
             EffectInstancePtr inp = getInput(i);
             bool optional = isInputOptional(i);
+
             if (inp) {
                 if (optional) {
                     optionalInputs.push_back(inp);
@@ -4942,6 +5130,7 @@ EffectInstance::getNearestNonDisabled() const
         ///Cycle through all non optional inputs first
         for (std::list<EffectInstancePtr> ::iterator it = nonOptionalInputs.begin(); it != nonOptionalInputs.end(); ++it) {
             EffectInstancePtr inputRet = (*it)->getNearestNonDisabled();
+
             if (inputRet) {
                 return inputRet;
             }
@@ -4950,6 +5139,7 @@ EffectInstance::getNearestNonDisabled() const
         ///Cycle through optional inputs...
         for (std::list<EffectInstancePtr> ::iterator it = optionalInputs.begin(); it != optionalInputs.end(); ++it) {
             EffectInstancePtr inputRet = (*it)->getNearestNonDisabled();
+
             if (inputRet) {
                 return inputRet;
             }
@@ -4963,7 +5153,7 @@ EffectInstance::getNearestNonDisabled() const
 EffectInstancePtr
 EffectInstance::getNearestNonDisabledPrevious(int* inputNb)
 {
-    assert( getNode()->isNodeDisabled() );
+    assert(getNode()->isNodeDisabled());
 
     ///Test all inputs recursively, going from last to first, preferring non optional inputs.
     std::list<EffectInstancePtr> nonOptionalInputs;
@@ -4974,6 +5164,7 @@ EffectInstance::getNearestNonDisabledPrevious(int* inputNb)
     const bool useInputA = false || (getPluginID() == PLUGINID_OFX_SHUFFLE && getMajorVersion() < 3);
     ///Find an input named A
     std::string inputNameToFind, otherName;
+
     if (useInputA) {
         inputNameToFind = "A";
         otherName = "B";
@@ -4981,12 +5172,16 @@ EffectInstance::getNearestNonDisabledPrevious(int* inputNb)
         inputNameToFind = "B";
         otherName = "A";
     }
+
     int foundOther = -1;
     int maxinputs = getNInputs();
+
     for (int i = 0; i < maxinputs; ++i) {
         std::string inputLabel = getInputLabel(i);
+
         if (inputLabel == inputNameToFind) {
             EffectInstancePtr inp = getInput(i);
+
             if (inp) {
                 nonOptionalInputs.push_front(inp);
                 localPreferredInput = i;
@@ -4997,8 +5192,9 @@ EffectInstance::getNearestNonDisabledPrevious(int* inputNb)
         }
     }
 
-    if ( (foundOther != -1) && nonOptionalInputs.empty() ) {
+    if ((foundOther != -1) && nonOptionalInputs.empty()) {
         EffectInstancePtr inp = getInput(foundOther);
+
         if (inp) {
             nonOptionalInputs.push_front(inp);
             localPreferredInput = foundOther;
@@ -5007,8 +5203,9 @@ EffectInstance::getNearestNonDisabledPrevious(int* inputNb)
 
     ///If we found A or B so far, cycle through them
     for (std::list<EffectInstancePtr> ::iterator it = nonOptionalInputs.begin(); it != nonOptionalInputs.end(); ++it) {
-        if ( (*it)->getNode()->isNodeDisabled() ) {
+        if ((*it)->getNode()->isNodeDisabled()) {
             EffectInstancePtr inputRet = (*it)->getNearestNonDisabledPrevious(inputNb);
+
             if (inputRet) {
                 return inputRet;
             }
@@ -5021,16 +5218,19 @@ EffectInstance::getNearestNonDisabledPrevious(int* inputNb)
     for (int i = 0; i < maxinputs; ++i) {
         EffectInstancePtr inp = getInput(i);
         bool optional = isInputOptional(i);
+
         if (inp) {
             if (optional) {
                 if (localPreferredInput == -1) {
                     localPreferredInput = i;
                 }
+
                 optionalInputs.push_back(inp);
             } else {
                 if (localPreferredInput == -1) {
                     localPreferredInput = i;
                 }
+
                 nonOptionalInputs.push_back(inp);
             }
         }
@@ -5039,8 +5239,9 @@ EffectInstance::getNearestNonDisabledPrevious(int* inputNb)
 
     ///Cycle through all non optional inputs first
     for (std::list<EffectInstancePtr> ::iterator it = nonOptionalInputs.begin(); it != nonOptionalInputs.end(); ++it) {
-        if ( (*it)->getNode()->isNodeDisabled() ) {
+        if ((*it)->getNode()->isNodeDisabled()) {
             EffectInstancePtr inputRet = (*it)->getNearestNonDisabledPrevious(inputNb);
+
             if (inputRet) {
                 return inputRet;
             }
@@ -5049,8 +5250,9 @@ EffectInstance::getNearestNonDisabledPrevious(int* inputNb)
 
     ///Cycle through optional inputs...
     for (std::list<EffectInstancePtr> ::iterator it = optionalInputs.begin(); it != optionalInputs.end(); ++it) {
-        if ( (*it)->getNode()->isNodeDisabled() ) {
+        if ((*it)->getNode()->isNodeDisabled()) {
             EffectInstancePtr inputRet = (*it)->getNearestNonDisabledPrevious(inputNb);
+
             if (inputRet) {
                 return inputRet;
             }
@@ -5073,12 +5275,14 @@ EffectInstance::getNearestNonIdentity(double time)
     double inputTimeIdentity;
     int inputNbIdentity;
     ViewIdx inputView;
-    if ( !isIdentity_public(true, hash, time, RenderScale::identity, frmt, ViewIdx(0), &inputTimeIdentity, &inputView, &inputNbIdentity) ) {
+
+    if (!isIdentity_public(true, hash, time, RenderScale::identity, frmt, ViewIdx(0), &inputTimeIdentity, &inputView, &inputNbIdentity)) {
         return shared_from_this();
     } else {
         if (inputNbIdentity < 0) {
             return shared_from_this();
         }
+
         EffectInstancePtr effect = getInput(inputNbIdentity);
 
         return effect ? effect->getNearestNonIdentity(time) : shared_from_this();
@@ -5092,6 +5296,7 @@ EffectInstance::onNodeHashChanged(U64 hash)
     _imp->actionsCache->invalidateAll(hash);
 
     const KnobsVec & knobs = getKnobs();
+
     for (KnobsVec::const_iterator it = knobs.begin(); it != knobs.end(); ++it) {
         for (int i = 0; i < (*it)->getDimension(); ++i) {
             (*it)->clearExpressionsResults(i);
@@ -5116,22 +5321,27 @@ EffectInstance::abortAnyEvaluation(bool keepOldestRender)
     NodePtr node = getNode();
 
     assert(node);
-    std::list<OutputEffectInstance*> outputNodes;
-    NodeGroup* isGroup = dynamic_cast<NodeGroup*>(this);
+    std::list<OutputEffectInstance *> outputNodes;
+    NodeGroup* isGroup = dynamic_cast<NodeGroup *>(this);
+
     if (isGroup) {
         NodesList inputOutputs;
         isGroup->getInputsOutputs(&inputOutputs, false);
+
         for (NodesList::iterator it = inputOutputs.begin(); it != inputOutputs.end(); ++it) {
             (*it)->hasOutputNodesConnected(&outputNodes);
         }
     } else {
         RotoDrawableItemPtr attachedStroke = getNode()->getAttachedRotoItem();
+
         if (attachedStroke) {
             ///For nodes internal to the rotopaint tree, check outputs of the rotopaint node instead
             RotoContextPtr context = attachedStroke->getContext();
             assert(context);
+
             if (context) {
                 NodePtr rotonode = context->getNode();
+
                 if (rotonode) {
                     rotonode->hasOutputNodesConnected(&outputNodes);
                 }
@@ -5140,7 +5350,8 @@ EffectInstance::abortAnyEvaluation(bool keepOldestRender)
             node->hasOutputNodesConnected(&outputNodes);
         }
     }
-    for (std::list<OutputEffectInstance*>::const_iterator it = outputNodes.begin(); it != outputNodes.end(); ++it) {
+
+    for (std::list<OutputEffectInstance * >::const_iterator it = outputNodes.begin(); it != outputNodes.end(); ++it) {
         //Abort and allow playback to restart but do not block, when this function returns any ongoing render may very
         //well not be finished
         if (keepOldestRender) {
@@ -5156,18 +5367,21 @@ EffectInstance::getCurrentTime() const
 {
     EffectTLSDataPtr tls = _imp->tlsData->getTLSData();
     AppInstancePtr app = getApp();
+
     if (!app) {
         return 0.;
     }
+
     if (!tls) {
         return app->getTimeLine()->currentFrame();
     }
+
     if (tls->currentRenderArgs.validArgs) {
         return tls->currentRenderArgs.time;
     }
 
 
-    if ( !tls->frameArgs.empty() ) {
+    if (!tls->frameArgs.empty()) {
         return tls->frameArgs.back()->time;
     }
 
@@ -5182,10 +5396,12 @@ EffectInstance::getCurrentView() const
     if (!tls) {
         return ViewIdx(0);
     }
+
     if (tls->currentRenderArgs.validArgs) {
         return tls->currentRenderArgs.view;
     }
-    if ( !tls->frameArgs.empty() ) {
+
+    if (!tls->frameArgs.empty()) {
         return tls->frameArgs.back()->view;
     }
 
@@ -5197,7 +5413,7 @@ EffectInstance::getFrameRenderArgsCurrentTime() const
 {
     EffectTLSDataPtr tls = _imp->tlsData->getTLSData();
 
-    if ( !tls || tls->frameArgs.empty() ) {
+    if (!tls || tls->frameArgs.empty()) {
         return getApp()->getTimeLine()->currentFrame();
     }
 
@@ -5209,7 +5425,7 @@ EffectInstance::getFrameRenderArgsCurrentView() const
 {
     EffectTLSDataPtr tls = _imp->tlsData->getTLSData();
 
-    if ( !tls || tls->frameArgs.empty() ) {
+    if (!tls || tls->frameArgs.empty()) {
         return ViewIdx(0);
     }
 
@@ -5220,7 +5436,7 @@ EffectInstance::getFrameRenderArgsCurrentView() const
 void
 EffectInstance::checkCanSetValueAndWarn() const
 {
-    if ( !checkCanSetValue() ) {
+    if (!checkCanSetValue()) {
         qDebug() << getScriptName_mt_safe().c_str() << ": setValue()/setValueAtTime() was called during an action that is not allowed to call this function.";
     }
 }
@@ -5232,14 +5448,17 @@ void
 isFrameVaryingOrAnimated_impl(const EffectInstance* node,
                               bool *ret)
 {
-    if ( node->isFrameVarying() || node->getHasAnimation() || node->getNode()->getRotoContext() ) {
+    if (node->isFrameVarying() || node->getHasAnimation() || node->getNode()->getRotoContext()) {
         *ret = true;
     } else {
         int maxInputs = node->getNInputs();
+
         for (int i = 0; i < maxInputs; ++i) {
             EffectInstancePtr input = node->getInput(i);
+
             if (input) {
                 isFrameVaryingOrAnimated_impl(input.get(), ret);
+
                 if (*ret) {
                     return;
                 }
@@ -5272,6 +5491,7 @@ EffectInstance::getPreferredMetadata_public(NodeMetadata& metadata)
     if (stat == eStatusFailed) {
         return stat;
     }
+
     if (!getNode()->isNodeDisabled()) {
         // call syncPrivateData if necessary
         bool mustSyncPrivateData;
@@ -5280,17 +5500,21 @@ EffectInstance::getPreferredMetadata_public(NodeMetadata& metadata)
             mustSyncPrivateData = _imp->mustSyncPrivateData;
             _imp->mustSyncPrivateData = false;
         }
+
         if (mustSyncPrivateData) {
             // for now, only OfxEffectInstance has syncPrivateData capabilities, but
             // syncPrivateData() could also be a virtual member of EffectInstance
-            OfxEffectInstance* effect = dynamic_cast<OfxEffectInstance*>(this);
+            OfxEffectInstance* effect = dynamic_cast<OfxEffectInstance *>(this);
+
             if (effect) {
-                assert( QThread::currentThread() == qApp->thread() );
+                assert(QThread::currentThread() == qApp->thread());
                 effect->onSyncPrivateDataRequested(); //syncPrivateData_other_thread();
             }
         }
+
         return getPreferredMetadata(metadata);
     }
+
     return stat;
 
 }
@@ -5298,7 +5522,7 @@ EffectInstance::getPreferredMetadata_public(NodeMetadata& metadata)
 static int
 getUnmappedComponentsForInput(EffectInstance* self,
                               int inputNb,
-                              const std::vector<EffectInstancePtr>& inputs,
+                              const std::vector<EffectInstancePtr> &inputs,
                               int firstNonOptionalConnectedInputComps)
 {
     int rawComps;
@@ -5310,6 +5534,7 @@ getUnmappedComponentsForInput(EffectInstance* self,
         ///of the first connected non optional input.
         rawComps = firstNonOptionalConnectedInputComps;
     }
+
     if (rawComps) {
         if (!rawComps) {
             //None comps
@@ -5319,6 +5544,7 @@ getUnmappedComponentsForInput(EffectInstance* self,
             rawComps = supportedComps.getNumComponents();
         }
     }
+
     if (!rawComps) {
         rawComps = 4; // default to RGBA
     }
@@ -5352,9 +5578,11 @@ EffectInstance::getDefaultMetadata(NodeMetadata &metadata)
     // Find the components of the first non optional connected input
     // They will be used for disconnected input
     int firstNonOptionalConnectedInputComps = 0;
+
     for (std::size_t i = 0; i < inputs.size(); ++i) {
         inputs[i] = getInput(i);
-        if ( !firstNonOptionalConnectedInputComps && inputs[i] && !isInputOptional(i) ) {
+
+        if (!firstNonOptionalConnectedInputComps && inputs[i] && !isInputOptional(i)) {
             firstNonOptionalConnectedInputComps = inputs[i]->getMetadataNComps(-1);
         }
     }
@@ -5363,10 +5591,12 @@ EffectInstance::getDefaultMetadata(NodeMetadata &metadata)
     bool inputParSet = false;
     ImagePremultiplicationEnum premult = eImagePremultiplicationOpaque;
     bool premultSet = false;
+
     for (int i = 0; i < nInputs; ++i) {
         const EffectInstancePtr& input = inputs[i];
+
         if (input) {
-            frameRate = std::max( frameRate, input->getFrameRate() );
+            frameRate = std::max(frameRate, input->getFrameRate());
         }
 
 
@@ -5383,11 +5613,11 @@ EffectInstance::getDefaultMetadata(NodeMetadata &metadata)
 
         // Note: first chromatic input gives the default output premult too, even if not connected
         // (else the output of generators may be opaque even if the host default is premultiplied)
-        if ( ( rawComp == 4 ) && (input || !premultSet) ) {
+        if ((rawComp == 4) && (input || !premultSet)) {
             if (rawPreMult == eImagePremultiplicationPremultiplied) {
                 premult = eImagePremultiplicationPremultiplied;
                 premultSet = true;
-            } else if ( (rawPreMult == eImagePremultiplicationUnPremultiplied) && ( !premultSet || (premult != eImagePremultiplicationPremultiplied) ) ) {
+            } else if ((rawPreMult == eImagePremultiplicationUnPremultiplied) && (!premultSet || (premult != eImagePremultiplicationPremultiplied))) {
                 premult = eImagePremultiplicationUnPremultiplied;
                 premultSet = true;
             }
@@ -5396,11 +5626,12 @@ EffectInstance::getDefaultMetadata(NodeMetadata &metadata)
         if (input) {
             //Update deepest bitdepth and most components only if the infos are relevant, i.e: only if the clip is connected
             hasSetCompsAndDepth = true;
-            if ( getSizeOfForBitDepth(deepestBitDepth) < getSizeOfForBitDepth(rawDepth) ) {
+
+            if (getSizeOfForBitDepth(deepestBitDepth) < getSizeOfForBitDepth(rawDepth)) {
                 deepestBitDepth = rawDepth;
             }
 
-            if ( rawComp > mostComponents ) {
+            if (rawComp > mostComponents) {
                 mostComponents = rawComp;
             }
         }
@@ -5416,7 +5647,7 @@ EffectInstance::getDefaultMetadata(NodeMetadata &metadata)
     // set some stuff up
     metadata.setOutputFrameRate(frameRate);
     metadata.setOutputFielding(eImageFieldingOrderNone);
-    metadata.setIsFrameVarying( node->hasAnimatedKnob() );
+    metadata.setIsFrameVarying(node->hasAnimatedKnob());
     metadata.setIsContinuous(false);
 
     // now find the best depth that the plugin supports
@@ -5438,6 +5669,7 @@ EffectInstance::getDefaultMetadata(NodeMetadata &metadata)
     // now add the input gubbins to the per inputs metadata
     for (int i = -1; i < (int)inputs.size(); ++i) {
         EffectInstance* effect = 0;
+
         if (i >= 0) {
             effect = inputs[i].get();
         } else {
@@ -5445,6 +5677,7 @@ EffectInstance::getDefaultMetadata(NodeMetadata &metadata)
         }
 
         double par;
+
         if (!multipleClipsPAR) {
             par = inputParSet ? inputPar : projectPAR;
         } else {
@@ -5454,9 +5687,11 @@ EffectInstance::getDefaultMetadata(NodeMetadata &metadata)
                 par = effect ? effect->getAspectRatio(-1) : projectPAR;
             }
         }
+
         metadata.setPixelAspectRatio(i, par);
 
         bool isOptional = i >= 0 && isInputOptional(i);
+
         if (i >= 0) {
             if (isOptional) {
                 if (!firstOptionalInputFormatSet && effect) {
@@ -5471,7 +5706,7 @@ EffectInstance::getDefaultMetadata(NodeMetadata &metadata)
             }
         }
 
-        if ( (i == -1) || isOptional ) {
+        if ((i == -1) || isOptional) {
             // "Optional input clips can always have their component types remapped"
             // http://openfx.sourceforge.net/Documentation/1.3/ofxProgrammingReference.html#id482755
             ImageBitDepthEnum depth = deepestBitDepth;
@@ -5479,8 +5714,9 @@ EffectInstance::getDefaultMetadata(NodeMetadata &metadata)
             remappedComps = findClosestSupportedComponents(i, ImagePlaneDesc::mapNCompsToColorPlane(remappedComps)).getNumComponents();
             metadata.setNComps(i, remappedComps);
             metadata.setComponentsType(i, kNatronColorPlaneID);
-            if ( (i == -1) && !premultSet &&
-                ( ( remappedComps == 4 ) || ( remappedComps == 1 ) ) ) {
+
+            if ((i == -1) && !premultSet &&
+                ((remappedComps == 4) || (remappedComps == 1))) {
                 premult = eImagePremultiplicationPremultiplied;
                 premultSet = true;
             }
@@ -5499,11 +5735,12 @@ EffectInstance::getDefaultMetadata(NodeMetadata &metadata)
             metadata.setComponentsType(i, kNatronColorPlaneID);
         }
     }
-    
+
     // default to a reasonable value if there is no input
     if (!premultSet) {
         premult = eImagePremultiplicationOpaque;
     }
+
     // set output premultiplication
     metadata.setOutputPremult(premult);
 
@@ -5540,6 +5777,7 @@ EffectInstance::getMetadataComponents(int inputNb, ImagePlaneDesc* plane, ImageP
         nComps = _imp->metadata.getNComps(inputNb);
         componentsType = _imp->metadata.getComponentsType(inputNb);
     }
+
     if (componentsType == kNatronColorPlaneID) {
         *plane = ImagePlaneDesc::mapNCompsToColorPlane(nComps);
     } else if (componentsType == kNatronDisparityComponentsLabel) {
@@ -5620,12 +5858,12 @@ EffectInstance::getFieldingOrder() const
 }
 
 bool
-EffectInstance::refreshMetadata_recursive(std::list<Node*> & markedNodes)
+EffectInstance::refreshMetadata_recursive(std::list<Node*> &markedNodes)
 {
     NodePtr node = getNode();
-    std::list<Node*>::iterator found = std::find( markedNodes.begin(), markedNodes.end(), node.get() );
+    std::list<Node *>::iterator found = std::find(markedNodes.begin(), markedNodes.end(), node.get());
 
-    if ( found != markedNodes.end() ) {
+    if (found != markedNodes.end()) {
         return false;
     }
 
@@ -5637,15 +5875,16 @@ EffectInstance::refreshMetadata_recursive(std::list<Node*> & markedNodes)
     bool ret = refreshMetadata_public(false);
     node->refreshIdentityState();
 
-    if ( !node->duringInputChangedAction() ) {
+    if (!node->duringInputChangedAction()) {
         ///The channels selector refreshing is already taken care of in the inputChanged action
         node->refreshChannelSelectors();
     }
 
-    markedNodes.push_back( node.get() );
+    markedNodes.push_back(node.get());
 
     NodesList outputs;
     node->getOutputsWithGroupRedirection(outputs);
+
     for (NodesList::const_iterator it = outputs.begin(); it != outputs.end(); ++it) {
         (*it)->getEffectInstance()->refreshMetadata_recursive(markedNodes);
     }
@@ -5662,10 +5901,12 @@ EffectInstance::setDefaultMetadata()
     if (stat == eStatusFailed) {
         return;
     }
+
     {
         QMutexLocker k(&_imp->metadataMutex);
         _imp->metadata = metadata;
     }
+
     onMetadataRefreshed(metadata);
 }
 
@@ -5676,6 +5917,7 @@ EffectInstance::setMetadataInternal(const NodeMetadata& metadata)
     {
         QMutexLocker k(&_imp->metadataMutex);
         ret = metadata != _imp->metadata;
+
         if (ret) {
             _imp->metadata = metadata;
         }
@@ -5693,6 +5935,7 @@ EffectInstance::refreshMetadata_internal()
 
     bool ret = setMetadataInternal(metadata);
     onMetadataRefreshed(metadata);
+
     if (ret) {
         NodePtr node = getNode();
         node->checkForPremultWarningAndCheckboxes();
@@ -5708,22 +5951,24 @@ EffectInstance::refreshMetadata_internal()
 bool
 EffectInstance::refreshMetadata_public(bool recurse)
 {
-    assert( QThread::currentThread() == qApp->thread() );
+    assert(QThread::currentThread() == qApp->thread());
 
     if (recurse) {
 
         {
-            std::list<Node*> markedNodes;
+            std::list<Node *> markedNodes;
 
             return refreshMetadata_recursive(markedNodes);
         }
     } else {
         bool ret = refreshMetadata_internal();
+
         if (ret) {
             NodePtr node = getNode();
             NodesList children;
             node->getChildrenMultiInstance(&children);
-            if ( !children.empty() ) {
+
+            if (!children.empty()) {
                 for (NodesList::iterator it = children.begin(); it != children.end(); ++it) {
                     (*it)->getEffectInstance()->refreshMetadata_internal();
                 }
@@ -5746,23 +5991,25 @@ EffectInstance::Implementation::checkMetadata(NodeMetadata &md)
     if (!node) {
         return;
     }
+
     //Make sure it is valid
     int nInputs = node->getNInputs();
 
     for (int i = -1; i < nInputs; ++i) {
-        md.setBitDepth( i, node->getClosestSupportedBitDepth( md.getBitDepth(i) ) );
+        md.setBitDepth(i, node->getClosestSupportedBitDepth(md.getBitDepth(i)));
         int nComps = md.getNComps(i);
         bool isAlpha = false;
         bool isRGB = false;
+
         if (i == -1) {
-            if ( nComps == 3) {
+            if (nComps == 3) {
                 isRGB = true;
             } else if (nComps == 1) {
                 isAlpha = true;
             }
         }
 
-        if ( md.getComponentsType(i) == kNatronColorPlaneID ) {
+        if (md.getComponentsType(i) == kNatronColorPlaneID) {
             md.setNComps(i, node->findClosestSupportedComponents(i, ImagePlaneDesc::mapNCompsToColorPlane(nComps)).getNumComponents());
         }
 
@@ -5780,12 +6027,13 @@ EffectInstance::Implementation::checkMetadata(NodeMetadata &md)
     ///Set a warning on the node if the bitdepth conversion from one of the input clip to the output clip is lossy
     QString bitDepthWarning = tr("This nodes converts higher bit depths images from its inputs to work. As "
                                  "a result of this process, the quality of the images is degraded. The following conversions are done:");
-    bitDepthWarning.append( QChar::fromLatin1('\n') );
+    bitDepthWarning.append(QChar::fromLatin1('\n'));
     bool setBitDepthWarning = false;
     const bool supportsMultipleClipDepths = _publicInterface->supportsMultipleClipDepths();
     const bool supportsMultipleClipPARs = _publicInterface->supportsMultipleClipPARs();
     const bool supportsMultipleClipFPSs = _publicInterface->supportsMultipleClipFPSs();
     std::vector<EffectInstancePtr> inputs(nInputs);
+
     for (int i = 0; i < nInputs; ++i) {
         inputs[i] = _publicInterface->getInput(i);
     }
@@ -5799,9 +6047,10 @@ EffectInstance::Implementation::checkMetadata(NodeMetadata &md)
     bool mustWarnPAR = false;
 
     int nbConnectedInputs = 0;
+
     for (int i = 0; i < nInputs; ++i) {
         //Check that the bitdepths are all the same if the plug-in doesn't support multiple depths
-        if ( !supportsMultipleClipDepths && (md.getBitDepth(i) != outputDepth) ) {
+        if (!supportsMultipleClipDepths && (md.getBitDepth(i) != outputDepth)) {
             md.setBitDepth(i, outputDepth);
         }
 
@@ -5823,7 +6072,6 @@ EffectInstance::Implementation::checkMetadata(NodeMetadata &md)
         const double fps = inputs[i]->getFrameRate();
 
 
-
         if (!supportsMultipleClipFPSs) {
             if (!outputFrameRateSet) {
                 outputFrameRate = fps;
@@ -5838,18 +6086,18 @@ EffectInstance::Implementation::checkMetadata(NodeMetadata &md)
         ImageBitDepthEnum inputOutputDepth = inputs[i]->getBitDepth(-1);
 
         //If the bit-depth conversion will be lossy, warn the user
-        if ( Image::isBitDepthConversionLossy( inputOutputDepth, md.getBitDepth(i) ) ) {
-            bitDepthWarning.append( QString::fromUtf8( inputs[i]->getNode()->getLabel_mt_safe().c_str() ) );
-            bitDepthWarning.append( QString::fromUtf8(" (") + QString::fromUtf8( Image::getDepthString(inputOutputDepth).c_str() ) + QChar::fromLatin1(')') );
-            bitDepthWarning.append( QString::fromUtf8(" ----> ") );
-            bitDepthWarning.append( QString::fromUtf8( node->getLabel_mt_safe().c_str() ) );
-            bitDepthWarning.append( QString::fromUtf8(" (") + QString::fromUtf8( Image::getDepthString( md.getBitDepth(i) ).c_str() ) + QChar::fromLatin1(')') );
-            bitDepthWarning.append( QChar::fromLatin1('\n') );
+        if (Image::isBitDepthConversionLossy(inputOutputDepth, md.getBitDepth(i))) {
+            bitDepthWarning.append(QString::fromUtf8(inputs[i]->getNode()->getLabel_mt_safe().c_str()));
+            bitDepthWarning.append(QString::fromUtf8(" (") + QString::fromUtf8(Image::getDepthString(inputOutputDepth).c_str()) + QChar::fromLatin1(')'));
+            bitDepthWarning.append(QString::fromUtf8(" ----> "));
+            bitDepthWarning.append(QString::fromUtf8(node->getLabel_mt_safe().c_str()));
+            bitDepthWarning.append(QString::fromUtf8(" (") + QString::fromUtf8(Image::getDepthString(md.getBitDepth(i)).c_str()) + QChar::fromLatin1(')'));
+            bitDepthWarning.append(QChar::fromLatin1('\n'));
             setBitDepthWarning = true;
         }
 
 
-        if ( !supportsMultipleClipPARs && (pixelAspect != outputPAR) ) {
+        if (!supportsMultipleClipPARs && (pixelAspect != outputPAR)) {
             qDebug() << node->getScriptName_mt_safe().c_str() << ": The input " << inputs[i]->getNode()->getScriptName_mt_safe().c_str()
                      << ") has a pixel aspect ratio (" << md.getPixelAspectRatio(i)
                      << ") different than the output clip (" << outputPAR << ") but it doesn't support multiple clips PAR. "
@@ -5858,6 +6106,7 @@ EffectInstance::Implementation::checkMetadata(NodeMetadata &md)
     }
 
     std::map<Node::StreamWarningEnum, QString> warnings;
+
     if (setBitDepthWarning) {
         warnings[Node::eStreamWarningBitdepth] = bitDepthWarning;
     } else {
@@ -5888,7 +6137,7 @@ EffectInstance::Implementation::checkMetadata(NodeMetadata &md)
 
 void
 EffectInstance::refreshExtraStateAfterTimeChanged(bool isPlayback,
-                                                  double time)
+        double time)
 {
     KnobHolder::refreshExtraStateAfterTimeChanged(isPlayback, time);
 
@@ -5899,16 +6148,20 @@ void
 EffectInstance::assertActionIsNotRecursive() const
 {
 # ifdef DEBUG
+
     ///Only check recursions which are on a render threads, because we do authorize recursions in getRegionOfDefinition and such
-    if ( QThread::currentThread() != qApp->thread() ) {
+    if (QThread::currentThread() != qApp->thread()) {
         int recursionLvl = getRecursionLevel();
-        if ( getApp() && getApp()->isShowingDialog() ) {
+
+        if (getApp() && getApp()->isShowingDialog()) {
             return;
         }
+
         if (recursionLvl != 0) {
             qDebug() << "A non-recursive action has been called recursively.";
         }
     }
+
 # endif // DEBUG
 }
 
@@ -5945,7 +6198,7 @@ EffectInstance::getRecursionLevel() const
 void
 EffectInstance::setClipPreferencesRunning(bool running)
 {
-    assert( QThread::currentThread() == qApp->thread() );
+    assert(QThread::currentThread() == qApp->thread());
     _imp->runningClipPreferences = running;
 }
 

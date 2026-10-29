@@ -31,7 +31,6 @@
 #include "Engine/RectI.h"
 #include "Engine/NonKeyParams.h"
 #include "Engine/EngineFwd.h"
-#include "Global/GLIncludes.h"
 
 NATRON_NAMESPACE_ENTER
 
@@ -66,9 +65,9 @@ public:
 
         info.mode = eStorageModeDisk;
         info.numComponents = 4; // always RGBA
-        info.dataTypeSize = getSizeOfForBitDepth( (ImageBitDepthEnum)bitDepth );
+        info.dataTypeSize = getSizeOfForBitDepth((ImageBitDepthEnum)bitDepth);
         info.bounds = bounds;
-        info.textureTarget = GL_TEXTURE_2D;
+        info.textureTarget = 0;
     }
 
     virtual ~FrameParams()

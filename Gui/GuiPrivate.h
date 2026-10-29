@@ -37,6 +37,7 @@ CLANG_DIAG_OFF(uninitialized)
 #include <QSize>
 #include <QCoreApplication>
 #include <QMutex>
+#include <QPointer>
 #include <QWaitCondition>
 #include <QToolBar>
 #include <QMessageBox>
@@ -75,8 +76,8 @@ public:
     bool _lastStopAskingAnswer;
 
     ///ptrs to the undo/redo actions from the active stack.
-    QAction* _currentUndoAction;
-    QAction* _currentRedoAction;
+    QPointer<QAction> _currentUndoAction;
+    QPointer<QAction> _currentRedoAction;
 
     ///all the undo stacks of Natron are gathered here
     QUndoGroup* _undoStacksGroup;
@@ -173,6 +174,7 @@ public:
     ///The curve editor.
     CurveEditor *_curveEditor;
     ProgressPanel* _progressPanel;
+    StageOutline* _stageOutline;
 
     // The dope sheet
     DopeSheetEditor *_dopeSheetEditor;
@@ -240,6 +242,9 @@ public:
     ///list of the currently opened property panels
     mutable QMutex openedPanelsMutex;
     std::list<DockablePanel*> openedPanels;
+    // Disconnect panel callbacks before Gui's private state is destroyed;
+    // QWidget destroys its child panels later, in its base destructor.
+    std::unique_ptr<QObject> panelDestructionContext;
     QToolButton* _toolButtonMenuOpened;
     QMutex aboutToCloseMutex;
     bool _aboutToClose;
@@ -284,6 +289,7 @@ public:
     void createScriptEditorGui();
 
     void createProgressPanelGui();
+    void createStageOutlineGui();
 
     ///If there's only 1 non-floating pane in the main window, return it, otherwise returns NULL
     TabWidget* getOnly1NonFloatingPane(int & count) const;

@@ -199,6 +199,8 @@ public:
      **/
     bool getImage(const ImageKey & key, std::list<ImagePtr>* returnValue) const;
 
+    void getResidentImagesForKey(const ImageKey& key, std::list<ImagePtr>* images) const;
+
     /**
      * @brief Same as getImage, but if it couldn't find a matching image in the cache, it will create one with the given parameters.
      **/
@@ -221,6 +223,7 @@ public:
     U64 getCachesTotalMemorySize() const;
     U64 getCachesTotalDiskSize() const;
     CacheSignalEmitterPtr getOrActivateViewerCacheSignalEmitter() const;
+    CacheSignalEmitterPtr getNodeCacheSignalEmitter() const;
 
     void setApplicationsCachesMaximumMemoryPercent(double p);
 
@@ -493,11 +496,10 @@ public:
 
     void setOFXHostHandle(void* handle);
 
-    OFX::Host::ImageEffect::Descriptor* getPluginContextAndDescribe(OFX::Host::ImageEffect::ImageEffectPlugin* plugin,
-                                                                    Natron::ContextEnum* ctx);
-    AppTLS* getAppTLS() const;
-    const OfxHost* getOFXHost() const;
-    GPUContextPool* getGPUContextPool() const;
+    OFX::Host::ImageEffect::Descriptor *getPluginContextAndDescribe(OFX::Host::ImageEffect::ImageEffectPlugin* plugin,
+            Natron::ContextEnum* ctx);
+    AppTLS *getAppTLS() const;
+    const OfxHost *getOFXHost() const;
 
 
     /**
@@ -554,9 +556,6 @@ public:
 
     QString getPySideVersion() const;
 
-    bool initializeOpenGLFunctionsOnce(bool createOpenGLContext = false);
-
-    const std::list<OpenGLRendererInfo>& getOpenGLRenderers() const;
 
     void refreshOpenGLRenderingFlagOnAllInstances();
 
@@ -565,25 +564,18 @@ public:
      **/
     bool isOpenGLLoaded() const;
 
-    bool isTextureFloatSupported() const;
-
-    bool hasOpenGLForRequirements(Natron::OpenGLRequirementsTypeEnum type, QString* missingOpenGLError = 0) const;
-
     virtual void updateAboutWindowLibrariesVersion() {}
 
     bool isOnWayland() const;
 
 #ifdef __NATRON_WIN32__
-    const OSGLContext_wgl_data* getWGLData() const;
 #endif
 #ifdef __NATRON_LINUX__
-    const OSGLContext_egl_data* getEGLData() const;
 
-    const OSGLContext_glx_data* getGLXData() const;
 #endif
 
-    const IOPluginsMap& getFileFormatsForReadingAndReader() const;
-    const IOPluginsMap& getFileFormatsForWritingAndWriter() const;
+    const IOPluginsMap &getFileFormatsForReadingAndReader() const;
+    const IOPluginsMap &getFileFormatsForWritingAndWriter() const;
 
     void getSupportedReaderFileFormats(std::vector<std::string>* formats) const;
 

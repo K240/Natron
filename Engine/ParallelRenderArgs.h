@@ -46,14 +46,14 @@
 #define NATRON_MAX_FRAMES_NEEDED_PRE_FETCHING 4
 
 NATRON_NAMESPACE_ENTER
+class VulkanImageContext;
 
 typedef std::map<EffectInstancePtr, RectD> RoIMap; // RoIs are in canonical coordinates
 typedef std::map<ViewIdx, std::vector<RangeD> > FrameRangesMap;
 typedef std::map<int, FrameRangesMap> FramesNeededMap;
 typedef std::shared_ptr<FramesNeededMap> FramesNeededMapPtr;
 
-struct InputMatrix
-{
+struct InputMatrix {
     EffectInstancePtr newInputEffect;
     Transform::Matrix3x3Ptr cat;
     int newInputNbToFetchFrom;
@@ -83,7 +83,7 @@ public:
     double time;
 
     ///To check the current time on the timeline
-    const TimeLine* timeline;
+    const TimeLine *timeline;
 
     ///The hash of the node at the time we started rendering
     U64 nodeHash;
@@ -115,7 +115,6 @@ public:
     RenderStatsPtr stats;
 
     ///The OpenGL context to use for the render of this frame
-    OSGLContextWPtr openGLContext;
 
     ///The texture index of the viewer being rendered, only useful for abortable renders
     int textureIndex;
@@ -125,7 +124,8 @@ public:
     RenderSafetyEnum currentThreadSafety;
 
     ///Current OpenGL support: it might change during instanceChanged action
-    PluginOpenGLRenderSupport currentOpenglSupport;
+    bool currentVulkanSupport = false;
+    std::shared_ptr<VulkanImageContext> vulkanContext;
 
     /// is this a render due to user interaction ? Generally this is true when rendering because
     /// of a user parameter tweek or timeline seek, or more generally by calling RenderEngine::renderCurrentFrame
@@ -154,14 +154,12 @@ public:
     bool isCurrentFrameRenderNotAbortable() const;
 };
 
-struct FrameViewPair
-{
+struct FrameViewPair {
     double time;
     ViewIdx view;
 };
 
-struct FrameViewRequestGlobalData
-{
+struct FrameViewRequestGlobalData {
     ///The transforms associated to each input branch, set on first request
     InputMatrixMapPtr transforms;
     std::shared_ptr<std::map<int, EffectInstancePtr> > reroutesMap;
@@ -180,18 +178,15 @@ struct FrameViewRequestGlobalData
     double inputIdentityTime;
 };
 
-struct FrameViewRequestFinalData
-{
+struct FrameViewRequestFinalData {
     RectD finalRoi;
 };
 
-struct FrameViewPerRequestData
-{
+struct FrameViewPerRequestData {
     RoIMap inputsRoi;
 };
 
-struct FrameViewRequest
-{
+struct FrameViewRequest {
     ///All different requests led by different branches in the tree
     //std::list<std::pair<RectD, FrameViewPerRequestData> > requests;
 
@@ -202,10 +197,9 @@ struct FrameViewRequest
     FrameViewRequestGlobalData globalData;
 };
 
-struct FrameView_compare_less
-{
-    bool operator() (const FrameViewPair & lhs,
-                     const FrameViewPair & rhs) const
+struct FrameView_compare_less {
+    bool operator()(const FrameViewPair & lhs,
+                    const FrameViewPair & rhs) const
     {
         if (lhs.time < rhs.time) {
             return true;
@@ -236,7 +230,7 @@ public:
 
     bool getFrameViewCanonicalRoI(double time, ViewIdx view, RectD* roi) const;
 
-    const FrameViewRequest* getFrameViewRequest(double time, ViewIdx view) const;
+    const FrameViewRequest *getFrameViewRequest(double time, ViewIdx view) const;
 };
 
 typedef std::map<NodePtr, NodeFrameRequestPtr> FrameRequestMap;
@@ -246,10 +240,6 @@ class ParallelRenderArgsSetter
 {
     std::shared_ptr<std::map<NodePtr, ParallelRenderArgsPtr> > argsMap;
     NodesList nodes;
-
-protected:
-
-    OSGLContextWPtr _openGLContext;
 
 public:
 
@@ -273,7 +263,7 @@ public:
                              bool draftMode,
                              const RenderStatsPtr& stats);
 
-    ParallelRenderArgsSetter(const std::shared_ptr<std::map<NodePtr, ParallelRenderArgsPtr> >& args);
+    ParallelRenderArgsSetter(const std::shared_ptr<std::map<NodePtr, ParallelRenderArgsPtr> > &args);
 
     void updateNodesRequest(const FrameRequestMap& request);
 

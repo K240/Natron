@@ -56,8 +56,8 @@ CLANG_DIAG_ON(deprecated)
 #include "Global/Enums.h"
 
 
-#if QT_VERSION < QT_VERSION_CHECK(5, 15, 3)
-#error "Qt versions earlier than 5.15.3 are not supported."
+#if QT_VERSION < QT_VERSION_CHECK(6, 6, 0)
+#error "Natron requires Qt 6.6 or newer."
 #endif
 
 // boost and C++11 also have a foreach. this breaks it. DON'T UNCOMMENT THIS.

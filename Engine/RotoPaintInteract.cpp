@@ -30,7 +30,7 @@
 
 #include <QLineF>
 
-#include "Global/GLIncludes.h"
+#include "Engine/OverlayDrawList.h"
 #include "Engine/KnobTypes.h"
 #include "Engine/RotoPaint.h"
 #include "Engine/MergingEnum.h"
@@ -189,12 +189,20 @@ RotoPaintInteract::drawSelectedCp(double time,
                                   double y,
                                   const Transform::Matrix3x3& transform)
 {
+    auto* commands = p->publicInterface->getCurrentViewportForOverlays()->overlayDrawList();
+
+    if (!commands) {
+        return;
+    }
+
+    OverlayDrawList& overlay = *commands;
+
     ///if the tangent is being dragged, color it
     bool colorLeftTangent = false;
     bool colorRightTangent = false;
 
-    if ( (cp == tangentBeingDragged) &&
-         ( ( state == eEventStateDraggingLeftTangent) || ( state == eEventStateDraggingRightTangent) ) ) {
+    if ((cp == tangentBeingDragged) &&
+        ((state == eEventStateDraggingLeftTangent) || (state == eEventStateDraggingRightTangent))) {
         colorLeftTangent = state == eEventStateDraggingLeftTangent ? true : false;
         colorRightTangent = !colorLeftTangent;
     }
@@ -209,36 +217,47 @@ RotoPaintInteract::drawSelectedCp(double time,
 
     bool drawLeftHandle = leftDeriv.x != x || leftDeriv.y != y;
     bool drawRightHandle = rightDeriv.y != x || rightDeriv.y != y;
-    glBegin(GL_POINTS);
-    if (drawLeftHandle) {
-        if (colorLeftTangent) {
-            glColor3f(0.2, 1., 0.);
-        }
-        glVertex2d(leftDeriv.x, leftDeriv.y);
-        if (colorLeftTangent) {
-            glColor3d(0.85, 0.67, 0.);
-        }
-    }
-    if (drawRightHandle) {
-        if (colorRightTangent) {
-            glColor3f(0.2, 1., 0.);
-        }
-        glVertex2d(rightDeriv.x, rightDeriv.y);
-        if (colorRightTangent) {
-            glColor3d(0.85, 0.67, 0.);
-        }
-    }
-    glEnd();
+    overlay.begin(OverlayPrimitive::Points);
 
-    glBegin(GL_LINE_STRIP);
     if (drawLeftHandle) {
-        glVertex2d(leftDeriv.x, leftDeriv.y);
+        if (colorLeftTangent) {
+            overlay.color(0.2, 1., 0.);
+        }
+
+        overlay.vertex(leftDeriv.x, leftDeriv.y);
+
+        if (colorLeftTangent) {
+            overlay.color(0.85, 0.67, 0.);
+        }
     }
-    glVertex2d(x, y);
+
     if (drawRightHandle) {
-        glVertex2d(rightDeriv.x, rightDeriv.y);
+        if (colorRightTangent) {
+            overlay.color(0.2, 1., 0.);
+        }
+
+        overlay.vertex(rightDeriv.x, rightDeriv.y);
+
+        if (colorRightTangent) {
+            overlay.color(0.85, 0.67, 0.);
+        }
     }
-    glEnd();
+
+    overlay.end();
+
+    overlay.begin(OverlayPrimitive::LineStrip);
+
+    if (drawLeftHandle) {
+        overlay.vertex(leftDeriv.x, leftDeriv.y);
+    }
+
+    overlay.vertex(x, y);
+
+    if (drawRightHandle) {
+        overlay.vertex(rightDeriv.x, rightDeriv.y);
+    }
+
+    overlay.end();
 } // drawSelectedCp
 
 void
@@ -252,23 +271,33 @@ RotoPaintInteract::drawEllipse(double x,
                                double b,
                                double a)
 {
-    glColor3f(r * l * a, g * l * a, b * l * a);
+    auto* commands = p->publicInterface->getCurrentViewportForOverlays()->overlayDrawList();
 
-    glPushMatrix();
+    if (!commands) {
+        return;
+    }
+
+    OverlayDrawList& overlay = *commands;
+
+    overlay.color(r * l * a, g * l * a, b * l * a);
+
+    overlay.pushTransform();
     //  center the oval at x_center, y_center
-    glTranslatef( (float)x, (float)y, 0.f );
+    overlay.translate((float)x, (float)y);
     //  draw the oval using line segments
-    glBegin(GL_LINE_LOOP);
+    overlay.begin(OverlayPrimitive::LineLoop);
     // we don't need to be pixel-perfect here, it's just an interact!
     // 40 segments is enough.
     double m = 2 * 3.14159265358979323846264338327950288419717 / 40.;
+
     for (int i = 0; i < 40; ++i) {
         double theta = i * m;
-        glVertex2d( radiusX * std::cos(theta), radiusY * std::sin(theta) );
+        overlay.vertex(radiusX * std::cos(theta), radiusY * std::sin(theta));
     }
-    glEnd();
 
-    glPopMatrix();
+    overlay.end();
+
+    overlay.popTransform();
 }
 
 void
@@ -276,43 +305,51 @@ RotoPaintInteract::drawArrow(double centerX,
                              double centerY,
                              double rotate,
                              bool hovered,
-                             const std::pair<double, double> & pixelScale)
+                             const std::pair<double, double> &pixelScale)
 {
-    GLProtectMatrix pm(GL_MODELVIEW);
+    auto* commands = p->publicInterface->getCurrentViewportForOverlays()->overlayDrawList();
+
+    if (!commands) {
+        return;
+    }
+
+    OverlayDrawList& overlay = *commands;
+
+    OverlayTransformScope pm(overlay);
 
     if (hovered) {
-        glColor3f(0., 1., 0.);
+        overlay.color(0., 1., 0.);
     } else {
-        glColor3f(1., 1., 1.);
+        overlay.color(1., 1., 1.);
     }
 
     double arrowLenght =  kTransformArrowLenght * pixelScale.second;
     double arrowWidth = kTransformArrowWidth * pixelScale.second;
     double arrowHeadHeight = 4 * pixelScale.second;
 
-    glTranslatef(centerX, centerY, 0.);
-    glRotatef(rotate, 0., 0., 1.);
+    overlay.translate(centerX, centerY);
+    overlay.rotate(rotate);
     QPointF bottom(0., -arrowLenght);
     QPointF top(0, arrowLenght);
     ///the arrow head is 4 pixels long and kTransformArrowWidth * 2 large
-    double screenPixelRatio = p->publicInterface->getCurrentViewportForOverlays()->getScreenPixelRatio();
-    glLineWidth(1 * screenPixelRatio);
-    glBegin(GL_LINES);
-    glVertex2f( top.x(), top.y() );
-    glVertex2f( bottom.x(), bottom.y() );
-    glEnd();
 
-    glBegin(GL_POLYGON);
-    glVertex2f( bottom.x(), bottom.y() );
-    glVertex2f(bottom.x() + arrowWidth, bottom.y() + arrowHeadHeight);
-    glVertex2f(bottom.x() - arrowWidth, bottom.y() + arrowHeadHeight);
-    glEnd();
+    overlay.lineWidth(1);
+    overlay.begin(OverlayPrimitive::Lines);
+    overlay.vertex(top.x(), top.y());
+    overlay.vertex(bottom.x(), bottom.y());
+    overlay.end();
 
-    glBegin(GL_POLYGON);
-    glVertex2f( top.x(), top.y() );
-    glVertex2f(top.x() - arrowWidth, top.y() - arrowHeadHeight);
-    glVertex2f(top.x() + arrowWidth, top.y() - arrowHeadHeight);
-    glEnd();
+    overlay.begin(OverlayPrimitive::Polygon);
+    overlay.vertex(bottom.x(), bottom.y());
+    overlay.vertex(bottom.x() + arrowWidth, bottom.y() + arrowHeadHeight);
+    overlay.vertex(bottom.x() - arrowWidth, bottom.y() + arrowHeadHeight);
+    overlay.end();
+
+    overlay.begin(OverlayPrimitive::Polygon);
+    overlay.vertex(top.x(), top.y());
+    overlay.vertex(top.x() - arrowWidth, top.y() - arrowHeadHeight);
+    overlay.vertex(top.x() + arrowWidth, top.y() - arrowHeadHeight);
+    overlay.end();
 }
 
 void
@@ -320,81 +357,94 @@ RotoPaintInteract::drawBendedArrow(double centerX,
                                    double centerY,
                                    double rotate,
                                    bool hovered,
-                                   const std::pair<double, double> & pixelScale)
+                                   const std::pair<double, double> &pixelScale)
 {
-    GLProtectMatrix p(GL_MODELVIEW);
+    auto* commands = p->publicInterface->getCurrentViewportForOverlays()->overlayDrawList();
+
+    if (!commands) {
+        return;
+    }
+
+    OverlayDrawList& overlay = *commands;
+
+    OverlayTransformScope p(overlay);
 
     if (hovered) {
-        glColor3f(0., 1., 0.);
+        overlay.color(0., 1., 0.);
     } else {
-        glColor3f(1., 1., 1.);
+        overlay.color(1., 1., 1.);
     }
 
     double arrowLenght =  kTransformArrowLenght * pixelScale.second;
     double arrowWidth = kTransformArrowWidth * pixelScale.second;
     double arrowHeadHeight = 4 * pixelScale.second;
 
-    glTranslatef(centerX, centerY, 0.);
-    glRotatef(rotate, 0., 0., 1.);
+    overlay.translate(centerX, centerY);
+    overlay.rotate(rotate);
 
     /// by default we draw the top left
     QPointF bottom(0., -arrowLenght / 2.);
     QPointF right(arrowLenght / 2., 0.);
-    glBegin (GL_LINE_STRIP);
-    glVertex2f ( bottom.x(), bottom.y() );
-    glVertex2f (0., 0.);
-    glVertex2f ( right.x(), right.y() );
-    glEnd ();
+    overlay.begin(OverlayPrimitive::LineStrip);
+    overlay.vertex(bottom.x(), bottom.y());
+    overlay.vertex(0., 0.);
+    overlay.vertex(right.x(), right.y());
+    overlay.end();
 
-    glBegin(GL_POLYGON);
-    glVertex2f(bottom.x(), bottom.y() - arrowHeadHeight);
-    glVertex2f( bottom.x() - arrowWidth, bottom.y() );
-    glVertex2f( bottom.x() + arrowWidth, bottom.y() );
-    glEnd();
+    overlay.begin(OverlayPrimitive::Polygon);
+    overlay.vertex(bottom.x(), bottom.y() - arrowHeadHeight);
+    overlay.vertex(bottom.x() - arrowWidth, bottom.y());
+    overlay.vertex(bottom.x() + arrowWidth, bottom.y());
+    overlay.end();
 
-    glBegin(GL_POLYGON);
-    glVertex2f( right.x() + arrowHeadHeight, right.y() );
-    glVertex2f(right.x(), right.y() - arrowWidth);
-    glVertex2f(right.x(), right.y() + arrowWidth);
-    glEnd();
+    overlay.begin(OverlayPrimitive::Polygon);
+    overlay.vertex(right.x() + arrowHeadHeight, right.y());
+    overlay.vertex(right.x(), right.y() - arrowWidth);
+    overlay.vertex(right.x(), right.y() + arrowWidth);
+    overlay.end();
 }
 
 void
 RotoPaintInteract::drawSelectedCpsBBOX()
 {
+    auto* commands = p->publicInterface->getCurrentViewportForOverlays()->overlayDrawList();
+
+    if (!commands) {
+        return;
+    }
+
+    OverlayDrawList& overlay = *commands;
+
     std::pair<double, double> pixelScale;
 
     p->publicInterface->getCurrentViewportForOverlays()->getPixelScale(pixelScale.first, pixelScale.second);
 
     {
-        GLProtectAttrib a(GL_HINT_BIT | GL_ENABLE_BIT | GL_LINE_BIT | GL_POINT_BIT | GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT | GL_TRANSFORM_BIT);
+        OverlayDrawScope a(overlay);
 
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glEnable(GL_LINE_SMOOTH);
-        glHint(GL_LINE_SMOOTH_HINT, GL_DONT_CARE);
+
 
 
         QPointF topLeft = selectedCpsBbox.topLeft();
         QPointF btmRight = selectedCpsBbox.bottomRight();
 
-        double screenPixelRatio = p->publicInterface->getCurrentViewportForOverlays()->getScreenPixelRatio();
 
         if (hoverState == eHoverStateBbox) {
-            glColor4f(0.9, 0.5, 0, 1.);
+            overlay.color(0.9, 0.5, 0, 1.);
         } else {
-            glColor4f(0.8, 0.8, 0.8, 1.);
+            overlay.color(0.8, 0.8, 0.8, 1.);
         }
-        glLineWidth(1.5 * screenPixelRatio);
-        glBegin(GL_LINE_LOOP);
-        glVertex2f( topLeft.x(), btmRight.y() );
-        glVertex2f( topLeft.x(), topLeft.y() );
-        glVertex2f( btmRight.x(), topLeft.y() );
-        glVertex2f( btmRight.x(), btmRight.y() );
-        glEnd();
 
-        double midX = ( topLeft.x() + btmRight.x() ) / 2.;
-        double midY = ( btmRight.y() + topLeft.y() ) / 2.;
+        overlay.lineWidth(1.5);
+        overlay.begin(OverlayPrimitive::LineLoop);
+        overlay.vertex(topLeft.x(), btmRight.y());
+        overlay.vertex(topLeft.x(), topLeft.y());
+        overlay.vertex(btmRight.x(), topLeft.y());
+        overlay.vertex(btmRight.x(), btmRight.y());
+        overlay.end();
+
+        double midX = (topLeft.x() + btmRight.x()) / 2.;
+        double midY = (btmRight.y() + topLeft.y()) / 2.;
         double xHairMidSizeX = kXHairSelectedCpsBox * pixelScale.first;
         double xHairMidSizeY = kXHairSelectedCpsBox * pixelScale.second;
         QLineF selectedCpsCrossHorizLine;
@@ -402,35 +452,34 @@ RotoPaintInteract::drawSelectedCpsBBOX()
         QLineF selectedCpsCrossVertLine;
         selectedCpsCrossVertLine.setLine(midX, midY - xHairMidSizeY, midX, midY + xHairMidSizeY);
 
-        glLineWidth(1.5 * screenPixelRatio);
-        glBegin(GL_LINES);
-        glVertex2f( std::max( selectedCpsCrossHorizLine.p1().x(), topLeft.x() ), selectedCpsCrossHorizLine.p1().y() );
-        glVertex2f( std::min( selectedCpsCrossHorizLine.p2().x(), btmRight.x() ), selectedCpsCrossHorizLine.p2().y() );
-        glVertex2f( selectedCpsCrossVertLine.p1().x(), std::max( selectedCpsCrossVertLine.p1().y(), btmRight.y() ) );
-        glVertex2f( selectedCpsCrossVertLine.p2().x(), std::min( selectedCpsCrossVertLine.p2().y(), topLeft.y() ) );
-        glEnd();
-
-        glCheckError();
+        overlay.lineWidth(1.5);
+        overlay.begin(OverlayPrimitive::Lines);
+        overlay.vertex(std::max(selectedCpsCrossHorizLine.p1().x(), topLeft.x()), selectedCpsCrossHorizLine.p1().y());
+        overlay.vertex(std::min(selectedCpsCrossHorizLine.p2().x(), btmRight.x()), selectedCpsCrossHorizLine.p2().y());
+        overlay.vertex(selectedCpsCrossVertLine.p1().x(), std::max(selectedCpsCrossVertLine.p1().y(), btmRight.y()));
+        overlay.vertex(selectedCpsCrossVertLine.p2().x(), std::min(selectedCpsCrossVertLine.p2().y(), topLeft.y()));
+        overlay.end();
 
 
-        QPointF midTop( ( topLeft.x() + btmRight.x() ) / 2., topLeft.y() );
-        QPointF midRight(btmRight.x(), ( topLeft.y() + btmRight.y() ) / 2.);
-        QPointF midBtm( ( topLeft.x() + btmRight.x() ) / 2., btmRight.y() );
-        QPointF midLeft(topLeft.x(), ( topLeft.y() + btmRight.y() ) / 2.);
+
+        QPointF midTop((topLeft.x() + btmRight.x()) / 2., topLeft.y());
+        QPointF midRight(btmRight.x(), (topLeft.y() + btmRight.y()) / 2.);
+        QPointF midBtm((topLeft.x() + btmRight.x()) / 2., btmRight.y());
+        QPointF midLeft(topLeft.x(), (topLeft.y() + btmRight.y()) / 2.);
 
         ///draw the 4 corners points and the 4 mid points
-        glPointSize(5.f * screenPixelRatio);
-        glBegin(GL_POINTS);
-        glVertex2f( topLeft.x(), topLeft.y() );
-        glVertex2f( btmRight.x(), topLeft.y() );
-        glVertex2f( btmRight.x(), btmRight.y() );
-        glVertex2f( topLeft.x(), btmRight.y() );
+        overlay.pointSize(5.f);
+        overlay.begin(OverlayPrimitive::Points);
+        overlay.vertex(topLeft.x(), topLeft.y());
+        overlay.vertex(btmRight.x(), topLeft.y());
+        overlay.vertex(btmRight.x(), btmRight.y());
+        overlay.vertex(topLeft.x(), btmRight.y());
 
-        glVertex2f( midTop.x(), midTop.y() );
-        glVertex2f( midRight.x(), midRight.y() );
-        glVertex2f( midBtm.x(), midBtm.y() );
-        glVertex2f( midLeft.x(), midLeft.y() );
-        glEnd();
+        overlay.vertex(midTop.x(), midTop.y());
+        overlay.vertex(midRight.x(), midRight.y());
+        overlay.vertex(midBtm.x(), midBtm.y());
+        overlay.vertex(midLeft.x(), midLeft.y());
+        overlay.end();
 
         ///now draw the handles to indicate the user he/she can transform the selection rectangle
         ///draw it only if it is not dragged
@@ -442,6 +491,7 @@ RotoPaintInteract::drawSelectedCpsBBOX()
         if (drawHandles) {
             double offset = kTransformArrowOffsetFromPoint * pixelScale.first;
             double halfOffset = offset / 2.;
+
             if (transformMode == eSelectedCpsTransformModeTranslateAndScale) {
                 ///draw mid top arrow vertical
                 drawArrow(midTop.x(), midTop.y() + offset, 0., hoverState == eHoverStateBboxMidTop, pixelScale);
@@ -478,7 +528,7 @@ RotoPaintInteract::drawSelectedCpsBBOX()
                 drawBendedArrow(topLeft.x() - halfOffset, btmRight.y() - halfOffset, 90, hoverState == eHoverStateBboxBtmLeft, pixelScale);
             }
         }
-    } // GLProtectAttrib a(GL_HINT_BIT | GL_ENABLE_BIT | GL_LINE_BIT | GL_POINT_BIT | GL_COLOR_BUFFER_BIT | GL_CURRENT_BIT);
+    } // OverlayDrawScope a(overlay);
 } // drawSelectedCpsBBOX
 
 void

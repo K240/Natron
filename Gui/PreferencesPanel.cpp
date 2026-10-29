@@ -42,6 +42,7 @@ CLANG_DIAG_OFF(uninitialized)
 #include <QStyledItemDelegate>
 #include <QHeaderView>
 #include <QPainter>
+#include <QRegularExpression>
 CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)
 
@@ -68,7 +69,6 @@ CLANG_DIAG_ON(uninitialized)
 #define COL_ENABLED COL_VERSION + 1
 #define COL_RS_ENABLED COL_ENABLED + 1
 #define COL_MT_ENABLED COL_RS_ENABLED + 1
-#define COL_GL_ENABLED COL_MT_ENABLED + 1
 
 NATRON_NAMESPACE_ENTER
 
@@ -95,17 +95,15 @@ struct PluginTreeNode
         , enabledCheckbox(NULL)
         , rsCheckbox(NULL)
         , mtCheckbox(NULL)
-        , glCheckbox(NULL)
         , plugin(NULL)
     {
     }
 
-    QTreeWidgetItem* item;
-    AnimatedCheckBox* enabledCheckbox;
-    AnimatedCheckBox* rsCheckbox;
-    AnimatedCheckBox* mtCheckbox;
-    AnimatedCheckBox* glCheckbox;
-    Plugin* plugin;
+    QTreeWidgetItem *item;
+    AnimatedCheckBox *enabledCheckbox;
+    AnimatedCheckBox *rsCheckbox;
+    AnimatedCheckBox *mtCheckbox;
+    Plugin *plugin;
 };
 
 typedef std::list<PluginTreeNode> PluginTreeNodeList;
@@ -509,11 +507,9 @@ PreferencesPanel::createPluginsView(QGridLayout* pluginsFrameLayout)
     treeHeader->setToolTip(COL_ENABLED, tr("If unchecked, the user will not be able to use a node with this plug-in"));
     treeHeader->setText( COL_ENABLED, tr("Enabled") );
     treeHeader->setToolTip(COL_RS_ENABLED, tr("If unchecked, renders will always be made at full image resolution for this plug-in"));
-    treeHeader->setText( COL_RS_ENABLED, tr("R-S") );
+    treeHeader->setText(COL_RS_ENABLED, tr("R-S"));
     treeHeader->setToolTip(COL_MT_ENABLED, tr("If unchecked, there can only be a single render issued at a time for a node of this plug-in. This can alter performances a lot."));
-    treeHeader->setText( COL_MT_ENABLED, tr("M-T") );
-    treeHeader->setToolTip(COL_GL_ENABLED, tr("If unchecked, OpenGL rendering is disabled for any node with this plug-in. If the checkbox is disabled, the plug-in does not support OpenGL rendering"));
-    treeHeader->setText( COL_GL_ENABLED, tr("OpenGL") );
+    treeHeader->setText(COL_MT_ENABLED, tr("M-T"));
     _imp->pluginsView->setHeaderItem(treeHeader);
     _imp->pluginsView->setSelectionMode(QAbstractItemView::NoSelection);
     _imp->pluginsView->header()->setSectionResizeMode(QHeaderView::ResizeToContents);
@@ -588,23 +584,7 @@ PreferencesPanel::createPluginsView(QGridLayout* pluginsFrameLayout)
                 _imp->pluginsView->setItemWidget(node.item, COL_MT_ENABLED, checkbox);
                 node.mtCheckbox = checkbox;
             }
-            {
-                QWidget *checkboxContainer = new QWidget(0);
-                QHBoxLayout* checkboxLayout = new QHBoxLayout(checkboxContainer);
-                AnimatedCheckBox* checkbox = new AnimatedCheckBox(checkboxContainer);
-                checkboxLayout->addWidget(checkbox, Qt::AlignLeft | Qt::AlignVCenter);
-                checkboxLayout->setContentsMargins(0, 0, 0, 0);
-                checkboxLayout->setSpacing(0);
-                checkbox->setFixedSize( TO_DPIX(NATRON_SMALL_BUTTON_SIZE), TO_DPIY(NATRON_SMALL_BUTTON_SIZE) );
-                checkbox->setChecked(plugin->isActivated());
-                QObject::connect( checkbox, SIGNAL(clicked(bool)), this, SLOT(onGLEnabledCheckBoxChecked(bool)) );
-                _imp->pluginsView->setItemWidget(node.item, COL_GL_ENABLED, checkbox);
-                if (plugin->getPluginOpenGLRenderSupport() == ePluginOpenGLRenderSupportNone) {
-                    checkbox->setChecked(false);
-                    checkbox->setReadOnly(true);
-                }
-                node.glCheckbox = checkbox;
-            }
+
 
             _imp->pluginsList.push_back(node);
         }
@@ -819,10 +799,10 @@ PreferencesPanel::filterPlugins(const QString & txt)
             pattern.push_back(txt[i]);
         }
         pattern.push_back( QLatin1Char('*') );
-        QRegExp expr(pattern, Qt::CaseInsensitive, QRegExp::WildcardUnix);
+        QRegularExpression expr(QRegularExpression::wildcardToRegularExpression(pattern, QRegularExpression::NonPathWildcardConversion), QRegularExpression::CaseInsensitiveOption);
         std::list<QTreeWidgetItem*> itemsToDisplay;
         for (PluginTreeNodeList::iterator it = _imp->pluginsList.begin(); it != _imp->pluginsList.end(); ++it) {
-            if ( it->plugin && it->plugin->getLabelWithoutSuffix().contains(expr) ) {
+            if ( it->plugin && expr.match(it->plugin->getLabelWithoutSuffix()).hasMatch() ) {
                 itemsToDisplay.push_back(it->item);
             } else {
                 it->item->setExpanded(false);
@@ -893,21 +873,6 @@ PreferencesPanel::onMTEnabledCheckBoxChecked(bool checked)
     }
 }
 
-void
-PreferencesPanel::onGLEnabledCheckBoxChecked(bool checked)
-{
-    AnimatedCheckBox* cb = qobject_cast<AnimatedCheckBox*>(sender());
-    if (!cb) {
-        return;
-    }
-    for (PluginTreeNodeList::iterator it = _imp->pluginsList.begin(); it!=_imp->pluginsList.end(); ++it) {
-        if (it->mtCheckbox == cb) {
-            it->plugin->setOpenGLEnabled(checked);
-            _imp->pluginSettingsChanged = true;
-            break;
-        }
-    }
-}
 
 void
 PreferencesPanelPrivate::setVisiblePage(int index)

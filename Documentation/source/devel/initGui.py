@@ -3,8 +3,9 @@
 #file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #Created by Alexandre GAUTHIER-FOICHAT on 01/27/2015.
 
-from qtpy.QtGui import *
-from qtpy.QtCore import *
+from PySide6.QtGui import *
+from PySide6.QtCore import *
+from PySide6.QtWidgets import *
 
 #To import the variable "natron"
 from NatronGui import *

@@ -123,21 +123,23 @@ an intermediate result) is computed, it is kept so the next request is instant.
 - ``CacheEntry`` / ``CacheEntryHolder`` are the stored objects. There are
   distinct caches/entries for full images (``Image`` + ``ImageParams``) and for
   the Viewer's display textures (``FrameEntry`` + ``FrameKey`` +
-  ``FrameParams``, which hold the 8-bit or 32-bit texture actually uploaded to
-  OpenGL).
+  ``FrameParams``, which hold the 8-bit or 32-bit display buffers uploaded to
+  Vulkan images). ``ViewerFrameTexture`` is a backend-owned upload receipt;
+  Engine scheduling does not inspect a graphics handle or assume a GL context.
 
 GPU rendering contexts
 ----------------------
 
-Some rendering (and all viewer display) uses OpenGL. Off-screen GPU rendering
+Viewer display uses the shared Vulkan device and native surface described in
+:ref:`maint-gui`. Remaining legacy off-screen GPU rendering
 needs a GL context on a worker thread, per platform: ``OSGLContext`` with
 backends ``OSGLContext_mac`` / ``_win`` / ``_x11`` / ``_wayland`` (the Linux
 backends use the internal ``OSGLContext_glx_data`` / ``OSGLContext_egl_data``
 helpers, and ``OSGLContext_xdg.h`` for XDG desktop integration).
 ``GPUContextPool`` pools these contexts so
 threads can borrow one. GL entry points are loaded with **glad**
-(``Global/GLIncludes.h``). The viewer widgets themselves are ``QOpenGLWidget``
-subclasses (see :ref:`maint-gui`).
+(``Global/GLIncludes.h``). These Engine paths and the shipped plugin GL
+dependencies still require migration; see :ref:`maint-vulkan-migration`.
 
 Worked example: the life of a ``renderRoI`` call
 ------------------------------------------------

@@ -30,8 +30,6 @@
 
 #include <set>
 
-#include "Global/GLIncludes.h" //!<must be included before QGlWidget because of gl.h and glew.h
-
 CLANG_DIAG_OFF(deprecated)
 CLANG_DIAG_OFF(uninitialized)
 #include <QMetaType>
@@ -41,7 +39,7 @@ CLANG_DIAG_OFF(uninitialized)
 CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)
 
-#include <QOpenGLWidget>
+#include <QWidget>
 
 #include "Global/GlobalDefines.h"
 #include "Global/QtCompat.h"
@@ -57,14 +55,14 @@ NATRON_NAMESPACE_ENTER
 class CurveWidgetPrivate;
 
 class CurveWidget
-    : public QOpenGLWidget, public OverlaySupport
+    : public QWidget, public OverlaySupport
 {
     friend class CurveGui;
     friend class CurveWidgetPrivate;
 
-GCC_DIAG_SUGGEST_OVERRIDE_OFF
+    GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
-GCC_DIAG_SUGGEST_OVERRIDE_ON
+    GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
 
@@ -72,14 +70,19 @@ public:
     CurveWidget(Gui* gui,
                 CurveSelection* selection,
                 TimeLinePtr timeline = TimeLinePtr(),
-                QWidget* parent = NULL,
-                const QOpenGLWidget* shareWidget = NULL);
+                QWidget* parent = NULL);
 
     virtual ~CurveWidget() OVERRIDE;
 
+    virtual bool supportsOverlayDrawList() const OVERRIDE FINAL
+    {
+        return true;
+    }
+    virtual OverlayDrawList *overlayDrawList() OVERRIDE FINAL;
+
     bool hasTimeline() const;
-    
-    const QFont & getTextFont() const;
+
+    const QFont &getTextFont() const;
 
     void centerOn(double xmin, double xmax);
     void centerOn(double xmin, double xmax, double ymin, double ymax);
@@ -88,11 +91,11 @@ public:
 
     void removeCurve(CurveGui* curve);
 
-    void centerOn(const std::vector<CurveGuiPtr> & curves, bool useDisplayRange);
+    void centerOn(const std::vector<CurveGuiPtr> &curves, bool useDisplayRange);
 
-    void showCurvesAndHideOthers(const std::vector<CurveGuiPtr> & curves);
+    void showCurvesAndHideOthers(const std::vector<CurveGuiPtr> &curves);
 
-    void getVisibleCurves(std::vector<CurveGuiPtr>* curves) const;
+    void getVisibleCurves(std::vector<CurveGuiPtr> *curves) const;
 
     void setSelectedKeys(const SelectedKeys & keys);
 
@@ -124,7 +127,7 @@ public:
     /**
      * @brief Returns the pixel scale of the viewport.
      **/
-    virtual void getPixelScale(double & xScale, double & yScale) const OVERRIDE FINAL;
+    virtual void getPixelScale(double &xScale, double &yScale) const OVERRIDE FINAL;
 
 #ifdef OFX_EXTENSIONS_NATRON
     virtual double getScreenPixelRatio() const OVERRIDE FINAL;
@@ -135,7 +138,7 @@ public:
     virtual void getBackgroundColour(double &r, double &g, double &b) const OVERRIDE FINAL;
 
     virtual RectD getViewportRect() const OVERRIDE FINAL WARN_UNUSED_RETURN;
-    virtual void getCursorPosition(double& x, double& y) const OVERRIDE FINAL;
+    virtual void getCursorPosition(double &x, double &y) const OVERRIDE FINAL;
     virtual void saveOpenGLContext() OVERRIDE FINAL;
     virtual void restoreOpenGLContext() OVERRIDE FINAL;
 
@@ -164,7 +167,7 @@ public:
 
     void refreshCurveDisplayTangents(CurveGui* curve);
 
-    QUndoStack* getUndoStack() const;
+    QUndoStack *getUndoStack() const;
     void pushUndoCommand(QUndoCommand* cmd);
 
     // The interact will be drawn after the background and before any curve
@@ -223,9 +226,8 @@ public Q_SLOTS:
 
 private:
 
-    virtual void initializeGL() OVERRIDE FINAL;
-    virtual void resizeGL(int width, int height) OVERRIDE FINAL;
-    virtual void paintGL() OVERRIDE FINAL;
+    virtual void resizeEvent(QResizeEvent* e) OVERRIDE FINAL;
+    virtual void paintEvent(QPaintEvent* e) OVERRIDE FINAL;
     virtual QSize sizeHint() const OVERRIDE FINAL;
     virtual void mousePressEvent(QMouseEvent* e) OVERRIDE FINAL;
     virtual void mouseDoubleClickEvent(QMouseEvent* e) OVERRIDE FINAL;
@@ -249,9 +251,9 @@ private:
      **/
     QPointF toWidgetCoordinates(double x, double y) const;
 
-    const QColor & getSelectedCurveColor() const;
-    const QFont & getFont() const;
-    const SelectedKeys & getSelectedKeyFrames() const;
+    const QColor &getSelectedCurveColor() const;
+    const QFont &getFont() const;
+    const SelectedKeys &getSelectedKeyFrames() const;
 
     void addKey(const CurveGuiPtr& curve, double xCurve, double yCurve);
 

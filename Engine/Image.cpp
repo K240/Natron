@@ -24,19 +24,22 @@
 // ***** END PYTHON BLOCK *****
 
 #include "Image.h"
+#include "Gpu/PerformanceTrace.h"
 
 #include <algorithm> // min, max
 #include <cassert>
 #include <cstring> // for std::memcpy, std::memset
 #include <stdexcept>
 
+#if defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+#include <emmintrin.h>
+#define NATRON_IMAGE_SSE2 1
+#endif
+
 #include <QDebug>
 
 #include "Engine/AppManager.h"
 #include "Engine/ViewIdx.h"
-#include "Engine/GPUContextPool.h"
-#include "Engine/OSGLContext.h"
-#include "Engine/GLShader.h"
 
 NATRON_NAMESPACE_ENTER
 
@@ -44,34 +47,117 @@ NATRON_NAMESPACE_ENTER
 
 #define PIXEL_UNAVAILABLE 2
 
+// Skip complete blocks without reading beyond the row or changing trimap rules.
+static const char *
+skipRenderedPixels(const char* pixels, const char* end)
+{
+#ifdef NATRON_IMAGE_SSE2
+    const __m128i rendered = _mm_set1_epi8(1);
+
+    while (end - pixels >= 16) {
+        const __m128i values = _mm_loadu_si128(reinterpret_cast<const __m128i*>(pixels));
+
+        if (_mm_movemask_epi8(_mm_cmpeq_epi8(values, rendered)) != 0xffff) {
+            break;
+        }
+
+        pixels += 16;
+    }
+
+#endif
+
+    while (pixels < end && *pixels == 1) {
+        ++pixels;
+    }
+
+    return pixels;
+}
+
+static bool
+checkFloatNaNs(float* pixels, size_t count, bool fix)
+{
+    bool found = false;
+    size_t i = 0;
+#if defined(NATRON_IMAGE_SSE2) && !defined(DEBUG_NAN)
+    const __m128i magnitude = _mm_set1_epi32(0x7fffffff);
+    const __m128i infinity = _mm_set1_epi32(0x7f800000);
+    const __m128i replacement = _mm_set1_epi32(0x3f800000);
+
+    for (; count - i >= 4; i += 4) {
+        const __m128i values = _mm_castps_si128(_mm_loadu_ps(pixels + i));
+        // Integer classification preserves infinities, signed zero and every
+        // finite bit pattern, and does not evaluate signaling NaNs as floats.
+        const __m128i nan = _mm_cmpgt_epi32(_mm_and_si128(values, magnitude), infinity);
+
+        if (_mm_movemask_epi8(nan)) {
+            if (!fix) {
+                return true;
+            }
+
+            found = true;
+            _mm_storeu_ps(pixels + i, _mm_castsi128_ps(_mm_or_si128(_mm_andnot_si128(nan, values),
+                          _mm_and_si128(nan, replacement))));
+        }
+    }
+
+#endif
+
+    for (; i < count; ++i) {
+#ifdef DEBUG_NAN
+        assert(!std::isnan(pixels[i]));
+#endif
+
+        if (std::isnan(pixels[i])) {
+            if (!fix) {
+                return true;
+            }
+
+            pixels[i] = 1.f;
+            found = true;
+        }
+    }
+
+    return found;
+}
+
 template <int trimap>
 RectI
 minimalNonMarkedBbox_internal(const RectI& roi,
                               const RectI& _bounds,
-                              const std::vector<char>& _map,
+                              const std::vector<char> &_map,
                               bool* isBeingRenderedElsewhere)
 {
+    Gpu::PerformanceTrace trace("bitmap-bbox", uint64_t(roi.area()));
     RectI bbox;
 
-    assert( _bounds.contains(roi) );
+    assert(_bounds.contains(roi));
     bbox = roi;
 
     //find bottom
     for (int i = bbox.bottom(); i < bbox.top(); ++i) {
-        const char* buf = BM_GET( i, bbox.left() );
+        const char *buf = BM_GET(i, bbox.left());
 
         if (trimap) {
-            const char* lineEnd = buf + bbox.width();
+            const char *lineEnd = buf + bbox.width();
             bool metUnavailablePixel = false;
+
             while (buf < lineEnd) {
+                buf = skipRenderedPixels(buf, lineEnd);
+
+                if (buf == lineEnd) {
+                    break;
+                }
+
                 if (!*buf) {
                     buf = 0;
                     break;
                 } else if (*buf == PIXEL_UNAVAILABLE) {
                     metUnavailablePixel = true;
                 }
+
                 ++buf;
             }
+
             if (!buf) {
                 break;
             } else if (metUnavailablePixel) {
@@ -81,14 +167,23 @@ minimalNonMarkedBbox_internal(const RectI& roi,
                 ++bbox.y1;
             }
         } else {
-            const char* lineEnd = buf + bbox.width();
+            const char *lineEnd = buf + bbox.width();
+
             while (buf < lineEnd) {
-                if ( !*buf || (*buf == PIXEL_UNAVAILABLE) ) {
+                buf = skipRenderedPixels(buf, lineEnd);
+
+                if (buf == lineEnd) {
+                    break;
+                }
+
+                if (!*buf || (*buf == PIXEL_UNAVAILABLE)) {
                     buf = 0;
                     break;
                 }
+
                 ++buf;
             }
+
             if (!buf) {
                 break;
             } else {
@@ -99,20 +194,29 @@ minimalNonMarkedBbox_internal(const RectI& roi,
 
     //find top (will do zero iteration if the bbox is already empty)
     for (int i = bbox.top() - 1; i >= bbox.bottom(); --i) {
-        const char* buf = BM_GET( i, bbox.left() );
+        const char *buf = BM_GET(i, bbox.left());
 
         if (trimap) {
-            const char* lineEnd = buf + bbox.width();
+            const char *lineEnd = buf + bbox.width();
             bool metUnavailablePixel = false;
+
             while (buf < lineEnd) {
+                buf = skipRenderedPixels(buf, lineEnd);
+
+                if (buf == lineEnd) {
+                    break;
+                }
+
                 if (!*buf) {
                     buf = 0;
                     break;
                 } else if (*buf == PIXEL_UNAVAILABLE) {
                     metUnavailablePixel = true;
                 }
+
                 ++buf;
             }
+
             if (!buf) {
                 break;
             } else if (metUnavailablePixel) {
@@ -122,14 +226,23 @@ minimalNonMarkedBbox_internal(const RectI& roi,
                 --bbox.y2;
             }
         } else {
-            const char* lineEnd = buf + bbox.width();
+            const char *lineEnd = buf + bbox.width();
+
             while (buf < lineEnd) {
-                if ( !*buf || (*buf == PIXEL_UNAVAILABLE) ) {
+                buf = skipRenderedPixels(buf, lineEnd);
+
+                if (buf == lineEnd) {
+                    break;
+                }
+
+                if (!*buf || (*buf == PIXEL_UNAVAILABLE)) {
                     buf = 0;
                     break;
                 }
+
                 ++buf;
             }
+
             if (!buf) {
                 break;
             } else {
@@ -139,16 +252,16 @@ minimalNonMarkedBbox_internal(const RectI& roi,
     }
 
     // avoid making bbox.width() iterations for nothing
-    if ( bbox.isNull() ) {
+    if (bbox.isNull()) {
         return bbox;
     }
 
     //find left
     for (int j = bbox.left(); j < bbox.right(); ++j) {
-        const char* pix = BM_GET(bbox.bottom(), j);
+        const char *pix = BM_GET(bbox.bottom(), j);
         bool metUnavailablePixel = false;
 
-        for ( int i = bbox.bottom(); i < bbox.top(); ++i, pix += _bounds.width() ) {
+        for (int i = bbox.bottom(); i < bbox.top(); ++i, pix += _bounds.width()) {
             if (!*pix) {
                 pix = 0;
                 break;
@@ -161,8 +274,10 @@ minimalNonMarkedBbox_internal(const RectI& roi,
                 }
             }
         }
+
         if (pix) {
             ++bbox.x1;
+
             if (trimap && metUnavailablePixel) {
                 *isBeingRenderedElsewhere = true; //< only flag is the whole column is not 0
             }
@@ -173,10 +288,10 @@ minimalNonMarkedBbox_internal(const RectI& roi,
 
     //find right
     for (int j = bbox.right() - 1; j >= bbox.left(); --j) {
-        const char* pix = BM_GET(bbox.bottom(), j);
+        const char *pix = BM_GET(bbox.bottom(), j);
         bool metUnavailablePixel = false;
 
-        for ( int i = bbox.bottom(); i < bbox.top(); ++i, pix += _bounds.width() ) {
+        for (int i = bbox.bottom(); i < bbox.top(); ++i, pix += _bounds.width()) {
             if (!*pix) {
                 pix = 0;
                 break;
@@ -189,8 +304,10 @@ minimalNonMarkedBbox_internal(const RectI& roi,
                 }
             }
         }
+
         if (pix) {
             --bbox.x2;
+
             if (trimap && metUnavailablePixel) {
                 *isBeingRenderedElsewhere = true; //< only flag is the whole column is not 0
             }
@@ -207,52 +324,56 @@ template <int trimap>
 void
 minimalNonMarkedRects_internal(const RectI & roi,
                                const RectI& _bounds,
-                               const std::vector<char>& _map,
-                               std::list<RectI>& ret,
+                               const std::vector<char> &_map,
+                               std::list<RectI> &ret,
                                bool* isBeingRenderedElsewhere)
 {
     assert(ret.empty());
     ///Any out of bounds portion is pushed to the rectangles to render
     const RectI intersection = roi.intersect(_bounds);
+
     if (roi != intersection) {
-        if ( (_bounds.x1 > roi.x1) && (_bounds.y2 > _bounds.y1) ) {
+        if ((_bounds.x1 > roi.x1) && (_bounds.y2 > _bounds.y1)) {
             RectI left(roi.x1, _bounds.y1, _bounds.x1, _bounds.y2);
             ret.push_back(left);
         }
 
 
-        if ( (roi.x2 > roi.x1) && (_bounds.y1 > roi.y1) ) {
+        if ((roi.x2 > roi.x1) && (_bounds.y1 > roi.y1)) {
             RectI btm(roi.x1, roi.y1, roi.x2, _bounds.y1);
             ret.push_back(btm);
         }
 
 
-        if ( (roi.x2 > _bounds.x2) && (_bounds.y2 > _bounds.y1) ) {
+        if ((roi.x2 > _bounds.x2) && (_bounds.y2 > _bounds.y1)) {
             RectI right(_bounds.x2, _bounds.y1, roi.x2, _bounds.y2);
             ret.push_back(right);
         }
 
 
-        if ( (roi.x2 > roi.x1) && (roi.y2 > _bounds.y2) ) {
+        if ((roi.x2 > roi.x1) && (roi.y2 > _bounds.y2)) {
             RectI top(roi.x1, _bounds.y2, roi.x2, roi.y2);
             ret.push_back(top);
         }
     }
 
-    if ( intersection.isNull() ) {
+    if (intersection.isNull()) {
         return;
     }
 
     RectI bboxM = minimalNonMarkedBbox_internal<trimap>(intersection, _bounds, _map, isBeingRenderedElsewhere);
-    assert( (trimap && isBeingRenderedElsewhere) || (!trimap && !isBeingRenderedElsewhere) );
+    assert((trimap && isBeingRenderedElsewhere) || (!trimap && !isBeingRenderedElsewhere));
 
     //#define NATRON_BITMAP_DISABLE_OPTIMIZATION
 #ifdef NATRON_BITMAP_DISABLE_OPTIMIZATION
-    if ( !bboxM.isNull() ) { // empty boxes should not be pushed
+
+    if (!bboxM.isNull()) {   // empty boxes should not be pushed
         ret.push_back(bboxM);
     }
+
 #else
-    if ( bboxM.isNull() ) {
+
+    if (bboxM.isNull()) {
         return; // return an empty rectangle list
     }
 
@@ -281,23 +402,28 @@ minimalNonMarkedRects_internal(const RectI & roi,
     //find bottom
     RectI bboxX = bboxM;
     RectI bboxA = bboxX;
-    bboxA.set_top( bboxX.bottom() );
+    bboxA.set_top(bboxX.bottom());
+
     for (int i = bboxX.bottom(); i < bboxX.top(); ++i) {
-        const char* buf = BM_GET( i, bboxX.left() );
+        const char *buf = BM_GET(i, bboxX.left());
+
         if (trimap) {
-            const char* lineEnd = buf + bboxX.width();
+            const char *lineEnd = buf + bboxX.width();
             bool metUnavailablePixel = false;
+
             while (buf < lineEnd) {
                 if (*buf == 1) {
                     buf = 0;
                     break;
-                } else if ( (*buf == PIXEL_UNAVAILABLE) && trimap ) {
+                } else if ((*buf == PIXEL_UNAVAILABLE) && trimap) {
                     buf = 0;
                     metUnavailablePixel = true;
                     break;
                 }
+
                 ++buf;
             }
+
             if (buf) {
                 ++bboxX.y1;
                 bboxA.y2 = bboxX.y1;
@@ -305,10 +431,11 @@ minimalNonMarkedRects_internal(const RectI & roi,
                 if (metUnavailablePixel) {
                     *isBeingRenderedElsewhere = true;
                 }
+
                 break;
             }
         } else {
-            if ( !memchr( buf, 1, bboxX.width() ) ) {
+            if (!memchr(buf, 1, bboxX.width())) {
                 ++bboxX.y1;
                 bboxA.y2 = bboxX.y1;
             } else {
@@ -316,31 +443,36 @@ minimalNonMarkedRects_internal(const RectI & roi,
             }
         }
     }
-    if ( !bboxA.isNull() ) { // empty boxes should not be pushed
+
+    if (!bboxA.isNull()) {   // empty boxes should not be pushed
         ret.push_back(bboxA);
     }
 
     // Now, find the "B" rectangle
     //find top
     RectI bboxB = bboxX;
-    bboxB.set_bottom( bboxX.top() );
+    bboxB.set_bottom(bboxX.top());
+
     for (int i = bboxX.top() - 1; i >= bboxX.bottom(); --i) {
-        const char* buf = BM_GET( i, bboxX.left() );
+        const char *buf = BM_GET(i, bboxX.left());
 
         if (trimap) {
-            const char* lineEnd = buf + bboxX.width();
+            const char *lineEnd = buf + bboxX.width();
             bool metUnavailablePixel = false;
+
             while (buf < lineEnd) {
                 if (*buf == 1) {
                     buf = 0;
                     break;
-                } else if ( (*buf == PIXEL_UNAVAILABLE) && trimap ) {
+                } else if ((*buf == PIXEL_UNAVAILABLE) && trimap) {
                     buf = 0;
                     metUnavailablePixel = true;
                     break;
                 }
+
                 ++buf;
             }
+
             if (buf) {
                 --bboxX.y2;
                 bboxB.y1 = bboxX.y2;
@@ -348,10 +480,11 @@ minimalNonMarkedRects_internal(const RectI & roi,
                 if (metUnavailablePixel) {
                     *isBeingRenderedElsewhere = true;
                 }
+
                 break;
             }
         } else {
-            if ( !memchr( buf, 1, bboxX.width() ) ) {
+            if (!memchr(buf, 1, bboxX.width())) {
                 --bboxX.y2;
                 bboxB.y1 = bboxX.y2;
             } else {
@@ -359,28 +492,31 @@ minimalNonMarkedRects_internal(const RectI & roi,
             }
         }
     }
-    if ( !bboxB.isNull() ) { // empty boxes should not be pushed
+
+    if (!bboxB.isNull()) {   // empty boxes should not be pushed
         ret.push_back(bboxB);
     }
 
     //find left
     RectI bboxC = bboxX;
-    bboxC.set_right( bboxX.left() );
-    if ( bboxX.bottom() < bboxX.top() ) {
+    bboxC.set_right(bboxX.left());
+
+    if (bboxX.bottom() < bboxX.top()) {
         for (int j = bboxX.left(); j < bboxX.right(); ++j) {
-            const char* pix = BM_GET(bboxX.bottom(), j);
+            const char *pix = BM_GET(bboxX.bottom(), j);
             bool metUnavailablePixel = false;
 
-            for ( int i = bboxX.bottom(); i < bboxX.top(); ++i, pix += _bounds.width() ) {
+            for (int i = bboxX.bottom(); i < bboxX.top(); ++i, pix += _bounds.width()) {
                 if (*pix == 1) {
                     pix = 0;
                     break;
-                } else if ( trimap && (*pix == PIXEL_UNAVAILABLE) ) {
+                } else if (trimap && (*pix == PIXEL_UNAVAILABLE)) {
                     pix = 0;
                     metUnavailablePixel = true;
                     break;
                 }
             }
+
             if (pix) {
                 ++bboxX.x1;
                 bboxC.x2 = bboxX.x1;
@@ -388,32 +524,36 @@ minimalNonMarkedRects_internal(const RectI & roi,
                 if (metUnavailablePixel) {
                     *isBeingRenderedElsewhere = true;
                 }
+
                 break;
             }
         }
     }
-    if ( !bboxC.isNull() ) { // empty boxes should not be pushed
+
+    if (!bboxC.isNull()) {   // empty boxes should not be pushed
         ret.push_back(bboxC);
     }
 
     //find right
     RectI bboxD = bboxX;
-    bboxD.set_left( bboxX.right() );
-    if ( bboxX.bottom() < bboxX.top() ) {
+    bboxD.set_left(bboxX.right());
+
+    if (bboxX.bottom() < bboxX.top()) {
         for (int j = bboxX.right() - 1; j >= bboxX.left(); --j) {
-            const char* pix = BM_GET(bboxX.bottom(), j);
+            const char *pix = BM_GET(bboxX.bottom(), j);
             bool metUnavailablePixel = false;
 
-            for ( int i = bboxX.bottom(); i < bboxX.top(); ++i, pix += _bounds.width() ) {
+            for (int i = bboxX.bottom(); i < bboxX.top(); ++i, pix += _bounds.width()) {
                 if (*pix == 1) {
                     pix = 0;
                     break;
-                } else if ( trimap && (*pix == PIXEL_UNAVAILABLE) ) {
+                } else if (trimap && (*pix == PIXEL_UNAVAILABLE)) {
                     pix = 0;
                     metUnavailablePixel = true;
                     break;
                 }
             }
+
             if (pix) {
                 --bboxX.x2;
                 bboxD.x1 = bboxX.x2;
@@ -421,38 +561,40 @@ minimalNonMarkedRects_internal(const RectI & roi,
                 if (metUnavailablePixel) {
                     *isBeingRenderedElsewhere = true;
                 }
+
                 break;
             }
         }
     }
-    if ( !bboxD.isNull() ) { // empty boxes should not be pushed
+
+    if (!bboxD.isNull()) {   // empty boxes should not be pushed
         ret.push_back(bboxD);
     }
 
-    assert( bboxA.bottom() == bboxM.bottom() );
-    assert( bboxA.left() == bboxM.left() );
-    assert( bboxA.right() == bboxM.right() );
-    assert( bboxA.top() == bboxX.bottom() );
+    assert(bboxA.bottom() == bboxM.bottom());
+    assert(bboxA.left() == bboxM.left());
+    assert(bboxA.right() == bboxM.right());
+    assert(bboxA.top() == bboxX.bottom());
 
-    assert( bboxB.top() == bboxM.top() );
-    assert( bboxB.left() == bboxM.left() );
-    assert( bboxB.right() == bboxM.right() );
-    assert( bboxB.bottom() == bboxX.top() );
+    assert(bboxB.top() == bboxM.top());
+    assert(bboxB.left() == bboxM.left());
+    assert(bboxB.right() == bboxM.right());
+    assert(bboxB.bottom() == bboxX.top());
 
-    assert( bboxC.top() == bboxX.top() );
-    assert( bboxC.left() == bboxM.left() );
-    assert( bboxC.right() == bboxX.left() );
-    assert( bboxC.bottom() == bboxX.bottom() );
+    assert(bboxC.top() == bboxX.top());
+    assert(bboxC.left() == bboxM.left());
+    assert(bboxC.right() == bboxX.left());
+    assert(bboxC.bottom() == bboxX.bottom());
 
-    assert( bboxD.top() == bboxX.top() );
-    assert( bboxD.left() == bboxX.right() );
-    assert( bboxD.right() == bboxM.right() );
-    assert( bboxD.bottom() == bboxX.bottom() );
+    assert(bboxD.top() == bboxX.top());
+    assert(bboxD.left() == bboxX.right());
+    assert(bboxD.right() == bboxM.right());
+    assert(bboxD.bottom() == bboxX.bottom());
 
     // get the bounding box of what's left (the X rectangle in the drawing above)
     bboxX = minimalNonMarkedBbox_internal<trimap>(bboxX, _bounds, _map, isBeingRenderedElsewhere);
 
-    if ( !bboxX.isNull() ) { // empty boxes should not be pushed
+    if (!bboxX.isNull()) {   // empty boxes should not be pushed
         ret.push_back(bboxX);
     }
 
@@ -463,8 +605,10 @@ RectI
 Bitmap::minimalNonMarkedBbox(const RectI & roi) const
 {
     RectI realRoi = roi;
+
     if (_dirtyZoneSet) {
         realRoi.clip(_dirtyZone);
+
         if (realRoi.isNull()) {
             return RectI();
         }
@@ -475,15 +619,18 @@ Bitmap::minimalNonMarkedBbox(const RectI & roi) const
 
 void
 Bitmap::minimalNonMarkedRects(const RectI & roi,
-                              std::list<RectI>& ret) const
+                              std::list<RectI> &ret) const
 {
     RectI realRoi = roi;
+
     if (_dirtyZoneSet) {
         realRoi.clip(_dirtyZone);
+
         if (realRoi.isNull()) {
             return;
         }
     }
+
     minimalNonMarkedRects_internal<0>(realRoi, _bounds, _map, ret, NULL);
 }
 
@@ -493,8 +640,10 @@ Bitmap::minimalNonMarkedBbox_trimap(const RectI & roi,
                                     bool* isBeingRenderedElsewhere) const
 {
     RectI realRoi = roi;
+
     if (_dirtyZoneSet) {
         realRoi.clip(_dirtyZone);
+
         if (realRoi.isNull()) {
             *isBeingRenderedElsewhere = false;
             return RectI();
@@ -506,17 +655,20 @@ Bitmap::minimalNonMarkedBbox_trimap(const RectI & roi,
 
 void
 Bitmap::minimalNonMarkedRects_trimap(const RectI & roi,
-                                     std::list<RectI>& ret,
+                                     std::list<RectI> &ret,
                                      bool* isBeingRenderedElsewhere) const
 {
     RectI realRoi = roi;
+
     if (_dirtyZoneSet) {
         realRoi.clip(_dirtyZone);
+
         if (realRoi.isNull()) {
             *isBeingRenderedElsewhere = false;
             return;
         }
     }
+
     minimalNonMarkedRects_internal<1>(realRoi, _bounds, _map, ret, isBeingRenderedElsewhere);
 }
 
@@ -530,12 +682,12 @@ Bitmap::markFor(const RectI & roi, char value)
     int x2 = std::min(roi.x2, _bounds.x2);
     int y2 = std::min(roi.y2, _bounds.y2);
 
-    char* buf = BM_GET(y1, x1);
+    char *buf = BM_GET(y1, x1);
     int w = _bounds.width();
     int roiw = x2 - x1;
 
     for (int i = y1; i < y2; ++i, buf += w) {
-        std::memset( buf, value, roiw);
+        std::memset(buf, value, roiw);
     }
 }
 
@@ -547,7 +699,7 @@ Bitmap::isNonMarked(const RectI & roi) const
     int x2 = std::min(roi.x2, _bounds.x2);
     int y2 = std::min(roi.y2, _bounds.y2);
 
-    const char* buf = BM_GET(y1, x1);
+    const char *buf = BM_GET(y1, x1);
     int w = _bounds.width();
     int roiw = x2 - x1;
 
@@ -558,6 +710,7 @@ Bitmap::isNonMarked(const RectI & roi) const
             }
         }
     }
+
     return true;
 }
 
@@ -579,22 +732,22 @@ Bitmap::swap(Bitmap& other)
     _dirtyZoneSet = false;
 }
 
-const char*
+const char *
 Bitmap::getBitmapAt(int x,
                     int y) const
 {
-    if ( ( x >= _bounds.left() ) && ( x < _bounds.right() ) && ( y >= _bounds.bottom() ) && ( y < _bounds.top() ) ) {
+    if ((x >= _bounds.left()) && (x < _bounds.right()) && (y >= _bounds.bottom()) && (y < _bounds.top())) {
         return BM_GET(y, x);
     } else {
         return NULL;
     }
 }
 
-char*
+char *
 Bitmap::getBitmapAt(int x,
                     int y)
 {
-    if ( ( x >= _bounds.left() ) && ( x < _bounds.right() ) && ( y >= _bounds.bottom() ) && ( y < _bounds.top() ) ) {
+    if ((x >= _bounds.left()) && (x < _bounds.right()) && (y >= _bounds.bottom()) && (y < _bounds.top())) {
         return BM_GET(y, x);
     } else {
         return NULL;
@@ -608,8 +761,9 @@ Image::printUnrenderedPixels(const RectI& roi) const
     if (!_useBitmap) {
         return;
     }
+
     QReadLocker k(&_entryLock);
-    const char* bm = _bitmap.getBitmapAt(roi.x1, roi.y1);
+    const char *bm = _bitmap.getBitmapAt(roi.x1, roi.y1);
     int roiw = roi.x2 - roi.x1;
     int boundsW = _bitmap.getBounds().width();
     RectD bboxUnrendered;
@@ -620,44 +774,54 @@ Image::printUnrenderedPixels(const RectI& roi) const
     bool hasUnrendered = false;
     bool hasUnavailable = false;
 
-    for ( int y = roi.y1; y < roi.y2; ++y,
-          bm += (boundsW - roiw) ) {
+    for (int y = roi.y1; y < roi.y2; ++y,
+         bm += (boundsW - roiw)) {
         for (int x = roi.x1; x < roi.x2; ++x, ++bm) {
             if (*bm == 0) {
                 if (x < bboxUnrendered.x1) {
                     bboxUnrendered.x1 = x;
                 }
+
                 if (x > bboxUnrendered.x2) {
                     bboxUnrendered.x2 = x;
                 }
+
                 if (y < bboxUnrendered.y1) {
                     bboxUnrendered.y1 = y;
                 }
+
                 if (y > bboxUnrendered.y2) {
                     bboxUnrendered.y2 = y;
                 }
+
                 hasUnrendered = true;
             } else if (*bm == PIXEL_UNAVAILABLE) {
                 if (x < bboxUnavailable.x1) {
                     bboxUnavailable.x1 = x;
                 }
+
                 if (x > bboxUnavailable.x2) {
                     bboxUnavailable.x2 = x;
                 }
+
                 if (y < bboxUnavailable.y1) {
                     bboxUnavailable.y1 = y;
                 }
+
                 if (y > bboxUnavailable.y2) {
                     bboxUnavailable.y2 = y;
                 }
+
                 hasUnavailable = true;
             }
         } // for x
     } // for y
+
     if (hasUnrendered) {
         qDebug() << "Unrenderer pixels in the following region:";
         bboxUnrendered.debug();
     }
+
     if (hasUnavailable) {
         qDebug() << "Unavailable pixels in the following region:";
         bboxUnavailable.debug();
@@ -685,7 +849,7 @@ Image::Image(const ImageKey & key,
 
 Image::Image(const ImageKey & key,
              const ImageParamsPtr& params)
-    : CacheEntryHelper<unsigned char, ImageKey, ImageParams>( key, params, NULL )
+    : CacheEntryHelper<unsigned char, ImageKey, ImageParams>(key, params, NULL)
     , _useBitmap(false)
 {
     _bitDepth = params->getBitDepth();
@@ -719,32 +883,32 @@ Image::Image(const ImagePlaneDesc& components,
 {
     setCacheEntry(makeKey(0, 0, false, 0, ViewIdx(0), false, false),
 #ifdef BOOST_NO_CXX11_VARIADIC_TEMPLATES
-                  ImageParamsPtr( new ImageParams(regionOfDefinition,
-                                                                  par,
-                                                                  mipmapLevel,
-                                                                  bounds,
-                                                                  bitdepth,
-                                                                  fielding,
-                                                                  premult,
-                                                                  false /*isRoDProjectFormat*/,
-                                                                  components,
-                                                                  storage,
-                                                                  textureTarget) ),
+                  ImageParamsPtr(new ImageParams(regionOfDefinition,
+                                 par,
+                                 mipmapLevel,
+                                 bounds,
+                                 bitdepth,
+                                 fielding,
+                                 premult,
+                                 false /*isRoDProjectFormat*/,
+                                 components,
+                                 storage,
+                                 textureTarget)),
 #else
                   std::make_shared<ImageParams>(regionOfDefinition,
-                                                  par,
-                                                  mipmapLevel,
-                                                  bounds,
-                                                  bitdepth,
-                                                  fielding,
-                                                  premult,
-                                                  false /*isRoDProjectFormat*/,
-                                                  components,
-                                                  storage,
-                                                  textureTarget),
+                          par,
+                          mipmapLevel,
+                          bounds,
+                          bitdepth,
+                          fielding,
+                          premult,
+                          false /*isRoDProjectFormat*/,
+                          components,
+                          storage,
+                          textureTarget),
 #endif
                   NULL /*cacheAPI*/
-                  );
+                 );
 
     _bitDepth = bitdepth;
     _depthBytesSize = getSizeOfForBitDepth(_bitDepth);
@@ -766,6 +930,8 @@ Image::~Image()
 void
 Image::onMemoryAllocated(bool diskRestoration)
 {
+    Gpu::PerformanceTrace trace("image-bitmap-allocate", uint64_t(_bounds.area()));
+
     if (_cache || _useBitmap) {
         _bitmap.initialize(_bounds);
     }
@@ -775,10 +941,12 @@ Image::onMemoryAllocated(bool diskRestoration)
     }
 
 #ifdef DEBUG
+
     if (!diskRestoration) {
         ///fill with red, to recognize unrendered pixels
         //fill(_bounds,1.,0.,0.,1.);
     }
+
 #endif
 }
 
@@ -817,29 +985,29 @@ Image::makeParams(const RectD & rod,
     const RectI bounds = rod.toPixelEnclosing(mipmapLevel, par);
 
 #ifdef BOOST_NO_CXX11_VARIADIC_TEMPLATES
-    return ImageParamsPtr( new ImageParams(rod,
-                                                           par,
-                                                           mipmapLevel,
-                                                           bounds,
-                                                           bitdepth,
-                                                           fielding,
-                                                           premult,
-                                                           isRoDProjectFormat,
-                                                           components,
-                                                           storage,
-                                                           textureTarget) );
+    return ImageParamsPtr(new ImageParams(rod,
+                                          par,
+                                          mipmapLevel,
+                                          bounds,
+                                          bitdepth,
+                                          fielding,
+                                          premult,
+                                          isRoDProjectFormat,
+                                          components,
+                                          storage,
+                                          textureTarget));
 #else
     return std::make_shared<ImageParams>(rod,
-                                           par,
-                                           mipmapLevel,
-                                           bounds,
-                                           bitdepth,
-                                           fielding,
-                                           premult,
-                                           isRoDProjectFormat,
-                                           components,
-                                           storage,
-                                           textureTarget);
+                                         par,
+                                         mipmapLevel,
+                                         bounds,
+                                         bitdepth,
+                                         fielding,
+                                         premult,
+                                         isRoDProjectFormat,
+                                         components,
+                                         storage,
+                                         textureTarget);
 #endif
 }
 
@@ -858,34 +1026,34 @@ Image::makeParams(const RectD & rod,    // the image rod in canonical coordinate
 {
 #ifdef DEBUG
     const RectI pixelRod = rod.toPixelEnclosing(mipmapLevel, par);
-    assert( bounds.left() >= pixelRod.left() && bounds.right() <= pixelRod.right() &&
-            bounds.bottom() >= pixelRod.bottom() && bounds.top() <= pixelRod.top() );
+    assert(bounds.left() >= pixelRod.left() && bounds.right() <= pixelRod.right() &&
+           bounds.bottom() >= pixelRod.bottom() && bounds.top() <= pixelRod.top());
 #endif
 
 #ifdef BOOST_NO_CXX11_VARIADIC_TEMPLATES
-    return ImageParamsPtr( new ImageParams(rod,
-                                                           par,
-                                                           mipmapLevel,
-                                                           bounds,
-                                                           bitdepth,
-                                                           fielding,
-                                                           premult,
-                                                           isRoDProjectFormat,
-                                                           components,
-                                                           storage,
-                                                           textureTarget) );
+    return ImageParamsPtr(new ImageParams(rod,
+                                          par,
+                                          mipmapLevel,
+                                          bounds,
+                                          bitdepth,
+                                          fielding,
+                                          premult,
+                                          isRoDProjectFormat,
+                                          components,
+                                          storage,
+                                          textureTarget));
 #else
     return std::make_shared<ImageParams>(rod,
-                                           par,
-                                           mipmapLevel,
-                                           bounds,
-                                           bitdepth,
-                                           fielding,
-                                           premult,
-                                           isRoDProjectFormat,
-                                           components,
-                                           storage,
-                                           textureTarget);
+                                         par,
+                                         mipmapLevel,
+                                         bounds,
+                                         bitdepth,
+                                         fielding,
+                                         premult,
+                                         isRoDProjectFormat,
+                                         components,
+                                         storage,
+                                         textureTarget);
 #endif
 }
 
@@ -899,35 +1067,38 @@ Image::pasteFromForDepth(const Image & srcImg,
 {
     ///Cannot copy images with different bit depth, this is not the purpose of this function.
     ///@see convert
-    assert( getBitDepth() == srcImg.getBitDepth() );
-    assert( (getBitDepth() == eImageBitDepthByte && sizeof(PIX) == 1) || (getBitDepth() == eImageBitDepthShort && sizeof(PIX) == 2) || (getBitDepth() == eImageBitDepthFloat && sizeof(PIX) == 4) );
+    assert(getBitDepth() == srcImg.getBitDepth());
+    assert((getBitDepth() == eImageBitDepthByte && sizeof(PIX) == 1) || (getBitDepth() == eImageBitDepthShort && sizeof(PIX) == 2) || (getBitDepth() == eImageBitDepthFloat && sizeof(PIX) == 4));
     // NOTE: before removing the following asserts, please explain why an empty image may happen
 
     QWriteLocker k(&_entryLock);
     std::unique_ptr<QReadLocker> k2;
+
     if (takeSrcLock && &srcImg != this) {
-        k2.reset( new QReadLocker(&srcImg._entryLock) );
+        k2.reset(new QReadLocker(&srcImg._entryLock));
     }
 
     const RectI & bounds = _bounds;
     const RectI & srcBounds = srcImg._bounds;
 
-    assert( !bounds.isNull() );
-    assert( !srcBounds.isNull() );
+    assert(!bounds.isNull());
+    assert(!srcBounds.isNull());
 
     // only copy the intersection of roi, bounds and otherBounds
     const RectI roi = srcRoi.intersect(bounds).intersect(srcBounds);
+
     if (roi.isNull()) {
         // no intersection between srcRoi and the bounds of this image or
         // the bounds of the other image.
         return;
     }
 
-    assert( getComponents() == srcImg.getComponents() );
+    assert(getComponents() == srcImg.getComponents());
 
     if (copyBitmap && _useBitmap) {
         copyBitmapPortion(roi, srcImg);
     }
+
     // now we're safe: both images contain the area in roi
 
     int srcRowElements = _nbComponents * srcBounds.width();
@@ -943,10 +1114,12 @@ Image::pasteFromForDepth(const Image & srcImg,
          dst += dstRowElements) {
         std::memcpy(dst, src, roi.width() * sizeof(PIX) * _nbComponents);
 #ifdef DEBUG_NAN
+
         for (int i = 0; i < roi.width() * _nbComponents; ++i) {
-            assert( !std::isnan(src[i]) ); // check for NaN
-            assert( !std::isnan(dst[i]) ); // check for NaN
+            assert(!std::isnan(src[i]));   // check for NaN
+            assert(!std::isnan(dst[i]));   // check for NaN
         }
+
 #endif
     }
 } // Image::pasteFromForDepth
@@ -969,23 +1142,55 @@ Image::resizeInternal(const Image* srcImg,
                       bool createInCache,
                       ImagePtr* outputImage)
 {
+    if (srcImg->getStorageMode() == eStorageModeVulkan) {
+        auto params = std::make_shared<ImageParams>(*srcImg->getParams());
+        params->setBounds(merge);
+
+        if (createInCache) {
+            *outputImage = std::make_shared<Image>(srcImg->getKey(), params, srcImg->getCacheAPI());
+            (*outputImage)->allocateMemory();
+        } else {
+            *outputImage = std::make_shared<Image>(srcImg->getKey(), params);
+            (*outputImage)->_useBitmap = srcImg->usesBitMap();
+
+            if ((*outputImage)->usesBitMap()) {
+                (*outputImage)->_bitmap.initialize(merge);
+            }
+        }
+
+        const auto output = *outputImage;
+        output->getVulkanImage()->copy(*srcImg->getVulkanImage(), 0, 0, srcBounds.width(), srcBounds.height(),
+                                       srcBounds.x1 - merge.x1, srcBounds.y1 - merge.y1);
+
+        if (output->usesBitMap()) {
+            if (fillWithBlackAndTransparent && setBitmapTo1) {
+                output->markForRendered(merge);
+            }
+
+            output->copyBitmapPortion(srcBounds, *srcImg);
+        }
+
+        return;
+    }
+
     ///Allocate to resized image
     if (!createInCache) {
-        *outputImage = std::make_shared<Image>( srcImg->getComponents(),
-                                       srcImg->getRoD(),
-                                       merge,
-                                       srcImg->getMipmapLevel(),
-                                       srcImg->getPixelAspectRatio(),
-                                       srcImg->getBitDepth(),
-                                       srcImg->getPremultiplication(),
-                                       srcImg->getFieldingOrder(),
-                                       srcImg->usesBitMap() );
+        *outputImage = std::make_shared<Image>(srcImg->getComponents(),
+                                               srcImg->getRoD(),
+                                               merge,
+                                               srcImg->getMipmapLevel(),
+                                               srcImg->getPixelAspectRatio(),
+                                               srcImg->getBitDepth(),
+                                               srcImg->getPremultiplication(),
+                                               srcImg->getFieldingOrder(),
+                                               srcImg->usesBitMap());
     } else {
-        ImageParamsPtr params = std::make_shared<ImageParams>( *srcImg->getParams() );
+        ImageParamsPtr params = std::make_shared<ImageParams>(*srcImg->getParams());
         params->setBounds(merge);
-        *outputImage = std::make_shared<Image>( srcImg->getKey(), params, srcImg->getCacheAPI() );
+        *outputImage = std::make_shared<Image>(srcImg->getKey(), params, srcImg->getCacheAPI());
         (*outputImage)->allocateMemory();
     }
+
     ImageBitDepthEnum depth = srcImg->getBitDepth();
 
     if (fillWithBlackAndTransparent) {
@@ -1025,59 +1230,68 @@ Image::resizeInternal(const Image* srcImg,
         dRect.x2 = srcBounds.x1;
         dRect.y2 = srcBounds.y2;
 
-        Image::WriteAccess wacc( outputImage->get() );
+        Image::WriteAccess wacc(outputImage->get());
         std::size_t pixelSize = srcImg->getComponentsCount() * getSizeOfForBitDepth(depth);
 
-        if ( !aRect.isNull() ) {
-            char* pix = (char*)wacc.pixelAt(aRect.x1, aRect.y1);
+        if (!aRect.isNull()) {
+            char *pix = (char*)wacc.pixelAt(aRect.x1, aRect.y1);
             assert(pix);
             U64 a = aRect.area();
             std::size_t memsize = a * pixelSize;
             std::memset(pix, 0, memsize);
-            if ( setBitmapTo1 && (*outputImage)->usesBitMap() ) {
-                char* bm = wacc.bitmapAt(aRect.x1, aRect.y1);
+
+            if (setBitmapTo1 && (*outputImage)->usesBitMap()) {
+                char *bm = wacc.bitmapAt(aRect.x1, aRect.y1);
                 assert(bm);
                 std::memset(bm, 1, a);
             }
         }
-        if ( !cRect.isNull() ) {
-            char* pix = (char*)wacc.pixelAt(cRect.x1, cRect.y1);
+
+        if (!cRect.isNull()) {
+            char *pix = (char*)wacc.pixelAt(cRect.x1, cRect.y1);
             assert(pix);
             U64 a = cRect.area();
             std::size_t memsize = a * pixelSize;
             std::memset(pix, 0, memsize);
-            if ( setBitmapTo1 && (*outputImage)->usesBitMap() ) {
-                char* bm = (char*)wacc.bitmapAt(cRect.x1, cRect.y1);
+
+            if (setBitmapTo1 && (*outputImage)->usesBitMap()) {
+                char *bm = (char*)wacc.bitmapAt(cRect.x1, cRect.y1);
                 assert(bm);
                 std::memset(bm, 1, a);
             }
         }
-        if ( !bRect.isNull() ) {
-            char* pix = (char*)wacc.pixelAt(bRect.x1, bRect.y1);
+
+        if (!bRect.isNull()) {
+            char *pix = (char*)wacc.pixelAt(bRect.x1, bRect.y1);
             assert(pix);
             int mw = merge.width();
             std::size_t rowsize = mw * pixelSize;
             int bw = bRect.width();
             std::size_t rectRowSize = bw * pixelSize;
-            char* bm = ( setBitmapTo1 && (*outputImage)->usesBitMap() ) ? wacc.bitmapAt(bRect.x1, bRect.y1) : 0;
+            char *bm = (setBitmapTo1 && (*outputImage)->usesBitMap()) ? wacc.bitmapAt(bRect.x1, bRect.y1) : 0;
+
             for (int y = bRect.y1; y < bRect.y2; ++y, pix += rowsize) {
                 std::memset(pix, 0, rectRowSize);
+
                 if (bm) {
                     std::memset(bm, 1, bw);
                     bm += mw;
                 }
             }
         }
-        if ( !dRect.isNull() ) {
-            char* pix = (char*)wacc.pixelAt(dRect.x1, dRect.y1);
+
+        if (!dRect.isNull()) {
+            char *pix = (char*)wacc.pixelAt(dRect.x1, dRect.y1);
             assert(pix);
             int mw = merge.width();
             std::size_t rowsize = mw * pixelSize;
             int dw = dRect.width();
             std::size_t rectRowSize = dw * pixelSize;
-            char* bm = ( setBitmapTo1 && (*outputImage)->usesBitMap() ) ? wacc.bitmapAt(dRect.x1, dRect.y1) : 0;
+            char *bm = (setBitmapTo1 && (*outputImage)->usesBitMap()) ? wacc.bitmapAt(dRect.x1, dRect.y1) : 0;
+
             for (int y = dRect.y1; y < dRect.y2; ++y, pix += rowsize) {
                 std::memset(pix, 0, rectRowSize);
+
                 if (bm) {
                     std::memset(bm, 1, dw);
                     bm += mw;
@@ -1091,15 +1305,19 @@ Image::resizeInternal(const Image* srcImg,
     case eImageBitDepthByte:
         (*outputImage)->pasteFromForDepth<unsigned char>(*srcImg, srcBounds, srcImg->usesBitMap(), false);
         break;
+
     case eImageBitDepthShort:
         (*outputImage)->pasteFromForDepth<unsigned short>(*srcImg, srcBounds, srcImg->usesBitMap(), false);
         break;
+
     case eImageBitDepthHalf:
         assert(false);
         break;
+
     case eImageBitDepthFloat:
         (*outputImage)->pasteFromForDepth<float>(*srcImg, srcBounds, srcImg->usesBitMap(), false);
         break;
+
     case eImageBitDepthNone:
         break;
     }
@@ -1111,10 +1329,12 @@ Image::copyAndResizeIfNeeded(const RectI& newBounds,
                              bool setBitmapTo1,
                              ImagePtr* output)
 {
-    assert(getStorageMode() != eStorageModeGLTex);
-    if ( getBounds().contains(newBounds) ) {
+
+
+    if (getBounds().contains(newBounds)) {
         return false;
     }
+
     assert(output);
 
     QReadLocker k(&_entryLock);
@@ -1131,9 +1351,9 @@ Image::ensureBounds(const RectI& newBounds,
                     bool fillWithBlackAndTransparent,
                     bool setBitmapTo1)
 {
-    // OpenGL textures are not resizable yet
-    assert(_params->getStorageInfo().mode != eStorageModeGLTex);
-    if ( getBounds().contains(newBounds) ) {
+
+
+    if (getBounds().contains(newBounds)) {
         return false;
     }
 
@@ -1148,233 +1368,65 @@ Image::ensureBounds(const RectI& newBounds,
     ///Change the size of the current buffer
     _bounds = merge;
     _params->setBounds(merge);
-    assert( _bounds.contains(newBounds) );
+    assert(_bounds.contains(newBounds));
     swapBuffer(*tmpImg);
-    if ( usesBitMap() ) {
+
+    if (usesBitMap()) {
+        const size_t beforeBitmapSwap = size();
         _bitmap.swap(tmpImg->_bitmap);
+
+        if (getStorageMode() == eStorageModeVulkan && _cache && beforeBitmapSwap != size()) {
+            _cache->notifyEntrySizeChanged(beforeBitmapSwap, size());
+        }
     }
 
     return true;
 }
 
-void
-Image::applyTextureMapping(const RectI& bounds,
-                           const RectI& roi)
-{
-    glViewport( roi.x1 - bounds.x1, roi.y1 - bounds.y1, roi.width(), roi.height() );
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glOrtho( roi.x1, roi.x2,
-             roi.y1, roi.y2,
-             -10.0 * (roi.y2 - roi.y1), 10.0 * (roi.y2 - roi.y1) );
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-    glCheckError();
-
-    // Compute the texture coordinates to match the srcRoi
-    Point srcTexCoords[4], vertexCoords[4];
-    vertexCoords[0].x = roi.x1;
-    vertexCoords[0].y = roi.y1;
-    srcTexCoords[0].x = (roi.x1 - bounds.x1) / (double)bounds.width();
-    srcTexCoords[0].y = (roi.y1 - bounds.y1) / (double)bounds.height();
-
-    vertexCoords[1].x = roi.x2;
-    vertexCoords[1].y = roi.y1;
-    srcTexCoords[1].x = (roi.x2 - bounds.x1) / (double)bounds.width();
-    srcTexCoords[1].y = (roi.y1 - bounds.y1) / (double)bounds.height();
-
-    vertexCoords[2].x = roi.x2;
-    vertexCoords[2].y = roi.y2;
-    srcTexCoords[2].x = (roi.x2 - bounds.x1) / (double)bounds.width();
-    srcTexCoords[2].y = (roi.y2 - bounds.y1) / (double)bounds.height();
-
-    vertexCoords[3].x = roi.x1;
-    vertexCoords[3].y = roi.y2;
-    srcTexCoords[3].x = (roi.x1 - bounds.x1) / (double)bounds.width();
-    srcTexCoords[3].y = (roi.y2 - bounds.y1) / (double)bounds.height();
-
-    glBegin(GL_POLYGON);
-    for (int i = 0; i < 4; ++i) {
-        glTexCoord2d(srcTexCoords[i].x, srcTexCoords[i].y);
-        glVertex2d(vertexCoords[i].x, vertexCoords[i].y);
-    }
-    glEnd();
-    glCheckError();
-}
 
 // code proofread and fixed by @devernay on 8/8/2014
 void
 Image::pasteFrom(const Image & src,
                  const RectI & srcRoi,
-                 bool copyBitmap,
-                 const OSGLContextPtr& glContext)
+                 bool copyBitmap)
 {
+    Gpu::PerformanceTrace trace("image-paste", uint64_t(srcRoi.area()) * 16);
+
     if (this == &src) {
         return;
     }
+
     StorageModeEnum thisStorage = getStorageMode();
     StorageModeEnum otherStorage = src.getStorageMode();
 
-    if ( (thisStorage == eStorageModeGLTex) && (otherStorage == eStorageModeGLTex) ) {
-        // OpenGL texture to OpenGL texture
-        assert(_params->getStorageInfo().textureTarget == src.getParams()->getStorageInfo().textureTarget);
-
-        RectI dstBounds = getBounds();
-        RectI srcBounds = src.getBounds();
-        GLuint fboID = glContext->getFBOId();
-
-        glBindFramebuffer(GL_FRAMEBUFFER, fboID);
-        int target = getGLTextureTarget();
-        glEnable(target);
-        glBindTexture( target, getGLTextureID() );
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, target, getGLTextureID(), 0 /*LoD*/);
-        glCheckFramebufferError();
-        glBindTexture( target, src.getGLTextureID() );
-
-        applyTextureMapping(dstBounds, srcRoi);
-
-        glBindTexture(target, 0);
-        glCheckError();
-    } else if ( (thisStorage == eStorageModeGLTex) && (otherStorage != eStorageModeGLTex) ) {
-        // RAM image to OpenGL texture
-        const RectI& dstBounds = getBounds();
-        const RectI& srcBounds = src.getBounds();
-
-        // only copy the intersection of roi, bounds and otherBounds
-        const RectI roi = srcRoi.intersect(dstBounds).intersect(srcBounds);
-        if (roi.isNull()) {
-            // no intersection between srcRoi and the bounds of this image or
-            // the bounds of the other image
-            return;
-        }
-        GLuint pboID = glContext->getPBOId();
-        int target = getGLTextureTarget();
-        glEnable(target);
-
-        // bind PBO to update texture source
-        glBindBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB, pboID);
-
-        std::size_t dataSize = roi.area() * 4 * src.getParams()->getStorageInfo().dataTypeSize;
-
-        // Note that glMapBufferARB() causes sync issue.
-        // If GPU is working with this buffer, glMapBufferARB() will wait(stall)
-        // until GPU to finish its job. To avoid waiting (idle), you can call
-        // first glBufferDataARB() with NULL pointer before glMapBufferARB().
-        // If you do that, the previous data in PBO will be discarded and
-        // glMapBufferARB() returns a new allocated pointer immediately
-        // even if GPU is still working with the previous data.
-        glBufferDataARB(GL_PIXEL_UNPACK_BUFFER_ARB, dataSize, 0, GL_DYNAMIC_DRAW_ARB);
-
-        // map the buffer object into client's memory
-        void* gpuData = glMapBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB, GL_WRITE_ONLY_ARB);
-        assert(gpuData);
-        if (gpuData) {
-            // update data directly on the mapped buffer
-#ifdef BOOST_NO_CXX11_VARIADIC_TEMPLATES
-            ImagePtr tmpImg( new Image( ImagePlaneDesc::getRGBAComponents(), src.getRoD(), roi, 0, src.getPixelAspectRatio(), src.getBitDepth(), src.getPremultiplication(), src.getFieldingOrder(), false, eStorageModeRAM) );
-#else
-            ImagePtr tmpImg = std::make_shared<Image>( ImagePlaneDesc::getRGBAComponents(), src.getRoD(), roi, 0, src.getPixelAspectRatio(), src.getBitDepth(), src.getPremultiplication(), src.getFieldingOrder(), false, eStorageModeRAM);
-#endif
-            tmpImg->pasteFrom(src, roi);
-
-            Image::ReadAccess racc(tmpImg ? tmpImg.get() : this);
-            const unsigned char* srcdata = racc.pixelAt(roi.x1, roi.y1);
-            assert(srcdata);
-            
-            memcpy(gpuData, srcdata, dataSize);
-
-            GLboolean result = glUnmapBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB); // release the mapped buffer
-            assert(result == GL_TRUE);
-            Q_UNUSED(result);
-        }
-
-        // bind the texture
-        glBindTexture( target, getGLTextureID() );
-        // copy pixels from PBO to texture object
-        // Use offset instead of pointer (last parameter is 0).
-        glTexSubImage2D(target,
-                        0,              // level
-                        roi.x1, roi.y1,               // xoffset, yoffset
-                        roi.width(), roi.height(),
-                        src.getGLTextureFormat(),            // format
-                        src.getGLTextureType(),       // type
-                        0);
-
-        glBindBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
-        glBindTexture(target, 0);
-        glCheckError();
-    } else if ( (thisStorage != eStorageModeGLTex) && (otherStorage == eStorageModeGLTex) ) {
-        // OpenGL texture to RAM image
-
-        const RectI& dstBounds = getBounds();
-        const RectI& srcBounds = src.getBounds();
-
-        // only copy the intersection of roi, bounds and otherBounds
-        const RectI roi = srcRoi.intersect(dstBounds).intersect(srcBounds);
-        if (roi.isNull()) {
-            // no intersection between srcRoi and the bounds of this image or
-            // the bounds of the other image
-            return;
-        }
-
-        GLuint fboID = glContext->getFBOId();
-
-        glBindFramebuffer(GL_FRAMEBUFFER, fboID);
-        int target = src.getGLTextureTarget();
-        glEnable(target);
-        glBindTexture( target, src.getGLTextureID() );
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, target, src.getGLTextureID(), 0 /*LoD*/);
-        //glViewport( 0, 0, srcBounds.width(), srcBounds.height() );
-        glViewport( roi.x1 - srcBounds.x1, roi.y1 - srcBounds.y1, roi.width(), roi.height() );
-        glCheckFramebufferError();
-        // Ensure all drawing commands are finished
-        glFlush();
-        glFinish();
-        glCheckError();
-        // Read to a temporary RGBA buffer then convert to the image which may not be RGBA
-#ifdef BOOST_NO_CXX11_VARIADIC_TEMPLATES
-        ImagePtr tmpImg( new Image( ImagePlaneDesc::getRGBAComponents(), getRoD(), roi, 0, getPixelAspectRatio(), getBitDepth(), getPremultiplication(), getFieldingOrder(), false, eStorageModeRAM) );
-#else
-        ImagePtr tmpImg = std::make_shared<Image>( ImagePlaneDesc::getRGBAComponents(), getRoD(), roi, 0, getPixelAspectRatio(), getBitDepth(), getPremultiplication(), getFieldingOrder(), false, eStorageModeRAM);
-#endif
-
-        {
-            Image::WriteAccess tmpAcc(tmpImg ? tmpImg.get() : this);
-            unsigned char* data = tmpAcc.pixelAt(roi.x1, roi.y1);
-
-            glReadPixels(roi.x1 - srcBounds.x1, roi.y1 - srcBounds.y1, roi.width(), roi.height(), src.getGLTextureFormat(), src.getGLTextureType(), (GLvoid*)data);
-            glBindTexture(target, 0);
-        }
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glCheckError();
-
-        // Ok now convert from RGBA to this image format if needed
-        if ( tmpImg->getComponentsCount() != getComponentsCount() ) {
-            tmpImg->convertToFormat(roi, eViewerColorSpaceLinear, eViewerColorSpaceLinear, 3, false, false, this);
-        } else {
-            pasteFrom(*tmpImg, roi, false);
-        }
-    } else {
-        assert(getStorageMode() != eStorageModeGLTex && src.getStorageMode() != eStorageModeGLTex);
-        ImageBitDepthEnum depth = getBitDepth();
-
-        switch (depth) {
-        case eImageBitDepthByte:
-            pasteFromForDepth<unsigned char>(src, srcRoi, copyBitmap, true);
-            break;
-        case eImageBitDepthShort:
-            pasteFromForDepth<unsigned short>(src, srcRoi, copyBitmap, true);
-            break;
-        case eImageBitDepthHalf:
-            assert(false);
-            break;
-        case eImageBitDepthFloat:
-            pasteFromForDepth<float>(src, srcRoi, copyBitmap, true);
-            break;
-        case eImageBitDepthNone:
-            break;
-        }
+    if (thisStorage == eStorageModeVulkan || otherStorage == eStorageModeVulkan) {
+        pasteFromVulkan(src, srcRoi, copyBitmap);
+        return;
     }
+
+    ImageBitDepthEnum depth = getBitDepth();
+
+    switch (depth) {
+    case eImageBitDepthByte:
+        pasteFromForDepth<unsigned char>(src, srcRoi, copyBitmap, true);
+        break;
+
+    case eImageBitDepthShort:
+        pasteFromForDepth<unsigned short>(src, srcRoi, copyBitmap, true);
+        break;
+
+    case eImageBitDepthHalf:
+        assert(false);
+        break;
+
+    case eImageBitDepthFloat:
+        pasteFromForDepth<float>(src, srcRoi, copyBitmap, true);
+        break;
+
+    case eImageBitDepthNone:
+        break;
+    }
+
 } // pasteFrom
 
 template <typename PIX, int maxValue, int nComps>
@@ -1385,9 +1437,10 @@ Image::fillForDepthForComponents(const RectI & roi_,
                                  float b,
                                  float a)
 {
-    assert( (getBitDepth() == eImageBitDepthByte && sizeof(PIX) == 1) || (getBitDepth() == eImageBitDepthShort && sizeof(PIX) == 2) || (getBitDepth() == eImageBitDepthFloat && sizeof(PIX) == 4) );
+    assert((getBitDepth() == eImageBitDepthByte && sizeof(PIX) == 1) || (getBitDepth() == eImageBitDepthShort && sizeof(PIX) == 2) || (getBitDepth() == eImageBitDepthFloat && sizeof(PIX) == 4));
 
     const RectI roi = roi_.intersect(_bounds);
+
     if (roi.isNull()) {
         // no intersection between roi and the bounds of the image
         return;
@@ -1395,18 +1448,19 @@ Image::fillForDepthForComponents(const RectI & roi_,
 
     int rowElems = (int)getComponentsCount() * _bounds.width();
     const float fillValue[4] = {
-        nComps == 1 ? a * maxValue : r * maxValue, g * maxValue, b * maxValue, a * maxValue
+        nComps == 1 ? a *maxValue : r * maxValue, g * maxValue, b * maxValue, a *maxValue
     };
 
 
     // now we're safe: the image contains the area in roi
     PIX* dst = (PIX*)pixelAt(roi.x1, roi.y1);
-    for ( int i = 0; i < roi.height(); ++i, dst += (rowElems - roi.width() * nComps) ) {
+
+    for (int i = 0; i < roi.height(); ++i, dst += (rowElems - roi.width() * nComps)) {
         for (int j = 0; j < roi.width(); ++j, dst += nComps) {
             for (int k = 0; k < nComps; ++k) {
                 dst[k] = fillValue[k];
 #ifdef DEBUG_NAN
-                assert( !std::isnan(dst[k]) ); // check for NaN
+                assert(!std::isnan(dst[k]));   // check for NaN
 #endif
             }
         }
@@ -1427,18 +1481,23 @@ Image::fillForDepth(const RectI & roi_,
 
         return;
         break;
+
     case 1:
         fillForDepthForComponents<PIX, maxValue, 1>(roi_, r, g, b, a);
         break;
+
     case 2:
         fillForDepthForComponents<PIX, maxValue, 2>(roi_, r, g, b, a);
         break;
+
     case 3:
         fillForDepthForComponents<PIX, maxValue, 3>(roi_, r, g, b, a);
         break;
+
     case 4:
         fillForDepthForComponents<PIX, maxValue, 4>(roi_, r, g, b, a);
         break;
+
     default:
         break;
     }
@@ -1450,75 +1509,43 @@ Image::fill(const RectI & roi,
             float r,
             float g,
             float b,
-            float a,
-            const OSGLContextPtr& glContext)
+            float a)
 {
-    QWriteLocker k(&_entryLock);
-
-    if (getStorageMode() == eStorageModeGLTex) {
-        const RectI realRoI = roi.intersect(_bounds);
-        if (realRoI.isNull()) {
-            // no intersection between roi and the bounds of the image
-            return;
-        }
-
-        assert(glContext);
-        GLShaderPtr shader = glContext->getOrCreateFillShader();
-        assert(shader);
-        GLuint fboID = glContext->getFBOId();
-
-        glBindFramebuffer(GL_FRAMEBUFFER, fboID);
-        int target = getGLTextureTarget();
-        glEnable(target);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture( target, getGLTextureID() );
-
-        glTexParameteri (target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri (target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-        glTexParameteri (target, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri (target, GL_TEXTURE_WRAP_T, GL_REPEAT);
-
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, target, getGLTextureID(), 0 /*LoD*/);
-        glCheckFramebufferError();
-
-        shader->bind();
-        OfxRGBAColourF fillColor = {r, g, b, a};
-        shader->setUniform("fillColor", fillColor);
-        applyTextureMapping(_bounds, realRoI);
-        shader->unbind();
-
-
-        glBindTexture(target, 0);
-        glCheckError();
-
+    if (getStorageMode() == eStorageModeVulkan) {
+        fillVulkan(roi, {r, g, b, a});
         return;
     }
 
-    switch ( getBitDepth() ) {
+    QWriteLocker k(&_entryLock);
+
+
+    switch (getBitDepth()) {
     case eImageBitDepthByte:
         fillForDepth<unsigned char, 255>(roi, r, g, b, a);
         break;
+
     case eImageBitDepthShort:
         fillForDepth<unsigned short, 65535>(roi, r, g, b, a);
         break;
+
     case eImageBitDepthHalf:
         assert(false);
         break;
+
     case eImageBitDepthFloat:
         fillForDepth<float, 1>(roi, r, g, b, a);
         break;
+
     case eImageBitDepthNone:
         break;
     }
 } // fill
 
 void
-Image::fillZero(const RectI& roi,
-                const OSGLContextPtr& glContext)
+Image::fillZero(const RectI& roi)
 {
-    if (getStorageMode() == eStorageModeGLTex) {
-        fill(roi, 0., 0., 0., 0., glContext);
+    if (getStorageMode() == eStorageModeVulkan) {
+        fill(roi, 0., 0., 0., 0.);
 
         return;
     }
@@ -1531,20 +1558,25 @@ Image::fillZero(const RectI& roi,
     }
 
 
-    std::size_t rowSize =  (std::size_t)_nbComponents;
-    switch ( getBitDepth() ) {
+    std::size_t rowSize = (std::size_t)_nbComponents;
+
+    switch (getBitDepth()) {
     case eImageBitDepthByte:
         rowSize *= sizeof(unsigned char);
         break;
+
     case eImageBitDepthShort:
         rowSize *= sizeof(unsigned short);
         break;
+
     case eImageBitDepthHalf:
         rowSize *= sizeof(unsigned short);
         break;
+
     case eImageBitDepthFloat:
         rowSize *= sizeof(float);
         break;
+
     case eImageBitDepthNone:
 
         return;
@@ -1553,104 +1585,115 @@ Image::fillZero(const RectI& roi,
     std::size_t roiMemSize = rowSize * intersection.width();
     rowSize *= _bounds.width();
 
-    char* dstPixels = (char*)pixelAt(intersection.x1, intersection.y1);
+    char *dstPixels = (char*)pixelAt(intersection.x1, intersection.y1);
     assert(dstPixels);
+
     for (int y = intersection.y1; y < intersection.y2; ++y, dstPixels += rowSize) {
         std::memset(dstPixels, 0, roiMemSize);
     }
 }
 
 void
-Image::fillBoundsZero(const OSGLContextPtr& glContext)
+Image::fillBoundsZero()
 {
-    if (getStorageMode() == eStorageModeGLTex) {
-        fill(getBounds(), 0., 0., 0., 0., glContext);
+    if (getStorageMode() == eStorageModeVulkan) {
+        fill(getBounds(), 0., 0., 0., 0.);
 
         return;
     }
 
     QWriteLocker k(&_entryLock);
-    std::size_t rowSize =  (std::size_t)_nbComponents;
+    std::size_t rowSize = (std::size_t)_nbComponents;
 
-    switch ( getBitDepth() ) {
+    switch (getBitDepth()) {
     case eImageBitDepthByte:
         rowSize *= sizeof(unsigned char);
         break;
+
     case eImageBitDepthShort:
         rowSize *= sizeof(unsigned short);
         break;
+
     case eImageBitDepthHalf:
         rowSize *= sizeof(unsigned short);
         break;
+
     case eImageBitDepthFloat:
         rowSize *= sizeof(float);
         break;
+
     case eImageBitDepthNone:
 
         return;
     }
 
     std::size_t roiMemSize = rowSize * _bounds.width() * _bounds.height();
-    char* dstPixels = (char*)pixelAt(_bounds.x1, _bounds.y1);
+    char *dstPixels = (char*)pixelAt(_bounds.x1, _bounds.y1);
     std::memset(dstPixels, 0, roiMemSize);
 }
 
-unsigned char*
+unsigned char *
 Image::pixelAt(int x,
                int y)
 {
-    if ( ( x < _bounds.x1 ) || ( x >= _bounds.x2 ) || ( y < _bounds.y1 ) || ( y >= _bounds.y2 ) ) {
+    if ((x < _bounds.x1) || (x >= _bounds.x2) || (y < _bounds.y1) || (y >= _bounds.y2)) {
         return NULL;
     } else {
-        unsigned char* ret =  (unsigned char*)this->_data.writable();
+        unsigned char *ret = (unsigned char*)this->_data.writable();
+
         if (!ret) {
             return 0;
         }
+
         int compDataSize = _depthBytesSize * _nbComponents;
-        ret = ret + (qint64)( y - _bounds.y1 ) * compDataSize * _bounds.width()
-              + (qint64)( x - _bounds.x1 ) * compDataSize;
+        ret = ret + (qint64)(y - _bounds.y1) * compDataSize * _bounds.width()
+              + (qint64)(x - _bounds.x1) * compDataSize;
 
         return ret;
     }
 }
 
-unsigned char*
+unsigned char *
 Image::pixelAtStatic(int x,
                      int y,
                      const RectI& bounds,
                      int nComps,
                      int dataSizeOf,
-                     unsigned char* buf)
+                     unsigned char *buf)
 {
-    if ( ( x < bounds.x1 ) || ( x >= bounds.x2 ) || ( y < bounds.y1 ) || ( y >= bounds.y2 ) ) {
+    if ((x < bounds.x1) || (x >= bounds.x2) || (y < bounds.y1) || (y >= bounds.y2)) {
         return NULL;
     } else {
-        unsigned char* ret = buf;
+        unsigned char *ret = buf;
+
         if (!ret) {
             return 0;
         }
+
         int compDataSize = dataSizeOf * nComps;
-        ret = ret + (qint64)( y - bounds.y1 ) * compDataSize * bounds.width()
-              + (qint64)( x - bounds.x1 ) * compDataSize;
+        ret = ret + (qint64)(y - bounds.y1) * compDataSize * bounds.width()
+              + (qint64)(x - bounds.x1) * compDataSize;
 
         return ret;
     }
 }
 
-const unsigned char*
+const unsigned char *
 Image::pixelAt(int x,
                int y) const
 {
-    if ( ( x < _bounds.x1 ) || ( x >= _bounds.x2 ) || ( y < _bounds.y1 ) || ( y >= _bounds.y2 ) ) {
+    if ((x < _bounds.x1) || (x >= _bounds.x2) || (y < _bounds.y1) || (y >= _bounds.y2)) {
         return NULL;
     } else {
-        unsigned char* ret = (unsigned char*)this->_data.readable();
+        unsigned char *ret = (unsigned char*)this->_data.readable();
+
         if (!ret) {
             return 0;
         }
+
         int compDataSize = _depthBytesSize * _nbComponents;
-        ret = ret + (qint64)( y - _bounds.y1 ) * compDataSize * _bounds.width()
-              + (qint64)( x - _bounds.x1 ) * compDataSize;
+        ret = ret + (qint64)(y - _bounds.y1) * compDataSize * _bounds.width()
+              + (qint64)(x - _bounds.x1) * compDataSize;
 
         return ret;
     }
@@ -1670,40 +1713,51 @@ Image::hasEnoughDataToConvert(ImagePlaneDescEnum from,
     case eImageComponentRGBA:
 
         return true;
+
     case eImageComponentRGB: {
         switch (to) {
         case eImageComponentRGBA:
 
             return true; //< let RGB fill the alpha with 0
+
         case eImageComponentRGB:
 
             return true;
+
         case eImageComponentAlpha:
 
             return false;
+
         default:
 
             return false;
         }
+
         break;
     }
+
     case eImageComponentAlpha: {
         switch (to) {
         case eImageComponentRGBA:
 
             return false;
+
         case eImageComponentRGB:
 
             return false;
+
         case eImageComponentAlpha:
 
             return true;
+
         default:
 
             return false;
         }
+
         break;
     }
+
     default:
 
         return false;
@@ -1717,7 +1771,7 @@ Image::getFormatString(const ImagePlaneDesc& comps,
 {
     std::string s = comps.getPlaneLabel() + '.' + comps.getChannelsLabel();
 
-    s.append( getDepthString(depth) );
+    s.append(getDepthString(depth));
 
     return s;
 }
@@ -1731,15 +1785,19 @@ Image::getDepthString(ImageBitDepthEnum depth)
     case eImageBitDepthByte:
         s += "8u";
         break;
+
     case eImageBitDepthShort:
         s += "16u";
         break;
+
     case eImageBitDepthHalf:
         s += "16f";
         break;
+
     case eImageBitDepthFloat:
         s += "32f";
         break;
+
     case eImageBitDepthNone:
         break;
     }
@@ -1790,18 +1848,10 @@ Image::halveRoIForDepth(const RectI & roi,
                         bool copyBitMap,
                         Image* output) const
 {
-    assert( _bounds.contains(roi) );
-    assert( (getBitDepth() == eImageBitDepthByte && sizeof(PIX) == 1) ||
-            (getBitDepth() == eImageBitDepthShort && sizeof(PIX) == 2) ||
-            (getBitDepth() == eImageBitDepthFloat && sizeof(PIX) == 4) );
-
-    ///handle case where there is only 1 column/row
-    if ( (roi.width() == 1) || (roi.height() == 1) ) {
-        assert( !(roi.width() == 1 && roi.height() == 1) ); /// can't be 1x1
-        halve1DImage(roi, output);
-
-        return;
-    }
+    assert(_bounds.contains(roi));
+    assert((getBitDepth() == eImageBitDepthByte && sizeof(PIX) == 1) ||
+           (getBitDepth() == eImageBitDepthShort && sizeof(PIX) == 2) ||
+           (getBitDepth() == eImageBitDepthFloat && sizeof(PIX) == 4));
 
     /// Take the lock for both bitmaps since we're about to read/write from them!
     QWriteLocker k1(&output->_entryLock);
@@ -1812,8 +1862,8 @@ Image::halveRoIForDepth(const RectI & roi,
     const RectI &dstBounds = output->_bounds;
     const RectI &srcBmBounds = _bitmap.getBounds();
     const RectI &dstBmBounds = output->_bitmap.getBounds();
-    assert( !copyBitMap || usesBitMap() );
-    assert( !usesBitMap() || (srcBmBounds == srcBounds && dstBmBounds == dstBounds) );
+    assert(!copyBitMap || usesBitMap());
+    assert(!usesBitMap() || (srcBmBounds == srcBounds && dstBmBounds == dstBounds));
 
     // the srcRoD of the output should be enclosed in half the roi.
     // It does not have to be exactly half of the input.
@@ -1823,39 +1873,30 @@ Image::halveRoIForDepth(const RectI & roi,
     //           dstRoD.y2*2 <= roi.y2 &&
     //           dstRoD.width()*2 <= roi.width() &&
     //           dstRoD.height()*2 <= roi.height());
-    assert( getComponents() == output->getComponents() );
+    assert(getComponents() == output->getComponents());
 
     RectI dstRoI;
     const RectI srcRoI = roi.intersect(srcBounds); // intersect RoI with the region of definition
 #ifdef DEBUG_NAN
     assert(!checkForNaNsNoLock(srcRoI));
 #endif
-    dstRoI.x1 = (srcRoI.x1 + 1) / 2; // equivalent to ceil(srcRoI.x1/2.0)
-    dstRoI.y1 = (srcRoI.y1 + 1) / 2; // equivalent to ceil(srcRoI.y1/2.0)
-    dstRoI.x2 = srcRoI.x2 / 2; // equivalent to floor(srcRoI.x2/2.0)
-    dstRoI.y2 = srcRoI.y2 / 2; // equivalent to floor(srcRoI.y2/2.0)
+    // Include partial 2x2 footprints at odd/negative bounds. Average only the
+    // available source pixels, including one-pixel rows, columns and images.
+    dstRoI = srcRoI.downscalePowerOfTwoSmallestEnclosing(1).intersect(dstBounds);
 
 
     const PIX* const srcPixels      = (const PIX*)pixelAt(srcBounds.x1,   srcBounds.y1);
-    const char* const srcBmPixels   = _bitmap.getBitmapAt(srcBmBounds.x1, srcBmBounds.y1);
+    const char *const srcBmPixels   = _bitmap.getBitmapAt(srcBmBounds.x1, srcBmBounds.y1);
     PIX* const dstPixels          = (PIX*)output->pixelAt(dstBounds.x1,   dstBounds.y1);
-    char* const dstBmPixels = output->_bitmap.getBitmapAt(dstBmBounds.x1, dstBmBounds.y1);
+    char *const dstBmPixels = output->_bitmap.getBitmapAt(dstBmBounds.x1, dstBmBounds.y1);
     int srcRowSize = srcBounds.width() * _nbComponents;
     int dstRowSize = dstBounds.width() * _nbComponents;
 
-    // offset pointers so that srcData and dstData correspond to pixel (0,0)
-    const PIX* const srcData = srcPixels - (srcBounds.x1 * _nbComponents + srcRowSize * srcBounds.y1);
-    PIX* const dstData       = dstPixels - (dstBounds.x1 * _nbComponents + dstRowSize * dstBounds.y1);
     const int srcBmRowSize = srcBmBounds.width();
     const int dstBmRowSize = dstBmBounds.width();
-    const char* const srcBmData = srcBmPixels - (srcBmBounds.x1 + srcBmRowSize * srcBmBounds.y1);
-    char* const dstBmData       = dstBmPixels - (dstBmBounds.x1 + dstBmRowSize * dstBmBounds.y1);
 
     for (int y = dstRoI.y1; y < dstRoI.y2; ++y) {
-        const PIX* const srcLineStart    = srcData + y * 2 * srcRowSize;
-        PIX* const dstLineStart          = dstData + y     * dstRowSize;
-        const char* const srcBmLineStart = srcBmData + y * 2 * srcBmRowSize;
-        char* const dstBmLineStart       = dstBmData + y     * dstBmRowSize;
+        PIX* const dstLineStart = dstPixels + ptrdiff_t(y - dstBounds.y1) * dstRowSize;
 
         // The current dst row, at y, covers the src rows y*2 (thisRow) and y*2+1 (nextRow).
         // Check that if are within srcBounds.
@@ -1866,14 +1907,15 @@ Image::halveRoIForDepth(const RectI & roi,
         assert(sumH == 1 || sumH == 2);
 
         for (int x = dstRoI.x1; x < dstRoI.x2; ++x) {
-            const PIX* const srcPixStart    = srcLineStart   + x * 2 * _nbComponents;
-            const char* const srcBmPixStart = srcBmLineStart + x * 2;
-            PIX* const dstPixStart          = dstLineStart   + x * _nbComponents;
-            char* const dstBmPixStart       = dstBmLineStart + x;
+            PIX* const dstPixStart = dstLineStart + ptrdiff_t(x - dstBounds.x1) * _nbComponents;
 
             // The current dst col, at y, covers the src cols x*2 (thisCol) and x*2+1 (nextCol).
             // Check that if are within srcBounds.
             int srcx = x * 2;
+            // Calculate an integer offset first: edge footprints may start
+            // before the allocation. Form a pointer only for available pixels.
+            const ptrdiff_t srcOffset = (ptrdiff_t(srcy) - srcBounds.y1) * srcRowSize +
+                                        (ptrdiff_t(srcx) - srcBounds.x1) * _nbComponents;
             bool pickThisCol = srcBounds.x1 <= (srcx + 0) && (srcx + 0) < srcBounds.x2;
             bool pickNextCol = srcBounds.x1 <= (srcx + 1) && (srcx + 1) < srcBounds.x2;
             int sumW = (int)pickThisCol + (int)pickNextCol;
@@ -1885,9 +1927,11 @@ Image::halveRoIForDepth(const RectI & roi,
                 for (int k = 0; k < _nbComponents; ++k) {
                     dstPixStart[k] = 0;
                 }
+
                 if (copyBitMap) {
-                    dstBmPixStart[0] = 0;
+                    dstBmPixels[ptrdiff_t(y - dstBmBounds.y1) * dstBmRowSize + x - dstBmBounds.x1] = 0;
                 }
+
                 continue;
             }
 
@@ -1895,18 +1939,18 @@ Image::halveRoIForDepth(const RectI & roi,
                 ///a b
                 ///c d
 
-                const PIX a = (pickThisCol && pickThisRow) ? *(srcPixStart + k) : 0;
-                const PIX b = (pickNextCol && pickThisRow) ? *(srcPixStart + k + _nbComponents) : 0;
-                const PIX c = (pickThisCol && pickNextRow) ? *(srcPixStart + k + srcRowSize) : 0;
-                const PIX d = (pickNextCol && pickNextRow) ? *(srcPixStart + k + srcRowSize  + _nbComponents)  : 0;
+                const PIX a = (pickThisCol && pickThisRow) ? srcPixels[srcOffset + k] : 0;
+                const PIX b = (pickNextCol && pickThisRow) ? srcPixels[srcOffset + k + _nbComponents] : 0;
+                const PIX c = (pickThisCol && pickNextRow) ? srcPixels[srcOffset + k + srcRowSize] : 0;
+                const PIX d = (pickNextCol && pickNextRow) ? srcPixels[srcOffset + k + srcRowSize + _nbComponents] : 0;
 #ifdef DEBUG_NAN
-                assert( !std::isnan(a) ); // check for NaN
-                assert( !std::isnan(b) ); // check for NaN
-                assert( !std::isnan(c) ); // check for NaN
-                assert( !std::isnan(d) ); // check for NaN
+                assert(!std::isnan(a));   // check for NaN
+                assert(!std::isnan(b));   // check for NaN
+                assert(!std::isnan(c));   // check for NaN
+                assert(!std::isnan(d));   // check for NaN
 #endif
-                assert( sumW == 2 || ( sumW == 1 && ( (a == 0 && c == 0) || (b == 0 && d == 0) ) ) );
-                assert( sumH == 2 || ( sumH == 1 && ( (a == 0 && b == 0) || (c == 0 && d == 0) ) ) );
+                assert(sumW == 2 || (sumW == 1 && ((a == 0 && c == 0) || (b == 0 && d == 0))));
+                assert(sumH == 2 || (sumH == 1 && ((a == 0 && b == 0) || (c == 0 && d == 0))));
                 dstPixStart[k] = (a + b + c + d) / sum;
             }
 
@@ -1914,11 +1958,14 @@ Image::halveRoIForDepth(const RectI & roi,
                 ///a b
                 ///c d
 
-                char a = (pickThisCol && pickThisRow) ? *(srcBmPixStart) : 0;
-                char b = (pickNextCol && pickThisRow) ? *(srcBmPixStart + 1) : 0;
-                char c = (pickThisCol && pickNextRow) ? *(srcBmPixStart + srcBmRowSize) : 0;
-                char d = (pickNextCol && pickNextRow) ? *(srcBmPixStart + srcBmRowSize  + 1)  : 0;
+                const ptrdiff_t srcBmOffset = (ptrdiff_t(srcy) - srcBmBounds.y1) * srcBmRowSize + srcx - srcBmBounds.x1;
+                char *const dstBmPixStart = dstBmPixels + ptrdiff_t(y - dstBmBounds.y1) * dstBmRowSize + x - dstBmBounds.x1;
+                char a = (pickThisCol && pickThisRow) ? srcBmPixels[srcBmOffset] : 0;
+                char b = (pickNextCol && pickThisRow) ? srcBmPixels[srcBmOffset + 1] : 0;
+                char c = (pickThisCol && pickNextRow) ? srcBmPixels[srcBmOffset + srcBmRowSize] : 0;
+                char d = (pickNextCol && pickNextRow) ? srcBmPixels[srcBmOffset + srcBmRowSize + 1] : 0;
 #if NATRON_ENABLE_TRIMAP
+
                 /*
                    The only correct solution is to convert pixels being rendered to 0 otherwise the caller
                    would have to wait for the original fullscale image render to be finished and then re-downscale again.
@@ -1926,18 +1973,22 @@ Image::halveRoIForDepth(const RectI & roi,
                 if (a == PIXEL_UNAVAILABLE) {
                     a = 0;
                 }
+
                 if (b == PIXEL_UNAVAILABLE) {
                     b = 0;
                 }
+
                 if (c == PIXEL_UNAVAILABLE) {
                     c = 0;
                 }
+
                 if (d == PIXEL_UNAVAILABLE) {
                     d = 0;
                 }
+
 #endif
-                assert( sumW == 2 || ( sumW == 1 && ( (a == 0 && c == 0) || (b == 0 && d == 0) ) ) );
-                assert( sumH == 2 || ( sumH == 1 && ( (a == 0 && b == 0) || (c == 0 && d == 0) ) ) );
+                assert(sumW == 2 || (sumW == 1 && ((a == 0 && c == 0) || (b == 0 && d == 0))));
+                assert(sumH == 2 || (sumH == 1 && ((a == 0 && b == 0) || (c == 0 && d == 0))));
                 assert(a + b + c + d <= sum); // bitmaps are 0 or 1
                 // the following is an integer division, the result can be 0 or 1
                 dstBmPixStart[0] = (a + b + c + d) / sum;
@@ -1953,113 +2004,30 @@ Image::halveRoI(const RectI & roi,
                 bool copyBitMap,
                 Image* output) const
 {
-    assert( _bounds.contains(roi) );
-    switch ( getBitDepth() ) {
+    assert(_bounds.contains(roi));
+
+    if (getStorageMode() == eStorageModeVulkan) {
+        halveVulkan(roi, copyBitMap, output);
+        return;
+    }
+
+    switch (getBitDepth()) {
     case eImageBitDepthByte:
         halveRoIForDepth<unsigned char, 255>(roi, copyBitMap,  output);
         break;
+
     case eImageBitDepthShort:
         halveRoIForDepth<unsigned short, 65535>(roi, copyBitMap, output);
         break;
+
     case eImageBitDepthHalf:
         assert(false);
         break;
+
     case eImageBitDepthFloat:
         halveRoIForDepth<float, 1>(roi, copyBitMap, output);
         break;
-    case eImageBitDepthNone:
-        break;
-    }
-}
 
-// code proofread and fixed by @devernay on 8/8/2014
-template <typename PIX, int maxValue>
-void
-Image::halve1DImageForDepth(const RectI & roi,
-                            Image* output) const
-{
-    int width = roi.width();
-    int height = roi.height();
-
-    assert(width == 1 || height == 1); /// must be 1D
-    assert( output->getComponents() == getComponents() );
-    assert( _bounds.contains(roi) );
-
-    /// Take the lock for both bitmaps since we're about to read/write from them!
-    QWriteLocker k1(&output->_entryLock);
-    QReadLocker k2(&_entryLock);
-    const RectI & srcBounds = _bounds;
-    const RectI & dstBounds = output->_bounds;
-//    assert(dstBounds.x1 * 2 == roi.x1 &&
-//           dstBounds.y1 * 2 == roi.y1 &&
-//           (
-//               dstBounds.x2 * 2 == roi.x2 || // we halve in only 1 dimension
-//               dstBounds.y2 * 2 == roi.y2)
-//           );
-    int halfWidth = width / 2;
-    int halfHeight = height / 2;
-    if (height == 1) { //1 row
-        assert(width != 1); /// widthxheight can't be 1x1
-
-        const PIX* src = (const PIX*)pixelAt(roi.x1, roi.y1);
-        PIX* dst = (PIX*)output->pixelAt(dstBounds.x1, dstBounds.y1);
-        assert(src && dst);
-        for (int x = 0; x < halfWidth; ++x) {
-            for (int k = 0; k < _nbComponents; ++k) {
-#ifdef DEBUG_NAN
-                assert( !std::isnan(*src) ); // check for NaN
-                assert( !std::isnan(*(src + _nbComponents)) ); // check for NaN
-#endif
-                *dst = PIX( (float)( *src + *(src + _nbComponents) ) / 2. );
-#ifdef DEBUG_NAN
-                assert( !std::isnan(*dst) ); // check for NaN
-#endif
-                ++dst;
-                ++src;
-            }
-            src += _nbComponents;
-        }
-    } else if (width == 1) {
-        int rowSize = srcBounds.width() * _nbComponents;
-        const PIX* src = (const PIX*)pixelAt(roi.x1, roi.y1);
-        PIX* dst = (PIX*)output->pixelAt(dstBounds.x1, dstBounds.y1);
-        assert(src && dst);
-        for (int y = 0; y < halfHeight; ++y) {
-            for (int k = 0; k < _nbComponents; ++k) {
-#ifdef DEBUG_NAN
-                assert( !std::isnan(*src) ); // check for NaN
-                assert( !std::isnan(*(src + rowSize)) ); // check for NaN
-#endif
-                *dst = PIX( (float)( *src + (*src + rowSize) ) / 2. );
-#ifdef DEBUG_NAN
-                assert( !std::isnan(*dst) ); // check for NaN
-#endif
-                ++dst;
-                ++src;
-            }
-            src += rowSize;
-        }
-    }
-}
-
-// code proofread and fixed by @devernay on 8/8/2014
-void
-Image::halve1DImage(const RectI & roi,
-                    Image* output) const
-{
-    switch ( getBitDepth() ) {
-    case eImageBitDepthByte:
-        halve1DImageForDepth<unsigned char, 255>(roi, output);
-        break;
-    case eImageBitDepthShort:
-        halve1DImageForDepth<unsigned short, 65535>(roi, output);
-        break;
-    case eImageBitDepthHalf:
-        assert(false);
-        break;
-    case eImageBitDepthFloat:
-        halve1DImageForDepth<float, 1>(roi, output);
-        break;
     case eImageBitDepthNone:
         break;
     }
@@ -2074,21 +2042,31 @@ Image::downscaleMipmap(const RectD& dstRod,
                        bool copyBitMap,
                        Image* output) const
 {
-    assert(getStorageMode() != eStorageModeGLTex);
+
 
     ///You should not call this function with a level equal to 0.
     assert(toLevel >  fromLevel);
 
     assert(_bounds.contains(roi));
+
+    if (getStorageMode() == eStorageModeVulkan) {
+        if (toLevel <= fromLevel || toLevel - fromLevel > 30 || !getBounds().contains(roi)) {
+            throw std::invalid_argument("Invalid native mipmap level or ROI.");
+        }
+
+        buildMipmapLevel(dstRod, roi, toLevel - fromLevel, copyBitMap, output);
+        return;
+    }
+
     double par = getPixelAspectRatio();
     unsigned int downscaleLvls = toLevel - fromLevel;
 
-    assert( !copyBitMap || _bitmap.getBitmap() );
+    assert(!copyBitMap || _bitmap.getBitmap());
 
     RectI dstRoI  = roi.downscalePowerOfTwoSmallestEnclosing(downscaleLvls);
-    ImagePtr tmpImg = std::make_shared<Image>( getComponents(), dstRod, dstRoI, toLevel, par, getBitDepth(), getPremultiplication(), getFieldingOrder(), true);
+    ImagePtr tmpImg = std::make_shared<Image>(getComponents(), dstRod, dstRoI, toLevel, par, getBitDepth(), getPremultiplication(), getFieldingOrder(), true);
 
-    buildMipmapLevel( dstRod, roi, downscaleLvls, copyBitMap, tmpImg.get() );
+    buildMipmapLevel(dstRod, roi, downscaleLvls, copyBitMap, tmpImg.get());
 
     // check that the downscaled mipmap is inside the output image (it may not be equal to it)
     assert(dstRoI.x1 >= output->_bounds.x1);
@@ -2103,31 +2081,25 @@ Image::downscaleMipmap(const RectD& dstRod,
 bool
 Image::checkForNaNsAndFix(const RectI& roi)
 {
+    Gpu::PerformanceTrace trace("image-nan-fix", uint64_t(roi.area()) * 16);
+
     if (getBitDepth() != eImageBitDepthFloat) {
         return false;
     }
-    if (getStorageMode() == eStorageModeGLTex) {
-        return false;
-    }
+
 
     QWriteLocker k(&_entryLock);
+
+    if (getStorageMode() == eStorageModeVulkan) {
+        return checkForNaNsVulkan(roi, true);
+    }
+
     unsigned int compsCount = getComponentsCount();
     bool hasnan = false;
-    for (int y = roi.y1; y < roi.y2; ++y) {
-        float* pix = (float*)pixelAt(roi.x1, y);
-        float* const end = pix +  compsCount * roi.width();
 
-        for (; pix < end; ++pix) {
-            // we remove NaNs, but infinity values should pose no problem
-            // (if they do, please explain here which ones)
-#ifdef DEBUG_NAN
-            assert( !std::isnan(*pix) ); // check for NaN
-#endif
-            if ( std::isnan(*pix) ) { // check for NaN (std::isnan(x) is not slower than x != x and works with -Ofast)
-                *pix = 1.;
-                hasnan = true;
-            }
-        }
+    for (int y = roi.y1; y < roi.y2; ++y) {
+        float *pix = (float*)pixelAt(roi.x1, y);
+        hasnan = checkFloatNaNs(pix, size_t(compsCount) * roi.width(), true) || hasnan;
     }
 
     return hasnan;
@@ -2139,30 +2111,24 @@ Image::checkForNaNsNoLock(const RectI& roi) const
     if (getBitDepth() != eImageBitDepthFloat) {
         return false;
     }
-    if (getStorageMode() == eStorageModeGLTex) {
-        return false;
-    }
+
 
     //QWriteLocker k(&_entryLock);
-    unsigned int compsCount = getComponentsCount();
-    bool hasnan = false;
-    for (int y = roi.y1; y < roi.y2; ++y) {
-        float* pix = (float*)pixelAt(roi.x1, y);
-        float* const end = pix +  compsCount * roi.width();
+    if (getStorageMode() == eStorageModeVulkan) {
+        return checkForNaNsVulkan(roi, false);
+    }
 
-        for (; pix < end; ++pix) {
-            // we remove NaNs, but infinity values should pose no problem
-            // (if they do, please explain here which ones)
-#ifdef DEBUG_NAN
-            assert( !std::isnan(*pix) ); // check for NaN
-#endif
-            if ( std::isnan(*pix) ) { // check for NaN (std::isnan(x) is not slower than x != x and works with -Ofast)
-                hasnan = true;
-            }
+    unsigned int compsCount = getComponentsCount();
+
+    for (int y = roi.y1; y < roi.y2; ++y) {
+        float *pix = (float*)pixelAt(roi.x1, y);
+
+        if (checkFloatNaNs(pix, size_t(compsCount) * roi.width(), false)) {
+            return true;
         }
     }
 
-    return hasnan;
+    return false;
 }
 
 // code proofread and fixed by @devernay on 8/8/2014
@@ -2173,78 +2139,36 @@ Image::upscaleMipmapForDepth(const RectI & roi,
                              unsigned int toLevel,
                              Image* output) const
 {
-    assert( getBitDepth() == output->getBitDepth() );
-    assert( (getBitDepth() == eImageBitDepthByte && sizeof(PIX) == 1) || (getBitDepth() == eImageBitDepthShort && sizeof(PIX) == 2) || (getBitDepth() == eImageBitDepthFloat && sizeof(PIX) == 4) );
-
-    ///You should not call this function with a level equal to 0.
+    assert(getBitDepth() == output->getBitDepth());
+    assert(getComponents() == output->getComponents());
     assert(fromLevel > toLevel);
+    QWriteLocker destinationLock(&output->_entryLock);
+    QReadLocker sourceLock(&_entryLock);
+    const RectI sourceRoi = roi.intersect(_bounds);
 
-    assert(roi.x1 <= _bounds.x1 && _bounds.x2 <= roi.x2 &&
-           roi.y1 <= _bounds.y1 && _bounds.y2 <= roi.y2);
-
-    const RectI & srcRoi = roi;
-    // The source rectangle, intersected to this image region of definition in pixels and the output bounds.
-    RectI dstRoi = roi.toNewMipmapLevel(fromLevel, toLevel, _par, getRoD());
-    dstRoi.clipIfOverlaps(output->_bounds); //output may be a bit smaller than the upscaled RoI
-    int scale = 1 << (fromLevel - toLevel);
-
-    assert( output->getComponents() == getComponents() );
-
-    if (_nbComponents == 0) {
+    if (sourceRoi.isNull() || !_nbComponents) {
         return;
     }
 
-    QWriteLocker k1(&output->_entryLock);
-    QReadLocker k2(&_entryLock);
-    int srcRowSize = _bounds.width() * _nbComponents;
-    int dstRowSize = output->_bounds.width() * _nbComponents;
-    const PIX *src = (const PIX*)pixelAt(srcRoi.x1, srcRoi.y1);
-    PIX* dst = (PIX*)output->pixelAt(dstRoi.x1, dstRoi.y1);
-    assert(src && dst);
+    const RectI target = sourceRoi.toNewMipmapLevel(fromLevel, toLevel, _par, getRoD()).intersect(output->_bounds);
+    const int64_t scale = int64_t(1) << (fromLevel - toLevel);
+    const auto sourceCoordinate = [scale](int value) {
+        return int(value >= 0 ? int64_t(value) / scale : (int64_t(value) - scale + 1) / scale);
+    };
 
-    // algorithm: fill the first line of output, and replicate it as many times as necessary
-    // works even if dstRoi is not exactly a multiple of srcRoi (first/last column/line may not be complete)
-    int yi = srcRoi.y1;
-    int ycount; // how many lines should be filled
-    for (int yo = dstRoi.y1; yo < dstRoi.y2; ++yi, src += srcRowSize, yo += ycount, dst += ycount * dstRowSize) {
-        const PIX * const srcLineStart = src;
-        PIX * const dstLineBatchStart = dst;
-        ycount = scale - (yo - yi * scale); // how many lines should be filled
-        ycount = std::min(ycount, dstRoi.y2 - yo);
-        assert(0 < ycount && ycount <= scale);
-        int xi = srcRoi.x1;
-        int xcount = 0; // how many pixels should be filled
-        const PIX * srcPix = srcLineStart;
-        PIX * dstPixFirst = dstLineBatchStart;
-        // fill the first line
-        for (int xo = dstRoi.x1; xo < dstRoi.x2; ++xi, srcPix += _nbComponents, xo += xcount, dstPixFirst += xcount * _nbComponents) {
-            xcount = scale - (xo - xi * scale);
-            xcount = std::min(xcount, dstRoi.x2 - xo);
-            //assert(0 < xcount && xcount <= scale);
-            // replicate srcPix as many times as necessary
-            PIX * dstPix = dstPixFirst;
-            //assert((srcPix-(PIX*)pixelAt(srcRoi.x1, srcRoi.y1)) % components == 0);
-            for (int i = 0; i < xcount; ++i, dstPix += _nbComponents) {
-                assert( ( dstPix - (PIX*)output->pixelAt(dstRoi.x1, dstRoi.y1) ) % _nbComponents == 0 );
-                assert(dstPix >= (PIX*)output->pixelAt(xo, yo) && dstPix < (PIX*)output->pixelAt(xo, yo) + xcount * _nbComponents);
-                for (int c = 0; c < _nbComponents; ++c) {
-#ifdef DEBUG_NAN
-                    assert( !std::isnan(srcPix[c]) ); // check for NaN
-#endif
-                    dstPix[c] = srcPix[c];
-                }
+    // Use the global grid and copy only the ROI. Row replication used to
+    // overwrite padding when the destination was wider than the requested ROI.
+    for (int y = target.y1; y < target.y2; ++y) for (int x = target.x1; x < target.x2; ++x) {
+            const int sx = sourceCoordinate(x), sy = sourceCoordinate(y);
+
+            if (sx < sourceRoi.x1 || sx >= sourceRoi.x2 || sy < sourceRoi.y1 || sy >= sourceRoi.y2) {
+                continue;
             }
-            //assert(dstPix == dstPixFirst + xcount*components);
+
+            const auto* input = reinterpret_cast<const PIX *>(pixelAt(sx, sy));
+            auto* destination = reinterpret_cast<PIX *>(output->pixelAt(x, y));
+            std::copy(input, input + _nbComponents, destination);
         }
-        assert(dstLineBatchStart == (PIX*)output->pixelAt(dstRoi.x1, yo));
-        PIX * dstLineStart = dstLineBatchStart + dstRowSize; // first line was filled already
-        // now replicate the line as many times as necessary
-        for (int i = 1; i < ycount; ++i, dstLineStart += dstRowSize) {
-            assert(dstLineStart == (PIX*)output->pixelAt(dstRoi.x1, yo+i));
-            assert(dstLineStart + dstRowSize == (PIX*)output->pixelAt(dstRoi.x2 - 1, yo+i) + _nbComponents);
-            std::copy(dstLineBatchStart, dstLineBatchStart + dstRowSize, dstLineStart);
-        }
-    }
 } // upscaleMipmapForDepth
 
 // code proofread and fixed by @devernay on 8/8/2014
@@ -2254,21 +2178,34 @@ Image::upscaleMipmap(const RectI & roi,
                      unsigned int toLevel,
                      Image* output) const
 {
-    assert(getStorageMode() != eStorageModeGLTex);
 
-    switch ( getBitDepth() ) {
+
+    if (getStorageMode() == eStorageModeVulkan || output->getStorageMode() == eStorageModeVulkan) {
+        if (fromLevel <= toLevel || fromLevel - toLevel > 30) {
+            throw std::invalid_argument("Invalid native upscale levels.");
+        }
+
+        upscaleVulkan(roi, fromLevel - toLevel, output);
+        return;
+    }
+
+    switch (getBitDepth()) {
     case eImageBitDepthByte:
         upscaleMipmapForDepth<unsigned char, 255>(roi, fromLevel, toLevel, output);
         break;
+
     case eImageBitDepthShort:
         upscaleMipmapForDepth<unsigned short, 65535>(roi, fromLevel, toLevel, output);
         break;
+
     case eImageBitDepthHalf:
         assert(false);
         break;
+
     case eImageBitDepthFloat:
         upscaleMipmapForDepth<float, 1>(roi, fromLevel, toLevel, output);
         break;
+
     case eImageBitDepthNone:
         break;
     }
@@ -2288,9 +2225,9 @@ Image::buildMipmapLevel(const RectD& dstRoD,
     RectI lastLevelRoI = roi.downscalePowerOfTwoSmallestEnclosing(level);
 
     ///The output image must contain the last level roi
-    assert( output->getBounds().contains(lastLevelRoI) );
+    assert(output->getBounds().contains(lastLevelRoI));
 
-    assert( output->getComponents() == getComponents() );
+    assert(output->getComponents() == getComponents());
 
     if (level == 0) {
         ///Just copy the roi and return
@@ -2300,42 +2237,45 @@ Image::buildMipmapLevel(const RectD& dstRoD,
     }
 
     const Image* srcImg = this;
-    Image* dstImg = NULL;
-    bool mustFreeSrc = false;
+    ImagePtr previousImage;
     RectI previousRoI = roi;
+
     ///Build all the mipmap levels until we reach the one we are interested in
     for (unsigned int i = 1; i <= level; ++i) {
         ///Halve the smallest enclosing po2 rect as we need to render a minimum of the renderWindow
         RectI halvedRoI = previousRoI.downscalePowerOfTwoSmallestEnclosing(1);
 
         ///Allocate an image with half the size of the source image
-        dstImg = new Image( getComponents(), dstRoD, halvedRoI, getMipmapLevel() + i, getPixelAspectRatio(), getBitDepth(), getPremultiplication(), getFieldingOrder(), true);
+        ImagePtr dstImg;
+
+        if (getStorageMode() == eStorageModeVulkan) {
+            auto params = makeParams(dstRoD, halvedRoI, getPixelAspectRatio(), getMipmapLevel() + i,
+                                     getParams()->isRodProjectFormat(), getComponents(), getBitDepth(),
+                                     getPremultiplication(), getFieldingOrder(), eStorageModeVulkan);
+            params->getStorageInfo().vulkanContext = getVulkanImage()->context();
+            dstImg = copyBitMap ? std::make_shared<Image>(getKey(), params, nullptr) : std::make_shared<Image>(getKey(), params);
+            dstImg->allocateMemory();
+        } else {
+            dstImg = std::make_shared<Image>(getComponents(), dstRoD, halvedRoI, getMipmapLevel() + i,
+                                             getPixelAspectRatio(), getBitDepth(), getPremultiplication(), getFieldingOrder(), true);
+        }
 
         ///Half the source image into dstImg.
         ///We pass the closestPo2 roi which might not be the entire size of the source image
         ///If the source image'sroi was originally a po2.
-        srcImg->halveRoI(previousRoI, copyBitMap, dstImg);
-
-        ///Clean-up, we should use shared_ptrs for safety
-        if (mustFreeSrc) {
-            delete srcImg;
-        }
+        srcImg->halveRoI(previousRoI, copyBitMap, dstImg.get());
 
         ///Switch for next pass
         previousRoI = halvedRoI;
-        srcImg = dstImg;
-        mustFreeSrc = true;
+        previousImage = std::move(dstImg);
+        srcImg = previousImage.get();
     }
 
     assert(srcImg->getBounds() == lastLevelRoI);
 
     ///Finally copy the last mipmap level into output.
-    output->pasteFrom( *srcImg, srcImg->getBounds(), copyBitMap);
+    output->pasteFrom(*srcImg, srcImg->getBounds(), copyBitMap);
 
-    ///Clean-up, we should use shared_ptrs for safety
-    if (mustFreeSrc) {
-        delete srcImg;
-    }
 } // buildMipmapLevel
 
 #ifndef M_LN2
@@ -2366,11 +2306,12 @@ Bitmap::copyRowPortion(int x1,
                        int y,
                        const Bitmap& other)
 {
-    const char* srcBitmap = other.getBitmapAt(x1, y);
-    char* dstBitmap = getBitmapAt(x1, y);
-    const char* end = dstBitmap + (x2 - x1);
+    const char *srcBitmap = other.getBitmapAt(x1, y);
+    char *dstBitmap = getBitmapAt(x1, y);
+    const char *end = dstBitmap + (x2 - x1);
 
     assert(srcBitmap && dstBitmap);
+
     while (dstBitmap < end) {
         *dstBitmap = /**srcBitmap == PIXEL_UNAVAILABLE ? 0 : */ *srcBitmap;
         ++dstBitmap;
@@ -2394,15 +2335,16 @@ Bitmap::copyBitmapPortion(const RectI& roi,
 
     int srcRowSize = other._bounds.width();
     int dstRowSize = _bounds.width();
-    const char* srcBitmap = other.getBitmapAt(roi.x1, roi.y1);
-    char* dstBitmap = getBitmapAt(roi.x1, roi.y1);
+    const char *srcBitmap = other.getBitmapAt(roi.x1, roi.y1);
+    char *dstBitmap = getBitmapAt(roi.x1, roi.y1);
 
     for (int y = roi.y1; y < roi.y2; ++y,
          srcBitmap += srcRowSize,
          dstBitmap += dstRowSize) {
-        const char* srcCur = srcBitmap;
-        const char* srcEnd = srcBitmap + roi.width();
-        char* dstCur = dstBitmap;
+        const char *srcCur = srcBitmap;
+        const char *srcEnd = srcBitmap + roi.width();
+        char *dstCur = dstBitmap;
+
         while (srcCur < srcEnd) {
             *dstCur = /**srcCur == PIXEL_UNAVAILABLE ? 0 : */ *srcCur;
             ++srcCur;
@@ -2422,24 +2364,28 @@ Image::premultInternal(const RectI& roi)
 
     int srcRowElements = 4 * _bounds.width();
     PIX* dstPix = (PIX*)acc.pixelAt(renderWindow.x1, renderWindow.y1);
-    for ( int y = renderWindow.y1; y < renderWindow.y2; ++y, dstPix += (srcRowElements - (renderWindow.x2 - renderWindow.x1) * 4) ) {
+
+    for (int y = renderWindow.y1; y < renderWindow.y2; ++y, dstPix += (srcRowElements - (renderWindow.x2 - renderWindow.x1) * 4)) {
         for (int x = renderWindow.x1; x < renderWindow.x2; ++x, dstPix += 4) {
 #ifdef DEBUG_NAN
-            assert( !std::isnan(dstPix[3]) ); // check for NaN
+            assert(!std::isnan(dstPix[3]));   // check for NaN
 #endif
+
             for (int c = 0; c < 3; ++c) {
 #ifdef DEBUG_NAN
-                assert( !std::isnan(dstPix[c]) ); // check for NaN
+                assert(!std::isnan(dstPix[c]));   // check for NaN
 #endif
+
                 if (doPremult) {
                     dstPix[c] = PIX(float(dstPix[c]) * dstPix[3]);
                 } else {
                     if (dstPix[3] != 0) {
-                        dstPix[c] = PIX( dstPix[c] / float(dstPix[3]) );
+                        dstPix[c] = PIX(dstPix[c] / float(dstPix[3]));
                     }
                 }
+
 #ifdef DEBUG_NAN
-                assert( !std::isnan(dstPix[c]) ); // check for NaN
+                assert(!std::isnan(dstPix[c]));   // check for NaN
 #endif
             }
         }
@@ -2453,17 +2399,22 @@ Image::premultForDepth(const RectI& roi)
     if (getComponentsCount() != 4) {
         return;
     }
+
     ImageBitDepthEnum depth = getBitDepth();
+
     switch (depth) {
     case eImageBitDepthByte:
         premultInternal<unsigned char, doPremult>(roi);
         break;
+
     case eImageBitDepthShort:
         premultInternal<unsigned short, doPremult>(roi);
         break;
+
     case eImageBitDepthFloat:
         premultInternal<float, doPremult>(roi);
         break;
+
     default:
         break;
     }
@@ -2472,14 +2423,14 @@ Image::premultForDepth(const RectI& roi)
 void
 Image::premultImage(const RectI& roi)
 {
-    assert(getStorageMode() != eStorageModeGLTex);
+
     premultForDepth<true>(roi);
 }
 
 void
 Image::unpremultImage(const RectI& roi)
 {
-    assert(getStorageMode() != eStorageModeGLTex);
+
     premultForDepth<false>(roi);
 }
 

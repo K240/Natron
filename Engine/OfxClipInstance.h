@@ -181,18 +181,9 @@ public:
     /// be 'appropriate' for the.
     /// If bounds is not null, fetch the indicated section of the canonical image plane.
     /// If view is -1, guess it (e.g. from the last renderargs)
-    virtual OFX::Host::ImageEffect::Image* getStereoscopicImage(OfxTime time, int view, const OfxRectD *optionalBounds) OVERRIDE FINAL WARN_UNUSED_RETURN;
-#     ifdef OFX_SUPPORTS_OPENGLRENDER
-    /// override this to fill in the OpenGL texture at the given time.
-    /// The bounds of the image on the image plane should be
-    /// 'appropriate', typically the value returned in getRegionsOfInterest
-    /// on the effect instance. Outside a render call, the optionalBounds should
-    /// be 'appropriate' for the.
-    /// If bounds is not null, fetch the indicated section of the canonical image plane.
-    virtual OFX::Host::ImageEffect::Texture* loadTexture(OfxTime time, const char *format, const OfxRectD *optionalBounds) OVERRIDE FINAL;
-#     endif
+    virtual OFX::Host::ImageEffect::Image *getStereoscopicImage(OfxTime time, int view, const OfxRectD *optionalBounds) OVERRIDE FINAL WARN_UNUSED_RETURN;
 
-    virtual OFX::Host::ImageEffect::Image* getImagePlane(OfxTime time, int view, const std::string& plane, const OfxRectD *optionalBounds) OVERRIDE FINAL WARN_UNUSED_RETURN;
+    virtual OFX::Host::ImageEffect::Image *getImagePlane(OfxTime time, int view, const std::string& plane, const OfxRectD *optionalBounds) OVERRIDE FINAL WARN_UNUSED_RETURN;
 
     /// override this to return the rod on the clip for the given view
     virtual OfxRectD getRegionOfDefinition(OfxTime time, int view) const OVERRIDE FINAL WARN_UNUSED_RETURN;
@@ -308,9 +299,9 @@ private:
     void getRegionOfDefinitionInternal(OfxTime time, ViewIdx view, unsigned int mipmapLevel, EffectInstance* associatedNode,
                                        OfxRectD* rod) const;
 
-    bool getInputImageInternal(const OfxTime time, const ViewSpec view, const OfxRectD *optionalBounds, const std::string* ofxPlane, const ImageBitDepthEnum* textureDepth, OFX::Host::ImageEffect::Image** image, OFX::Host::ImageEffect::Texture** texture);
-    bool getOutputImageInternal(const std::string* ofxPlane, const ImageBitDepthEnum* textureDepth, OFX::Host::ImageEffect::Image** image, OFX::Host::ImageEffect::Texture** texture);
-    bool getImagePlaneInternal(OfxTime time, ViewSpec view, const OfxRectD *optionalBounds, const std::string* ofxPlane, const ImageBitDepthEnum* textureDepth, OFX::Host::ImageEffect::Image** image, OFX::Host::ImageEffect::Texture** texture);
+    bool getInputImageInternal(const OfxTime time, const ViewSpec view, const OfxRectD *optionalBounds, const std::string* ofxPlane, OFX::Host::ImageEffect::Image** image);
+    bool getOutputImageInternal(const std::string* ofxPlane, OFX::Host::ImageEffect::Image** image);
+    bool getImagePlaneInternal(OfxTime time, ViewSpec view, const OfxRectD *optionalBounds, const std::string* ofxPlane, OFX::Host::ImageEffect::Image** image);
 
 private:
     friend struct OfxClipInstancePrivate;
@@ -360,24 +351,6 @@ public:
     }
 };
 
-class OfxTexture
-    : public OFX::Host::ImageEffect::Texture
-      , public OfxImageCommon
-{
-public:
-    explicit OfxTexture( const OfxClipInstance::RenderActionDataPtr& renderData,
-                         const NATRON_NAMESPACE::ImagePtr& internalImage,
-                         bool isSrcImage,
-                         const RectI& renderWindow,
-                         const Transform::Matrix3x3Ptr& mat,
-                         const std::string& components,
-                         int nComps,
-                        double par)
-        : OFX::Host::ImageEffect::Texture()
-        , OfxImageCommon(this, renderData, internalImage, isSrcImage, renderWindow, mat, components, nComps, par)
-    {
-    }
-};
 
 NATRON_NAMESPACE_EXIT
 

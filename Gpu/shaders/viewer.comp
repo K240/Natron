@@ -1,0 +1,121 @@
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(binding = 0) uniform sampler2D sourceA;
+layout(binding = 1) uniform sampler2D sourceB;
+layout(rgba32f, binding = 2) uniform image2D destination;
+struct Input {
+    vec4 bounds;
+    vec4 clip;
+    vec4 format;
+    vec4 correction; // gain, offset, gamma, reserved
+    vec4 pixelGrid; // canonical pixel size X/Y, integer image origin X/Y
+    ivec4 metadata;  // premult, visible, LUT, transform/filter flags
+};
+layout(std140, binding = 3) uniform Scene {
+    Input inputs[2];
+    vec4 viewport;
+    vec4 background;
+    vec4 checkerA;
+    vec4 checkerB;
+    vec4 wipe;
+    ivec4 options; // operator, checker enabled, checker size, preserve destination
+} scene;
+bool inside(vec2 point, vec4 rect) {
+    return all(greaterThanEqual(point, rect.xy)) && all(lessThan(point, rect.zw));
+}
+vec4 sampleTexel(sampler2D source, ivec2 at, bool blackBorder) {
+    ivec2 extent = textureSize(source, 0);
+    if (blackBorder && (any(lessThan(at, ivec2(0))) || any(greaterThanEqual(at, extent)))) return vec4(0);
+    return texelFetch(source, clamp(at, ivec2(0), extent - 1), 0);
+}
+vec4 sampleImage(sampler2D source, vec2 pixelLocation, vec2 origin, bool linearFilter, bool blackBorder) {
+    ivec2 extent = textureSize(source, 0);
+    if (!linearFilter) {
+        return sampleTexel(source, ivec2(floor(pixelLocation)) - ivec2(origin), blackBorder);
+    }
+    // Compute weights on the global pixel grid, before subtracting the texture
+    // origin. Padded tiles and small snapshots must have identical weights.
+    vec2 location = pixelLocation - vec2(0.5);
+    ivec2 base = ivec2(floor(location)) - ivec2(origin);
+    vec2 f = fract(location);
+    vec4 p00 = sampleTexel(source, base, blackBorder);
+    vec4 p10 = sampleTexel(source, base + ivec2(1, 0), blackBorder);
+    vec4 p01 = sampleTexel(source, base + ivec2(0, 1), blackBorder);
+    vec4 p11 = sampleTexel(source, base + ivec2(1, 1), blackBorder);
+    return mix(mix(p00, p10, f.x), mix(p01, p11, f.x), f.y);
+}
+float displayChannel(float c, int lut, float gamma) {
+    if (lut == 0) {
+        c = c <= 0.0031308 ? 12.92 * c : 1.055 * pow(c, 1.0 / 2.4) - 0.055;
+    } else if (lut == 2) {
+        c = c < 0.018 ? 4.5 * c : 1.099 * pow(c, 0.45) - 0.099;
+    } else if (lut == 3) {
+        c = pow(max(c, 0), 1.0 / 2.4);
+    }
+    if (gamma <= 0) { return c >= 1 ? 1 : 0; }
+    if (gamma == 1) { return c; }
+    return pow(max(c, 0), 1.0 / gamma);
+}
+vec4 inputColor(sampler2D source, Input data, vec2 point) {
+    vec2 uv = (point - data.bounds.xy) / (data.bounds.zw - data.bounds.xy);
+    bool linearFilter = (data.metadata.w & 2) != 0;
+    vec2 location = uv * textureSize(source, 0);
+    vec2 origin = vec2(0);
+    if (data.pixelGrid.x > 0) {
+        location = point / data.pixelGrid.xy;
+        origin = data.pixelGrid.zw;
+    }
+    if ((data.metadata.w & 4) != 0) { location.y = textureSize(source, 0).y + 2 * origin.y - location.y; }
+    vec4 color = sampleImage(source, location, origin, linearFilter, data.pixelGrid.x > 0);
+    if (any(isnan(color)) || any(isinf(color))) { return vec4(1, 0, 1, 1); }
+    if ((data.metadata.w & 1) != 0) {
+        color.rgb = color.rgb * data.correction.x + data.correction.y;
+        for (int c = 0; c < 3; ++c) {
+            color[c] = displayChannel(color[c], data.metadata.z, data.correction.z);
+        }
+    }
+    if (any(isnan(color)) || any(isinf(color))) { return vec4(1, 0, 1, 1); }
+    return color;
+}
+vec4 over(vec4 color, vec4 base, int premult) {
+    if (premult == 0) { return color; }
+    return (premult == 1 ? color : color * color.a) + base * (1 - color.a);
+}
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 extent = imageSize(destination);
+    if (any(greaterThanEqual(pixel, extent))) { return; }
+    vec2 fraction = (vec2(pixel) + vec2(0.5)) / vec2(extent);
+    vec2 point = vec2(mix(scene.viewport.x, scene.viewport.z, fraction.x),
+                      mix(scene.viewport.w, scene.viewport.y, fraction.y));
+    Input a = scene.inputs[0], b = scene.inputs[1];
+    bool validA = a.metadata.y != 0 && inside(point, a.bounds) && inside(point, a.clip);
+    bool validB = b.metadata.y != 0 && inside(point, b.bounds) && inside(point, b.clip);
+    vec4 ca = validA ? inputColor(sourceA, a, point) : vec4(0);
+    vec4 cb = validB ? inputColor(sourceB, b, point) : vec4(0);
+    int op = scene.options.x;
+    bool stack = op >= 5;
+    bool right = dot(point - scene.wipe.xy, vec2(cos(scene.wipe.z), sin(scene.wipe.z))) >= 0;
+    bool compare = op != 0 && (stack || right);
+    bool preserve = scene.options.w != 0;
+    vec4 base = preserve ? imageLoad(destination, pixel) : scene.background;
+    if (scene.options.y != 0 && a.metadata.y != 0 && inside(point, a.format) && !compare) {
+        int tile = scene.options.z;
+        base = ((pixel.x / tile + pixel.y / tile) & 1) != 0 ? scene.checkerB : scene.checkerA;
+    }
+    if (!compare) {
+        if (validA) { base = over(ca, base, (scene.options.y != 0 || preserve) ? a.metadata.x : 0); }
+    } else {
+        int operation = stack ? op - 4 : op;
+        float amount = scene.wipe.w;
+        if (operation == 2 && validB) { base = cb * amount + base * (1 - amount); }
+        if (validA) { base = over(ca, base, a.metadata.x); }
+        if (validB) {
+            if (operation == 1) { base = cb * amount + base * (1 - amount); }
+            else if (operation == 3) { base -= cb * amount; }
+            else if (operation == 4) { base += cb * amount; }
+        }
+    }
+    if (any(isnan(base)) || any(isinf(base))) { base = vec4(1, 0, 1, 1); }
+    imageStore(destination, pixel, base);
+}

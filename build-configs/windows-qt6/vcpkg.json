@@ -1,0 +1,18 @@
+{
+  "name": "natron-windows-dependencies",
+  "version-string": "2.6.0",
+  "builtin-baseline": "44819aa2a6c10e56065e2b0330e7d6c89d1d2574",
+  "dependencies": [
+    "boost-accumulators",
+    "boost-bimap",
+    "boost-crc",
+    "boost-foreach",
+    "boost-graph",
+    "boost-math",
+    "boost-predef",
+    "boost-serialization",
+    "cairo",
+    "pkgconf",
+    { "name": "usd", "default-features": false }
+  ]
+}

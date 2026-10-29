@@ -33,7 +33,7 @@ CLANG_DIAG_OFF(uninitialized)
 #include <QScrollBar>
 #include <QTextBlock>
 #include <QPainter>
-#include <QRegExp>
+#include <QRegularExpression>
 #include <QMimeData>
 CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)
@@ -58,13 +58,13 @@ struct PyHighLightRule
                     const QTextCharFormat &matchingFormat)
     {
         originalRuleStr = patternStr;
-        pattern = QRegExp(patternStr);
+        pattern = QRegularExpression(patternStr, QRegularExpression::UseUnicodePropertiesOption);
         nth = n;
         format = matchingFormat;
     }
 
     QString originalRuleStr;
-    QRegExp pattern;
+    QRegularExpression pattern;
     int nth;
     QTextCharFormat format;
 };
@@ -77,8 +77,8 @@ struct PySyntaxHighlighterPrivate
     QStringList braces;
     QHash<QString, QTextCharFormat> basicStyles;
     QList<PyHighLightRule> rules;
-    QRegExp triSingleQuote;
-    QRegExp triDoubleQuote;
+    QString triSingleQuote;
+    QString triDoubleQuote;
 
     PySyntaxHighlighterPrivate(PySyntaxHighlighter* publicInterface)
         : publicInterface(publicInterface)
@@ -90,10 +90,10 @@ struct PySyntaxHighlighterPrivate
         , triSingleQuote()
         , triDoubleQuote()
     {
-        keywords = QStringList() << QString::fromUtf8("and") << QString::fromUtf8("assert") << QString::fromUtf8("break") << QString::fromUtf8("class") << QString::fromUtf8("continue") << QString::fromUtf8("def") <<
-                   QString::fromUtf8("del") << QString::fromUtf8("elif") << QString::fromUtf8("else") << QString::fromUtf8("except") << QString::fromUtf8("exec") << QString::fromUtf8("finally") <<
+        keywords = QStringList() << QString::fromUtf8("and") << QString::fromUtf8("assert") << QString::fromUtf8("async") << QString::fromUtf8("await") << QString::fromUtf8("break") << QString::fromUtf8("class") << QString::fromUtf8("continue") << QString::fromUtf8("def") <<
+                   QString::fromUtf8("del") << QString::fromUtf8("elif") << QString::fromUtf8("else") << QString::fromUtf8("except") << QString::fromUtf8("finally") <<
                    QString::fromUtf8("for") << QString::fromUtf8("from") << QString::fromUtf8("global") << QString::fromUtf8("if") << QString::fromUtf8("import") << QString::fromUtf8("in") <<
-                   QString::fromUtf8("is") << QString::fromUtf8("lambda") << QString::fromUtf8("not") << QString::fromUtf8("or") << QString::fromUtf8("pass") << QString::fromUtf8("print") <<
+                   QString::fromUtf8("is") << QString::fromUtf8("lambda") << QString::fromUtf8("nonlocal") << QString::fromUtf8("not") << QString::fromUtf8("or") << QString::fromUtf8("pass") <<
                    QString::fromUtf8("raise") << QString::fromUtf8("return") << QString::fromUtf8("try") << QString::fromUtf8("while") << QString::fromUtf8("yield") <<
                    QString::fromUtf8("None") << QString::fromUtf8("True") << QString::fromUtf8("False");
 
@@ -109,8 +109,8 @@ struct PySyntaxHighlighterPrivate
 
         braces = QStringList() << QString::fromUtf8("\\{") << QString::fromUtf8("\\}") << QString::fromUtf8("\\(") << QString::fromUtf8("\\)") << QString::fromUtf8("\\[") << QString::fromUtf8("\\]");
 
-        triSingleQuote.setPattern( QString::fromUtf8("'''") );
-        triDoubleQuote.setPattern( QString::fromUtf8("\"\"\"") );
+        triSingleQuote = QString::fromUtf8("'''");
+        triDoubleQuote = QString::fromUtf8("\"\"\"");
 
         reload();
     }
@@ -125,13 +125,14 @@ void
 PySyntaxHighlighter::highlightBlock(const QString &text)
 {
     for (QList<PyHighLightRule>::Iterator it = _imp->rules.begin(); it != _imp->rules.end(); ++it) {
-        int idx = it->pattern.indexIn(text, 0);
-        while (idx >= 0) {
-            // Get index of Nth match
-            idx = it->pattern.pos(it->nth);
-            int length = it->pattern.cap(it->nth).length();
-            setFormat(idx, length, it->format);
-            idx = it->pattern.indexIn(text, idx + length);
+        auto matches = it->pattern.globalMatch(text);
+        while (matches.hasNext()) {
+            const auto match = matches.next();
+            const auto idx = match.capturedStart(it->nth);
+            const auto length = match.capturedLength(it->nth);
+            if (idx >= 0 && length > 0) {
+                setFormat(idx, length, it->format);
+            }
         }
     }
 
@@ -186,49 +187,27 @@ PySyntaxHighlighterPrivate::initializeRules()
 
 bool
 PySyntaxHighlighter::matchMultiline(const QString &text,
-                                    const QRegExp &delimiter,
+                                    const QString &delimiter,
                                     const int inState,
                                     const QTextCharFormat &style)
 {
-    int start = -1;
-    int add = -1;
-    int end = -1;
-    int length = 0;
-
-    // If inside triple-single quotes, start at 0
-    // Otherwise, look for the delimiter on this line
-    if (previousBlockState() == inState) {
-        start = 0;
-        add = 0;
-    } else {
-        start = delimiter.indexIn(text);
-        // Move past this match
-        add = delimiter.matchedLength();
-    }
-
-    // As long as there's a delimiter match on this line...
+    const int delimiterLength = delimiter.size();
+    int start = previousBlockState() == inState ? 0 : text.indexOf(delimiter);
+    int searchOffset = previousBlockState() == inState ? 0 : delimiterLength;
     while (start >= 0) {
-        // Look for the ending delimiter
-        end = delimiter.indexIn(text, start + add);
-        // Ending delimiter on this line?
-        if (end >= add) {
-            length = end - start + add + delimiter.matchedLength();
-            setCurrentBlockState(0);
-        } else {
-            // No= multi-line string
+        const int end = text.indexOf(delimiter, start + searchOffset);
+        if (end < 0) {
+            setFormat(start, text.size() - start, style);
             setCurrentBlockState(inState);
-            length = text.length() - start + add;
+            return true;
         }
-        // Apply formatting and look for next
+        const int length = end - start + delimiterLength;
         setFormat(start, length, style);
-        start = delimiter.indexIn(text, start + length);
+        setCurrentBlockState(0);
+        start = text.indexOf(delimiter, start + length);
+        searchOffset = delimiterLength;
     }
-    // Return True if still inside a multi-line string, False otherwise
-    if (currentBlockState() == inState) {
-        return true;
-    } else {
-        return false;
-    }
+    return false;
 }
 
 const QTextCharFormat

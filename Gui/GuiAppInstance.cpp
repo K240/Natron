@@ -29,9 +29,10 @@
 #include <sstream> // stringstream
 
 #include <QDir>
-#include <QSettings>
+#include "Global/AppSettings.h"
 #include <QMutex>
 #include <QCoreApplication>
+#include <QPointer>
 
 #include "Engine/CLArgs.h"
 #include "Engine/Project.h"
@@ -115,7 +116,7 @@ struct KnobDnDData
 
 struct GuiAppInstancePrivate
 {
-    Gui* _gui; //< ptr to the Gui interface
+    QPointer<Gui> _gui; //< cleared when Qt destroys a closed window
     bool _isClosing;
 
     //////////////
@@ -217,20 +218,28 @@ GuiAppInstance::aboutToQuit()
 #ifdef DEBUG
     qDebug() << "GuiAppInstance::aboutToQuit()" << (void*)(this);
 #endif
+    if (_imp->_isClosing) {
+        return;
+    }
+    _imp->_isClosing = true;
     deletePreviewProvider();
 
-    if (_imp->_gui) {
+    const QPointer<Gui> gui = _imp->_gui;
+    if (gui) {
         ///don't show dialogs when about to close, otherwise we could enter in a deadlock situation
         _imp->_gui->setGuiAboutToClose(true);
 
         _imp->_gui->notifyGuiClosing();
 
-        AppInstance::aboutToQuit();
+    }
+    // A Qt close event can delete the window before pending render shutdown
+    // completes. The project still needs cleanup when its GUI is gone.
+    AppInstance::aboutToQuit();
 
-        _imp->_isClosing = true;
-        _imp->_gui->hide();
-        _imp->_gui->close();
-        _imp->_gui->deleteLater();
+    if (gui) {
+        gui->hide();
+        gui->close();
+        gui->deleteLater();
 
         // Make sure all events are processed
         qApp->processEvents();
@@ -302,7 +311,7 @@ GuiAppInstance::loadInternal(const CLArgs& cl,
     QObject::connect( getProject().get(), SIGNAL(formatChanged(Format)), this, SLOT(projectFormatChanged(Format)) );
 
     {
-        QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+        AppSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
         if ( !settings.contains( QString::fromUtf8("checkForUpdates") ) ) {
             StandardButtonEnum reply = Dialogs::questionDialog(tr("Updates").toStdString(),
                                                                tr("Do you want %1 to check for updates "
@@ -332,11 +341,6 @@ GuiAppInstance::loadInternal(const CLArgs& cl,
 
 
     if (getAppID() == 0) {
-        QString missingOpenGLError;
-        if ( !appPTR->hasOpenGLForRequirements(eOpenGLRequirementsTypeViewer, &missingOpenGLError) ) {
-            throw std::runtime_error( missingOpenGLError.toStdString() );
-        }
-
         appPTR->getCurrentSettings()->doOCIOStartupCheckIfNeeded();
 
         if ( !appPTR->isShorcutVersionUpToDate() ) {

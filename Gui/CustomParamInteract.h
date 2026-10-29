@@ -28,10 +28,9 @@
 
 #include "Global/Macros.h"
 
-#include "Global/GLIncludes.h" //!<must be included before QGlWidget because of gl.h and glew.h
 #include "Global/GlobalDefines.h"
 
-#include <QOpenGLWidget>
+#include <QWidget>
 
 #include "Engine/OverlaySupport.h"
 
@@ -41,15 +40,21 @@ NATRON_NAMESPACE_ENTER
 
 struct CustomParamInteractPrivate;
 class CustomParamInteract
-    : public QOpenGLWidget, public OverlaySupport
+    : public QWidget, public OverlaySupport
 {
 public:
     CustomParamInteract(const KnobGuiPtr& knob,
-                        void* ofxParamHandle,
+                        void *ofxParamHandle,
                         const OfxParamOverlayInteractPtr & entryPoint,
                         QWidget* parent = 0);
 
     virtual ~CustomParamInteract();
+
+    virtual bool supportsOverlayDrawList() const OVERRIDE FINAL
+    {
+        return true;
+    }
+    virtual OverlayDrawList *overlayDrawList() OVERRIDE FINAL;
 
     /**
      * @brief Swap the OpenGL buffers.
@@ -69,7 +74,7 @@ public:
     /**
      * @brief Returns the pixel scale of the viewport.
      **/
-    virtual void getPixelScale(double & xScale, double & yScale) const OVERRIDE FINAL;
+    virtual void getPixelScale(double &xScale, double &yScale) const OVERRIDE FINAL;
 
 #ifdef OFX_EXTENSIONS_NATRON
     virtual double getScreenPixelRatio() const OVERRIDE FINAL;
@@ -82,15 +87,15 @@ public:
     virtual void restoreOpenGLContext() OVERRIDE FINAL;
 
     virtual RectD getViewportRect() const OVERRIDE FINAL WARN_UNUSED_RETURN;
-    virtual void getCursorPosition(double& x, double& y) const OVERRIDE FINAL;
+    virtual void getCursorPosition(double &x, double &y) const OVERRIDE FINAL;
 
     /**
-     * @brief Converts the given (x,y) coordinates which are in OpenGL canonical coordinates to widget coordinates.
+     * @brief Converts bottom-left logical pixel coordinates to widget coordinates.
      **/
     virtual void toWidgetCoordinates(double *x, double *y) const OVERRIDE FINAL;
 
     /**
-     * @brief Converts the given (x,y) coordinates which are in widget coordinates to OpenGL canonical coordinates
+     * @brief Converts widget coordinates to bottom-left logical pixel coordinates.
      **/
     virtual void toCanonicalCoordinates(double *x, double *y) const OVERRIDE FINAL;
 
@@ -106,9 +111,12 @@ public:
 
 private:
 
-    virtual void paintGL() OVERRIDE FINAL;
-    virtual void initializeGL() OVERRIDE FINAL;
-    virtual void resizeGL(int w, int h) OVERRIDE FINAL;
+    bool canDispatchInteract() const;
+    void flushFocusNotifications();
+    void dispatchPen(QMouseEvent* e, int action);
+    void dispatchKey(QKeyEvent* e, bool release);
+    virtual void paintEvent(QPaintEvent* e) OVERRIDE FINAL;
+    virtual void resizeEvent(QResizeEvent* e) OVERRIDE FINAL;
     virtual QSize sizeHint() const OVERRIDE FINAL;
     virtual void mousePressEvent(QMouseEvent* e) OVERRIDE FINAL;
     virtual void mouseMoveEvent(QMouseEvent* e) OVERRIDE FINAL;

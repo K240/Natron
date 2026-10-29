@@ -168,7 +168,8 @@ KnobGui::getLastUndoCommand() const
 void
 KnobGui::pushUndoCommand(QUndoCommand* cmd)
 {
-    if ( getKnob()->getCanUndo() && getKnob()->getEvaluateOnChange() ) {
+    // Evaluation controls image renders; it does not control edit history.
+    if ( getKnob()->getCanUndo() ) {
         _imp->container->pushUndoCommand(cmd);
     } else {
         cmd->redo();

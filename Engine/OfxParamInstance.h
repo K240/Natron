@@ -39,6 +39,7 @@ CLANG_DIAG_ON(deprecated)
 
 
 #include "Global/GlobalDefines.h"
+#include "Global/OpenFX/ParamInteractDrawSuite.h"
 
 //ofx
 #include <ofxInteract.h>
@@ -104,8 +105,15 @@ public:
     virtual OfxPluginEntryPoint* getCustomOverlayInteractEntryPoint(const OFX::Host::Param::Instance* param) const
     {
         GCC_DIAG_PEDANTIC_OFF
-        return (OfxPluginEntryPoint*)param->getProperties().getPointerProperty(kOfxParamPropInteractV1);
+        return (OfxPluginEntryPoint*)param->getProperties().getPointerProperty(kNatronOfxParamPropInteractDrawSuiteV1);
         GCC_DIAG_PEDANTIC_ON
+    }
+
+    bool usesDrawSuiteCustomInteract(const OFX::Host::Param::Instance* param) const
+    {
+        const char* property = param->getType() == kOfxParamTypeParametric ?
+                               kNatronOfxParamPropParametricInteractBackgroundDrawSuiteV1 : kNatronOfxParamPropInteractDrawSuiteV1;
+        return param->getProperties().getPointerProperty(property) != nullptr;
     }
 
     virtual KnobIPtr getKnob() const = 0;

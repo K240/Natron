@@ -35,7 +35,7 @@
 #include <QMutex>
 #include <QCoreApplication>
 #include <QAction>
-#include <QSettings>
+#include "Global/AppSettings.h"
 #include <QDebug>
 #include <QThread>
 #include <QCheckBox>
@@ -94,6 +94,7 @@ GCC_DIAG_UNUSED_PRIVATE_FIELD_ON
 #include "Gui/GuiAppInstance.h"
 #include "Gui/GuiApplicationManager.h"
 #include "Gui/Histogram.h"
+#include "Gui/StageOutline.h"
 #include "Gui/Menu.h"
 #include "Gui/MessageBox.h"
 #include "Gui/MultiInstancePanel.h"
@@ -199,6 +200,7 @@ GuiPrivate::GuiPrivate(const GuiAppInstancePtr& app,
     , _groups()
     , _curveEditor(0)
     , _progressPanel(0)
+    , _stageOutline(0)
     , _dopeSheetEditor(0)
     , _toolBox(0)
     , _propertiesBin(0)
@@ -266,6 +268,8 @@ GuiPrivate::refreshLeftToolBarVisibility(const QPoint & p)
 void
 GuiPrivate::notifyGuiClosing()
 {
+    // The singleton may be closed or hidden outside any pane.
+    if (_stageOutline) _stageOutline->notifyGuiClosingPublic();
     ///This is to workaround an issue that when destroying a widget it calls the focusOut() handler hence can
     ///cause bad pointer dereference to the Gui object since we're destroying it.
     std::list<TabWidget*> tabs;
@@ -436,6 +440,16 @@ GuiPrivate::createProgressPanelGui()
     _progressPanel->setLabel( tr("Progress").toStdString() );
     _progressPanel->setVisible(false);
     _gui->registerTab(_progressPanel, _progressPanel);
+}
+
+void
+GuiPrivate::createStageOutlineGui()
+{
+    _stageOutline = new StageOutline(_gui);
+    _stageOutline->setScriptName("stageOutline");
+    _stageOutline->setLabel(tr("Stage Outline").toStdString());
+    _stageOutline->hide();
+    _gui->registerTab(_stageOutline, _stageOutline);
 }
 
 TabWidget*
@@ -619,7 +633,7 @@ GuiPrivate::checkProjectLockAndWarn(const QString& projectPath,
 void
 GuiPrivate::restoreGuiGeometry()
 {
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+    AppSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
 
     settings.beginGroup( QString::fromUtf8("MainWindow") );
 
@@ -700,7 +714,7 @@ GuiPrivate::restoreGuiGeometry()
 void
 GuiPrivate::saveGuiGeometry()
 {
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+    AppSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
 
     settings.beginGroup( QString::fromUtf8("MainWindow") );
     settings.setValue( QString::fromUtf8("pos"), _gui->pos() );

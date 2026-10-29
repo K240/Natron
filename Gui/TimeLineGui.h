@@ -32,14 +32,13 @@
 
 CLANG_DIAG_OFF(deprecated)
 CLANG_DIAG_OFF(uninitialized)
-#include "Global/GLIncludes.h" //!<must be included before QGlWidget because of gl.h and glew.h
 #include <QList>
 #include <QPointF>
 #include <QSize>
 CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)
 
-#include <QOpenGLWidget>
+#include <QWidget>
 
 #include "Global/GlobalDefines.h"
 #include "Global/QtCompat.h"
@@ -51,11 +50,11 @@ NATRON_NAMESPACE_ENTER
 struct TimelineGuiPrivate;
 
 class TimeLineGui
-    : public QOpenGLWidget
+    : public QWidget
 {
-GCC_DIAG_SUGGEST_OVERRIDE_OFF
+    GCC_DIAG_SUGGEST_OVERRIDE_OFF
     Q_OBJECT
-GCC_DIAG_SUGGEST_OVERRIDE_ON
+    GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
     explicit TimeLineGui(ViewerInstance* viewer,
@@ -160,9 +159,7 @@ private:
 
     void setBoundariesInternal(SequenceTime first, SequenceTime last, bool emitSignal);
 
-    virtual void initializeGL() OVERRIDE FINAL;
-    virtual void resizeGL(int width, int height) OVERRIDE FINAL;
-    virtual void paintGL() OVERRIDE FINAL;
+    virtual void paintEvent(QPaintEvent* event) OVERRIDE FINAL;
     virtual void mousePressEvent(QMouseEvent* e) OVERRIDE FINAL;
     virtual void mouseMoveEvent(QMouseEvent* e) OVERRIDE FINAL;
     virtual void mouseReleaseEvent(QMouseEvent* e) OVERRIDE FINAL;

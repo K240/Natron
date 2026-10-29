@@ -35,5 +35,8 @@ introduced where needed.
     subsystems
     contributing
     qt6-migration
+    vulkan-migration
+    3d-compositing
+    3d-design
     todo
     issue-triage

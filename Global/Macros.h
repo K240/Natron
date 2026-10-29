@@ -17,7 +17,7 @@
  * along with Natron.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>
  * ***** END LICENSE BLOCK ***** */
 //
-//  Created by Frédéric Devernay on 03/09/13.
+//  Created by FrÃ©dÃ©ric Devernay on 03/09/13.
 //
 //
 
@@ -186,11 +186,11 @@ namespace Python { }
 #elif defined(NATRON_CONFIG_STABLE)
 #define NATRON_DEVELOPMENT_STATUS NATRON_DEVELOPMENT_RELEASE_STABLE
 #else
-//Fallback on "Devel" builds (most likely built from command line without passing to qmake the appropriate defines)
+//Fallback on "Devel" builds (most likely built from command line without passing to CMake the appropriate defines)
 #define NATRON_DEVELOPMENT_STATUS NATRON_DEVELOPMENT_DEVEL
 #endif
 
-///For example RC 1, RC 2 etc... This is to be defined from within the qmake call, passing BUILD_NUMBER=X to the command line
+///For example RC 1, RC 2 etc... This is to be defined from within the build configuration, passing BUILD_NUMBER=X to the command line
 //#define NATRON_BUILD_NUMBER 0
 
 
@@ -223,7 +223,7 @@ namespace Python { }
 #define NATRON_NATRON_TO_BREAKPAD_EXISTENCE_CHECK_ACK "-eack"
 
 ///If set the version of Natron will no longer be displayed in the splashscreen but the name of the user
-///Set this from qmake
+///Set this from CMake
 
 #define STRINGIZE_CPP_NAME_(token) # token
 #define STRINGIZE_CPP_NAME(token) STRINGIZE_CPP_NAME_(token)

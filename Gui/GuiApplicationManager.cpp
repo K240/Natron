@@ -32,11 +32,11 @@ CLANG_DIAG_OFF(deprecated)
 CLANG_DIAG_OFF(uninitialized)
 #include <QtGlobal> // for Q_OS_*
 #include <QDebug>
-#include <QSettings>
+#include "Global/AppSettings.h"
 #include <QPixmapCache>
 #include <QApplication>
 #include <QFontDatabase>
-#include <QtConcurrentRun> // QtCore on Qt4, QtConcurrent on Qt5
+#include <QtConcurrentRun>
 CLANG_DIAG_ON(deprecated)
 CLANG_DIAG_ON(uninitialized)
 
@@ -74,6 +74,10 @@ GuiApplicationManager::GuiApplicationManager()
 
 GuiApplicationManager::~GuiApplicationManager()
 {
+    // NodeGui teardown still accesses shared GUI state (notably the node
+    // clipboard). Close instances while this derived manager's private state
+    // is alive, rather than waiting for the AppManager base destructor.
+    quitApplication();
     for (AppShortcuts::iterator it = _imp->_actionShortcuts.begin(); it != _imp->_actionShortcuts.end(); ++it) {
         for (GroupShortcuts::iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
             delete it2->second;
@@ -849,7 +853,7 @@ GuiApplicationManager::getLinkToMultCursor() const
 bool
 GuiApplicationManager::initGui(const CLArgs& args)
 {
-    QSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
+    AppSettings settings( QString::fromUtf8(NATRON_ORGANIZATION_NAME), QString::fromUtf8(NATRON_APPLICATION_NAME) );
 
     //load custom fonts
     QString fontResource = QString::fromUtf8(":/Resources/Fonts/%1.ttf");
@@ -946,7 +950,7 @@ GuiApplicationManager::initGui(const CLArgs& args)
     QObject::connect( &_imp->updateSplashscreenTimer, SIGNAL(timeout()), this, SLOT(onFontconfigTimerTriggered()) );
     _imp->updateSplashscreenTimer.start(1000);
 
-    _imp->fontconfigUpdateWatcher->setFuture( QtConcurrent::run(_imp.get(), &GuiApplicationManagerPrivate::updateFontConfigCache) );
+    _imp->fontconfigUpdateWatcher->setFuture( QtConcurrent::run([manager = _imp.get()]() { manager->updateFontConfigCache(); }) );
 
     Gui::loadStyleSheet();
 
@@ -954,7 +958,8 @@ GuiApplicationManager::initGui(const CLArgs& args)
     _imp->documentation.reset(new DocumentationManager);
     _imp->documentation->startServer();
 
-    return exec();
+    const int eventLoopResult = exec();
+    return eventLoopResult == 0;
 } // GuiApplicationManager::initGui
 
 void

@@ -124,6 +124,17 @@ GCC_DIAG_SUGGEST_OVERRIDE_ON
 
 public:
 
+    struct NativeCacheInput {
+        ImageKey key;
+        ImagePlaneDesc components;
+        RectI roi;
+        unsigned int mipmapLevel;
+        U64 viewerHash;
+    };
+
+    mutable QMutex nativeCacheMutex;
+    std::shared_ptr<NativeCacheInput> nativeCacheInputs[2];
+
     ViewerInstancePrivate(const ViewerInstance* parent)
         : instance(parent)
         , uiContext(NULL)

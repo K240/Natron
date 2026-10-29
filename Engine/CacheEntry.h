@@ -59,7 +59,7 @@
 #include "Engine/CacheEntryHolder.h"
 #include "Engine/MemoryFile.h"
 #include "Engine/NonKeyParams.h"
-#include "Engine/Texture.h"
+#include "Engine/VulkanImageStorage.h"
 #include "Engine/EngineFwd.h"
 #include "Global/GlobalDefines.h"
 #include "Global/StrUtils.h"
@@ -72,7 +72,7 @@ NATRON_NAMESPACE_ENTER
 template <typename T>
 class RamBuffer
 {
-    T* data;
+    T *data;
     U64 count;
 
 public:
@@ -83,12 +83,12 @@ public:
     {
     }
 
-    T* getData()
+    T *getData()
     {
         return data;
     }
 
-    const T* getData() const
+    const T *getData() const
     {
         return data;
     }
@@ -109,15 +109,20 @@ public:
         if (size == 0) {
             return;
         }
+
         count = size;
+
         if (data) {
             free(data);
             data = 0;
         }
+
         if (count == 0) {
             return;
         }
-        data = (T*)malloc( size * sizeof(T) );
+
+        data = (T*)malloc(size * sizeof(T));
+
         if (!data) {
             throw std::bad_alloc();
         }
@@ -126,6 +131,7 @@ public:
     void clear()
     {
         count = 0;
+
         if (data) {
             free(data);
             data = 0;
@@ -228,7 +234,7 @@ public:
     /**
      * @brief Return a pointer to the tile cache file from its filepath
      **/
-    virtual TileCacheFilePtr getTileCacheFile(const std::string& filepath,std::size_t dataOffset) = 0;
+    virtual TileCacheFilePtr getTileCacheFile(const std::string& filepath, std::size_t dataOffset) = 0;
 
     /**
      * @brief Free a tile from the cache that was previously allocated with allocTile. It will be made available again for other entries.
@@ -244,6 +250,7 @@ public:
         //remove extension from filename
         {
             size_t lastdot = filename.find_last_of('.');
+
             if (lastdot != std::string::npos) {
                 filename.erase(lastdot, std::string::npos);
             }
@@ -252,26 +259,29 @@ public:
         //remove index if it has one
         {
             std::size_t foundSep = filename.find_last_of('_');
+
             if (foundSep != std::string::npos) {
                 filename.erase(foundSep, std::string::npos);
             }
         }
-        QString hashKeyStr = QString::fromUtf8( filename.c_str() );
+        QString hashKeyStr = QString::fromUtf8(filename.c_str());
 
         //prepend the 2 digits of the containing directory
         {
             if (path.size() > 0) {
-                if ( (path[path.size() - 1] == '\\') || (path[path.size() - 1] == '/') ) {
+                if ((path[path.size() - 1] == '\\') || (path[path.size() - 1] == '/')) {
                     path.erase(path.size() - 1, 1);
                 }
 
                 std::size_t foundSep = path.find_last_of('/');
+
                 if (foundSep == std::string::npos) {
                     foundSep = path.find_last_of('\\');
                 }
+
                 assert(foundSep != std::string::npos);
                 std::string enclosingDirName = path.substr(foundSep + 1, std::string::npos);
-                hashKeyStr.prepend( QString::fromUtf8( enclosingDirName.c_str() ) );
+                hashKeyStr.prepend(QString::fromUtf8(enclosingDirName.c_str()));
             }
         }
         U64 hashKey = hashKeyStr.toULongLong(0, 16); //< to hex (base 16)
@@ -282,15 +292,16 @@ public:
             return false;
         }
     }
-    
+
 #endif
 
     static bool fileExists(const std::string& filename)
     {
 #ifdef _WIN32
         WIN32_FIND_DATAW FindFileData;
-        std::wstring wpath = StrUtils::utf8_to_utf16 (filename);
+        std::wstring wpath = StrUtils::utf8_to_utf16(filename);
         HANDLE handle = FindFirstFileW(wpath.c_str(), &FindFileData);
+
         if (handle != INVALID_HANDLE_VALUE) {
             FindClose(handle);
 
@@ -300,7 +311,7 @@ public:
         return false;
 #else
         // on Unix platforms passing in UTF-8 works
-        std::ifstream fs( filename.c_str() );
+        std::ifstream fs(filename.c_str());
 
         return fs.is_open() && fs.good();
 #endif
@@ -334,9 +345,9 @@ public:
 
 protected:
 
-    AbstractCacheEntryBase(const AbstractCacheEntryBase&) = delete;
+    AbstractCacheEntryBase(const AbstractCacheEntryBase &) = delete;
 
-    AbstractCacheEntryBase& operator=(const AbstractCacheEntryBase&) = delete;
+    AbstractCacheEntryBase &operator=(const AbstractCacheEntryBase &) = delete;
 };
 
 
@@ -352,7 +363,7 @@ public:
     typedef KeyType key_type;
 
     AbstractCacheEntry()
-    : AbstractCacheEntryBase()
+        : AbstractCacheEntryBase()
     {
     };
 
@@ -360,7 +371,7 @@ public:
     {
     }
 
-    virtual const KeyType & getKey() const = 0;
+    virtual const KeyType &getKey() const = 0;
     virtual hash_type getHashKey() const = 0;
 
 
@@ -404,27 +415,33 @@ public:
 
     void allocateRAM(U64 count)
     {
-        if ( _buffer && (_buffer->size() > 0) ) {
+        if (_buffer && (_buffer->size() > 0)) {
             return;
         }
+
         _storageMode = eStorageModeRAM;
+
         if (!_buffer) {
-            _buffer.reset( new RamBuffer<DataType>() );
+            _buffer.reset(new RamBuffer<DataType>());
         }
+
         _buffer->resize(count);
     }
 
     void allocateMMAP(U64 count,
                       const std::string& path)
     {
-        assert( _path.empty() );
+        assert(_path.empty());
+
         if (_backingFile) {
             return;
         }
+
         _storageMode = eStorageModeDisk;
         _path = path;
+
         try {
-            _backingFile.reset( new MemoryFile(_path, MemoryFile::eFileOpenModeEnumIfExistsKeepElseCreate) );
+            _backingFile.reset(new MemoryFile(_path, MemoryFile::eFileOpenModeEnumIfExistsKeepElseCreate));
         } catch (const std::runtime_error & r) {
             qDebug() << r.what();
             // if opening the file mapping failed, just call allocate again, but this time on RAM!
@@ -437,61 +454,29 @@ public:
 
         assert(_backingFile);
 
-        if ( !path.empty() && (count != 0) ) {
+        if (!path.empty() && (count != 0)) {
             //if the backing file has already the good size and we just wanted to re-open the mapping
             _backingFile->resize(count);
         }
     }
 
-    void allocateGLTexture(const RectI& rectangle,
-                           U32 target)
+    void allocateVulkanImage(const CacheEntryStorageInfo& info)
     {
-        if (_glTexture) {
-            return;
+        if (!info.vulkanContext || info.bounds.isNull() || info.dataTypeSize != sizeof(float) || info.numComponents != 4) {
+            throw std::invalid_argument("Vulkan cache storage requires an RGBA32F image and a runtime context.");
         }
 
-        _storageMode = eStorageModeGLTex;
-        assert(!_glTexture);
-
-
-        int glType, internalFormat;
-        int format = GL_RGBA;
-        Texture::DataTypeEnum type = Texture::eDataTypeFloat;
-        /*if (sizeOfData == 1) {
-            type = Texture::eDataTypeByte;
-            internalFormat = GL_RGBA8;
-            glType = GL_UNSIGNED_INT_8_8_8_8_REV;
-           } else if (sizeOfData == 2) {
-            internalFormat = Texture::eDataTypeUShort;
-            internalFormat = GL_RGBA16;
-            glType = GL_UNSIGNED_SHORT;
-           } else {*/
-
-        // EDIT: for now, only use RGBA fp OpenGL textures, let glReadPixels do the conversion for us
-        internalFormat = GL_RGBA32F_ARB;
-        glType = GL_FLOAT;
-        //}
-
-        _glTexture.reset( new Texture(target,
-                                      GL_NONE,
-                                      GL_NONE,
-                                      GL_NONE,
-                                      type,
-                                      format,
-                                      internalFormat,
-                                      glType) );
-
-
-        TextureRect r(rectangle.x1, rectangle.y1, rectangle.x2, rectangle.y2, 1., 1.);
-
-        // This calls glTexImage2D and allocates a RGBA image
-        _glTexture->ensureTextureHasSize(r, 0);
+        auto allocation = std::make_shared<VulkanImageStorage>(info.vulkanContext, info.bounds.width(), info.bounds.height());
+        _vulkanImage = std::move(allocation);
+        _storageMode = eStorageModeVulkan;
     }
+
 
     void allocateTileCache(AbstractCacheEntryBase* entry)
     {
         _storageMode = eStorageModeDisk;
         _entry = entry;
+
         try {
             _cacheFile = entry->allocTile(&_cacheFileDataOffset);
             _path = _cacheFile->file->path();
@@ -505,22 +490,26 @@ public:
      **/
     void swap(Buffer& other)
     {
-        if (_storageMode == eStorageModeRAM) {
+        if (_storageMode == eStorageModeVulkan && other._storageMode == eStorageModeVulkan) {
+            _vulkanImage.swap(other._vulkanImage);
+        } else if (_storageMode == eStorageModeRAM) {
             if (other._storageMode == eStorageModeRAM) {
                 if (other._buffer) {
                     if (!_buffer) {
-                        _buffer.reset( new RamBuffer<DataType>() );
+                        _buffer.reset(new RamBuffer<DataType>());
                     }
+
                     _buffer.swap(other._buffer);
                 }
             } else {
                 if (!_buffer) {
-                    _buffer.reset( new RamBuffer<DataType>() );
+                    _buffer.reset(new RamBuffer<DataType>());
                 }
-                _buffer->resize( other._backingFile->size() / sizeof(DataType) );
-                const char* src = other._backingFile->data();
-                char* dst = (char*)_buffer->getData();
-                std::memcpy( dst, src, other._backingFile->size() );
+
+                _buffer->resize(other._backingFile->size() / sizeof(DataType));
+                const char *src = other._backingFile->data();
+                char *dst = (char*)_buffer->getData();
+                std::memcpy(dst, src, other._backingFile->size());
             }
         } else if (_storageMode == eStorageModeDisk) {
             if (other._storageMode == eStorageModeDisk) {
@@ -528,16 +517,16 @@ public:
                 _backingFile.swap(other._backingFile);
                 _path = other._path;
             } else {
-                _backingFile->resize( other._buffer->size() * sizeof(DataType) );
-                assert( _backingFile->data() );
-                const char* src = (const char*)other._buffer->getData();
-                char* dst = (char*)_backingFile->data();
-                std::memcpy( dst, src, other._buffer->size() * sizeof(DataType) );
+                _backingFile->resize(other._buffer->size() * sizeof(DataType));
+                assert(_backingFile->data());
+                const char *src = (const char*)other._buffer->getData();
+                char *dst = (char*)_backingFile->data();
+                std::memcpy(dst, src, other._buffer->size() * sizeof(DataType));
             }
         }
     }
 
-    const std::string& getFilePath() const
+    const std::string &getFilePath() const
     {
         return _path;
     }
@@ -550,8 +539,9 @@ public:
     void reOpenFileMapping() const
     {
         assert(!_backingFile && _storageMode == eStorageModeDisk);
-        try{
-            _backingFile.reset( new MemoryFile(_path, MemoryFile::eFileOpenModeEnumIfExistsKeepElseCreate) );
+
+        try {
+            _backingFile.reset(new MemoryFile(_path, MemoryFile::eFileOpenModeEnumIfExistsKeepElseCreate));
         } catch (const std::exception & e) {
             _backingFile.reset();
             throw std::bad_alloc();
@@ -561,13 +551,17 @@ public:
     void restoreBufferFromFile(const std::string & path, std::size_t dataOffset, AbstractCacheEntryBase* entry, bool isTileCache)
     {
         _entry = entry;
+
         if (isTileCache) {
             _cacheFile = entry->getTileCacheFile(path, dataOffset);
+
             if (!_cacheFile) {
                 throw std::runtime_error("Unexisting file " + path);
             }
+
             _cacheFileDataOffset = dataOffset;
         }
+
         _path = path;
         _storageMode = eStorageModeDisk;
     }
@@ -582,6 +576,7 @@ public:
             if (_backingFile) {
                 bool flushOk = _backingFile->flush(MemoryFile::eFlushTypeAsync, 0, 0);
                 _backingFile.reset();
+
                 if (!flushOk) {
                     throw std::runtime_error("Failed to flush RAM data to backing file.");
                 }
@@ -590,10 +585,8 @@ public:
                 _entry->freeTile(_cacheFile, _cacheFileDataOffset);
                 _cacheFile.reset();
             }
-        } else if (_storageMode == eStorageModeGLTex) {
-            if (_glTexture) {
-                _glTexture.reset();
-            }
+        } else if (_storageMode == eStorageModeVulkan) {
+            _vulkanImage.reset();
         }
     }
 
@@ -615,7 +608,7 @@ public:
 
                 return true;
             } else {
-                int ret_code = std::remove( _path.c_str() );
+                int ret_code = std::remove(_path.c_str());
                 Q_UNUSED(ret_code);
 
                 return false;
@@ -641,8 +634,8 @@ public:
             } else {
                 return 0;
             }
-        } else if (_storageMode == eStorageModeGLTex) {
-            return _glTexture ? _glTexture->getSize() : 0;
+        } else if (_storageMode == eStorageModeVulkan) {
+            return _vulkanImage ? _vulkanImage->byteSize() : 0;
         }
 
         return 0;
@@ -650,10 +643,10 @@ public:
 
     bool isAllocated() const
     {
-        return (_buffer && _buffer->size() > 0) || ( _backingFile && _backingFile->data() ) || _cacheFile || _glTexture;
+        return (_buffer && _buffer->size() > 0) || (_backingFile && _backingFile->data()) || _cacheFile || _vulkanImage;
     }
 
-    DataType* writable()
+    DataType *writable()
     {
         if (_storageMode == eStorageModeDisk) {
             if (_backingFile) {
@@ -671,7 +664,7 @@ public:
         }
     }
 
-    const DataType* readable() const
+    const DataType *readable() const
     {
         if (_storageMode == eStorageModeDisk) {
             if (_backingFile) {
@@ -694,30 +687,12 @@ public:
         return _storageMode;
     }
 
-    U32 getGLTextureID() const
+
+    const std::shared_ptr<VulkanImageStorage> &getVulkanImage() const
     {
-        return _glTexture ? _glTexture->getTexID() : 0;
+        return _vulkanImage;
     }
 
-    int getGLTextureTarget() const
-    {
-        return _glTexture ? _glTexture->getTexTarget() : 0;
-    }
-
-    int getGLTextureFormat() const
-    {
-        return _glTexture ? _glTexture->getFormat() : 0;
-    }
-
-    int getGLTextureInternalFormat() const
-    {
-        return _glTexture ? _glTexture->getInternalFormat() : 0;
-    }
-
-    int getGLTextureType() const
-    {
-        return _glTexture ? _glTexture->getGLType() : 0;
-    }
 
 private:
 
@@ -729,19 +704,16 @@ private:
     mutable std::unique_ptr<MemoryFile> _backingFile;
 
     // Set if the cache is a tile cache
-    AbstractCacheEntryBase* _entry;
+    AbstractCacheEntryBase *_entry;
     TileCacheFilePtr _cacheFile;
     std::size_t _cacheFileDataOffset;
 
-    // Used when we store images as OpenGL textures
-    std::unique_ptr<Texture> _glTexture;
+    std::shared_ptr<VulkanImageStorage> _vulkanImage;
     StorageModeEnum _storageMode;
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////CACHE ENTRY////////////////////////////////////////////////////
-
-
 
 
 /** @brief Implements AbstractCacheEntry. This class represents a combinaison of
@@ -797,10 +769,11 @@ public:
         if (_removeBackingFileBeforeDestruction) {
             removeAnyBackingFile();
         }
+
         deallocate();
     }
 
-    const CacheAPI* getCacheAPI() const
+    const CacheAPI *getCacheAPI() const
     {
         return _cache;
     }
@@ -815,7 +788,8 @@ public:
         _cache = cache;
     }
 
-    void setKey(const KeyType& key) {
+    void setKey(const KeyType& key)
+    {
         _key = key;
     }
 
@@ -837,20 +811,23 @@ public:
         {
             {
                 QReadLocker k(&_entryLock);
-                if ( _data.isAllocated() ) {
+
+                if (_data.isAllocated()) {
                     return;
                 }
             }
             QWriteLocker k(&_entryLock);
-            if ( _data.isAllocated() ) {
+
+            if (_data.isAllocated()) {
                 return;
             }
+
             allocate();
             onMemoryAllocated(false);
         }
 
         if (_cache) {
-            _cache->notifyEntryAllocated( getTime(), size(), storageInfo.mode );
+            _cache->notifyEntryAllocated(getTime(), size(), storageInfo.mode);
         }
     }
 
@@ -861,7 +838,7 @@ public:
     {
         const CacheEntryStorageInfo& storageInfo = _params->getStorageInfo();
 
-        if ( !_cache || (storageInfo.mode != eStorageModeDisk) ) {
+        if (!_cache || (storageInfo.mode != eStorageModeDisk)) {
             return;
         }
 
@@ -891,12 +868,12 @@ public:
     {
     }
 
-    const KeyType & getKey() const OVERRIDE FINAL
+    const KeyType &getKey() const OVERRIDE FINAL
     {
         return _key;
     }
 
-    const std::string& getFilePath() const
+    const std::string &getFilePath() const
     {
         return _data.getFilePath();
     }
@@ -911,25 +888,31 @@ public:
     {
         std::string name(path);
 
-        if ( path.empty() ) {
-            QDir subfolder( QString::fromUtf8( path.c_str() ) );
-            if ( !subfolder.exists() ) {
+        if (path.empty()) {
+            QDir subfolder(QString::fromUtf8(path.c_str()));
+
+            if (!subfolder.exists()) {
                 std::cout << "(" << std::hex <<
-                    this << ") " <<   "Something is wrong in cache... couldn't find : " << path << std::endl;
+                          this << ") " <<   "Something is wrong in cache... couldn't find : " << path << std::endl;
                 throw std::invalid_argument(path);
             }
         }
+
         QString hashKeyStr = QString::number(hashKey, 16); //< hex is base 16
+
         for (int i = 0; i < 2; ++i) {
-            if ( i >= hashKeyStr.size() ) {
+            if (i >= hashKeyStr.size()) {
                 break;
             }
-            name.push_back( hashKeyStr[i].toLatin1() );
+
+            name.push_back(hashKeyStr[i].toLatin1());
         }
+
         name.append("/");
         int i = 2;
-        while ( i < hashKeyStr.size() ) {
-            name.push_back( hashKeyStr[i].toLatin1() );
+
+        while (i < hashKeyStr.size()) {
+            name.push_back(hashKeyStr[i].toLatin1());
             ++i;
         }
 
@@ -947,12 +930,14 @@ public:
         if (_cache && _cache->isTileCache()) {
             return;
         }
+
         {
             QWriteLocker k(&_entryLock);
             _data.reOpenFileMapping();
         }
+
         if (_cache) {
-            _cache->notifyEntryStorageChanged( eStorageModeDisk, eStorageModeRAM, getTime(), size() );
+            _cache->notifyEntryStorageChanged(eStorageModeDisk, eStorageModeRAM, getTime(), size());
         }
     }
 
@@ -972,21 +957,22 @@ public:
 
         if (_cache) {
             const CacheEntryStorageInfo& info = _params->getStorageInfo();
+
             if (info.mode == eStorageModeDisk) {
                 if (dataAllocated) {
                     if (_cache->isTileCache()) {
-                         _cache->notifyEntryDestroyed(time, sz, eStorageModeDisk);
+                        _cache->notifyEntryDestroyed(time, sz, eStorageModeDisk);
                     } else {
-                        _cache->notifyEntryStorageChanged( eStorageModeRAM, eStorageModeDisk, time, sz );
+                        _cache->notifyEntryStorageChanged(eStorageModeRAM, eStorageModeDisk, time, sz);
                     }
                 }
             } else if (info.mode == eStorageModeRAM) {
                 if (dataAllocated) {
                     _cache->notifyEntryDestroyed(time, sz, eStorageModeRAM);
                 }
-            } else if (info.mode == eStorageModeGLTex) {
+            } else if (info.mode == eStorageModeVulkan) {
                 if (dataAllocated) {
-                    _cache->notifyEntryDestroyed(time, sz, eStorageModeGLTex);
+                    _cache->notifyEntryDestroyed(time, sz, eStorageModeVulkan);
                 }
             }
         }
@@ -1048,7 +1034,7 @@ public:
      **/
     void removeAnyBackingFile() const
     {
-        if ( !isStoredOnDisk() || _cache->isTileCache()) {
+        if (!isStoredOnDisk() || _cache->isTileCache()) {
             return;
         }
 
@@ -1063,6 +1049,7 @@ public:
         if (hasRemovedFile) {
             _cache->backingFileClosed();
         }
+
         if (isAlloc) {
             _cache->notifyEntryDestroyed(getTime(), getElementsCountFromParams(), eStorageModeRAM);
         } else {
@@ -1103,30 +1090,12 @@ public:
         return info.dataTypeSize * info.numComponents * info.bounds.area();
     }
 
-    U32 getGLTextureID() const
+
+    const std::shared_ptr<VulkanImageStorage> &getVulkanImage() const
     {
-        return _data.getGLTextureID();
+        return _data.getVulkanImage();
     }
 
-    int getGLTextureFormat() const
-    {
-        return _data.getGLTextureFormat();
-    }
-
-    int getGLTextureInternalFormat() const
-    {
-        return _data.getGLTextureInternalFormat();
-    }
-
-    int getGLTextureType() const
-    {
-        return _data.getGLTextureType();
-    }
-
-    int getGLTextureTarget() const
-    {
-        return _data.getGLTextureTarget();
-    }
 
     virtual std::size_t getCacheTileSizeBytes() const OVERRIDE FINAL
     {
@@ -1137,36 +1106,33 @@ public:
 protected:
 
 
-    void swapBuffer(CacheEntryHelper<DataType, KeyType, ParamsType>& other)
+    void swapBuffer(CacheEntryHelper<DataType, KeyType, ParamsType> &other)
     {
         size_t oldSize = size();
 
         _data.swap(other._data);
+
         if (_cache) {
-            _cache->notifyEntrySizeChanged( oldSize, size() );
+            _cache->notifyEntrySizeChanged(oldSize, size());
         }
     }
 
 private:
 
-    virtual TileCacheFilePtr allocTile(std::size_t *dataOffset) OVERRIDE FINAL
-    {
+    virtual TileCacheFilePtr allocTile(std::size_t *dataOffset) OVERRIDE FINAL {
         assert(_cache);
-        return const_cast<CacheAPI*>(_cache)->allocTile(dataOffset);
+        return const_cast<CacheAPI *>(_cache)->allocTile(dataOffset);
     }
 
-    virtual void freeTile(const TileCacheFilePtr& file, std::size_t dataOffset) OVERRIDE FINAL
-    {
+    virtual void freeTile(const TileCacheFilePtr& file, std::size_t dataOffset) OVERRIDE FINAL {
         assert(_cache);
-        const_cast<CacheAPI*>(_cache)->freeTile(file,dataOffset);
+        const_cast<CacheAPI *>(_cache)->freeTile(file, dataOffset);
     }
 
-    virtual TileCacheFilePtr getTileCacheFile(const std::string& filepath, std::size_t dataOffset) OVERRIDE FINAL
-    {
+    virtual TileCacheFilePtr getTileCacheFile(const std::string& filepath, std::size_t dataOffset) OVERRIDE FINAL {
         assert(_cache);
-        return const_cast<CacheAPI*>(_cache)->getTileCacheFile(filepath, dataOffset);
+        return const_cast<CacheAPI *>(_cache)->getTileCacheFile(filepath, dataOffset);
     }
-
 
 
     /** @brief This function is called in allocateMeory(...) and before the object is exposed
@@ -1199,23 +1165,28 @@ private:
                     return;
                 }
 
-                assert( !fileName.empty() );
+                assert(!fileName.empty());
                 //Check if the filename already exists, if so append a 0-based index after the hash (separated by a '_')
                 //and try again
                 int index = 0;
-                if ( CacheAPI::fileExists(fileName) ) {
+
+                if (CacheAPI::fileExists(fileName)) {
                     fileName.insert(fileName.size() - 4, "_0");
                 }
-                while ( CacheAPI::fileExists(fileName) ) {
+
+                while (CacheAPI::fileExists(fileName)) {
                     ++index;
                     std::stringstream ss;
                     ss << index;
-                    fileName.replace( fileName.size() - 1, std::string::npos, ss.str() );
+                    fileName.replace(fileName.size() - 1, std::string::npos, ss.str());
                 }
+
 #ifdef DEBUG
-                if ( !CacheAPI::checkFileNameMatchesHash(fileName, hashKey) ) {
+
+                if (!CacheAPI::checkFileNameMatchesHash(fileName, hashKey)) {
                     qDebug() << "WARNING: Cache entry filename is not the same as the serialized hash key";
                 }
+
 #endif
                 U64 count = getElementsCountFromParams();
                 _data.allocateMMAP(count, fileName);
@@ -1223,8 +1194,8 @@ private:
         } else if (info.mode == eStorageModeRAM) {
             U64 count = getElementsCountFromParams();
             _data.allocateRAM(count);
-        } else if (info.mode == eStorageModeGLTex) {
-            _data.allocateGLTexture(info.bounds, info.textureTarget);
+        } else if (info.mode == eStorageModeVulkan) {
+            _data.allocateVulkanImage(info);
         }
     }
 
@@ -1237,9 +1208,11 @@ private:
     {
 
         bool isTileCache = _cache && _cache->isTileCache();
-        if (!isTileCache && !CacheAPI::fileExists(path) ) {
+
+        if (!isTileCache && !CacheAPI::fileExists(path)) {
             throw std::runtime_error("Cache restore, no such file: " + path);
         }
+
         _data.restoreBufferFromFile(path, offset, this, isTileCache);
     }
 
@@ -1250,7 +1223,7 @@ protected:
     KeyType _key;
     ParamsTypePtr _params;
     Buffer<DataType> _data;
-    const CacheAPI* _cache;
+    const CacheAPI *_cache;
     mutable QReadWriteLock _entryLock;
     bool _removeBackingFileBeforeDestruction;
 };

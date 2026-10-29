@@ -1,0 +1,69 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+    startTimeCode = 1
+    endTimeCode = 25
+    timeCodesPerSecond = 24
+)
+def Xform "World" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    double3 xformOp:translate = (0,1,0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    token visibility.timeSamples = { 1: "inherited", 25: "invisible" }
+    rel material:binding = </World/Red>
+    color3f[] primvars:displayColor = [(1,1,1)] ( interpolation = "constant" )
+    def Material "Red" {
+        token outputs:surface.connect = </World/Red/Shader.outputs:surface>
+        def Shader "Shader" {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (1,0,0)
+            color3f inputs:emissiveColor.connect = </World/Red/Texture.outputs:rgb>
+            token outputs:surface
+        }
+        def Shader "Texture" {
+            uniform token info:id = "UsdUVTexture"
+            color3f outputs:rgb
+        }
+    }
+    def Material "Green" {
+        token outputs:surface.connect = </World/Green/Shader.outputs:surface>
+        def Shader "Shader" {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0,1,0)
+            token outputs:surface
+        }
+    }
+    def Mesh "Faces" {
+        double3 xformOp:translate = (2,0,0)
+        uniform token[] xformOpOrder = ["!resetXformStack!", "xformOp:translate"]
+        point3f[] points = [(-1,-1,0),(1,-1,0),(1,1,0),(-1,1,0)]
+        int[] faceVertexCounts = [3,3,3]
+        int[] faceVertexIndices = [0,1,2,0,2,3,0,1,2]
+        int[] holeIndices = [2]
+        uniform token subdivisionScheme = "none"
+        normal3f[] normals = [(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1),(0,0,1)] ( interpolation = "faceVarying" )
+        texCoord2f[] primvars:st = [(0,0),(1,0),(1,1),(0,1)] ( interpolation = "vertex" )
+        int[] primvars:st:indices = [0,1,2,3]
+        float[] primvars:displayOpacity = [0.4,0.6,1] ( interpolation = "uniform" )
+        uniform token subsetFamily:materialBind:familyType = "nonOverlapping"
+        def GeomSubset "GreenFace" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        ) {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [1]
+            rel material:binding = </World/Green>
+        }
+    }
+    def Mesh "Guide" {
+        uniform token purpose = "guide"
+        point3f[] points = [(0,0,0),(1,0,0),(0,1,0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0,1,2]
+        uniform token subdivisionScheme = "none"
+    }
+    def Sphere "UnsupportedPrimitive" { }
+}

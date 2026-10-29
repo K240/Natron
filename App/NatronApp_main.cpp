@@ -55,7 +55,7 @@ NATRON_NAMESPACE_USING
 
 // g++ knows nothing about wmain
 // https://sourceforge.net/p/mingw-w64/wiki2/Unicode%20apps/
-// If it fails to compile it means either UNICODE or _UNICODE is not defined (it should be in global.pri) and
+// If it fails to compile it means either UNICODE or _UNICODE is not defined by CMake and
 // the project is not linking against -municode
 extern "C" {
 int wmain(int argc, wchar_t** argv)
@@ -94,16 +94,6 @@ int main(int argc, char *argv[])
             freopen("CONOUT$", "w", stderr);
         }
     }
-#if QT_VERSION < QT_VERSION_CHECK(6, 5, 0)
-    // Set window title bar color based on dark/light theme
-    // https://www.qt.io/blog/dark-mode-on-windows-11-with-qt-6.5
-    // https://learn.microsoft.com/en-us/answers/questions/1161597/how-to-detect-windows-application-dark-mode
-    QSettings registry(QString::fromUtf8("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
-                       QSettings::NativeFormat);
-    if (registry.value(QString::fromUtf8("AppsUseLightTheme"), 0).toInt() == 0) {
-        qputenv("QT_QPA_PLATFORM", "windows:darkmode=1");
-    }
-#endif
 #endif
 
 #if defined(Q_OS_UNIX) && defined(RLIMIT_NOFILE)
@@ -162,9 +152,9 @@ int main(int argc, char *argv[])
 
         // coverity[tainted_data]
 #ifdef Q_OS_WIN
-        return manager.loadW(argc, argv, args);
+        return manager.loadW(argc, argv, args) ? 0 : 1;
 #else
-        return manager.load(argc, argv, args);
+        return manager.load(argc, argv, args) ? 0 : 1;
 #endif
         //exec() is called within the GuiApplicationManager
     }

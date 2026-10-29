@@ -26,29 +26,9 @@
 #include "Global/StrUtils.h"
 #include "Global/ProcInfo.h"
 #include "Global/PythonUtils.h"
-#include "Global/StrUtils.h"
 
 #include <vector>
-
-// OSX 10.6 Snow Leopard is missing wcsdup
-#if (__APPLE__ && __ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ < 1070)
-#include <sys/cdefs.h>
-#include <stdlib.h>
-#include <wchar.h>
-
-static wchar_t *
-wcsdup(const wchar_t *s)
-{
-	wchar_t *copy;
-	size_t len;
-
-	len = wcslen(s) + 1;
-	if ( (copy = (wchar_t *)malloc(len * sizeof(wchar_t))) == NULL ) {
-		return (NULL);
-    }
-	return wmemcpy(copy, s, len);
-}
-#endif
+#include <iostream>
 
 
 
@@ -74,13 +54,32 @@ extern "C" {
     NATRON_NAMESPACE::NATRON_PYTHON_NAMESPACE::setupPythonEnv(binPath);
 
 
+    std::vector<std::wstring> wideStorage(argc);
     std::vector<wchar_t*> wideArgs(argc);
     for (int i = 0; i < argc; ++i) {
-        std::wstring utf16 = NATRON_NAMESPACE::StrUtils::utf8_to_utf16(commandLineArgsUtf8[i]);
-        wideArgs[i] = wcsdup(utf16.c_str());
+        wideStorage[i] = NATRON_NAMESPACE::StrUtils::utf8_to_utf16(commandLineArgsUtf8[i]);
+        wideArgs[i] = wideStorage[i].data();
     }
-    int ret = Py_Main(commandLineArgsUtf8.size(), &wideArgs[0]);
-    return ret;
+    PyConfig config;
+    PyConfig_InitPythonConfig(&config);
+    config.user_site_directory = 0;
+    PyStatus status = PyConfig_SetString(&config, &config.stdio_encoding, L"utf-8");
+    if (!PyStatus_Exception(status)) {
+        status = PyConfig_SetString(&config, &config.program_name, wideArgs.front());
+    }
+    if (!PyStatus_Exception(status)) {
+        status = PyConfig_SetArgv(&config, argc, wideArgs.data());
+    }
+    if (!PyStatus_Exception(status)) {
+        status = Py_InitializeFromConfig(&config);
+    }
+    const bool failed = PyStatus_Exception(status);
+    const int result = PyStatus_IsExit(status) ? status.exitcode : 1;
+    if (PyStatus_IsError(status)) {
+        std::cerr << (status.err_msg ? status.err_msg : "Python initialization failed") << std::endl;
+    }
+    PyConfig_Clear(&config);
+    return failed ? result : Py_RunMain();
 } //main
 #ifdef __NATRON_WIN32__
 } // extern "C"

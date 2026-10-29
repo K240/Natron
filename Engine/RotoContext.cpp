@@ -2742,7 +2742,7 @@ RotoDrawableItem::renderMaskFromStroke(const ImagePlaneDesc& components,
 
     {
         QReadLocker k(&_imp->cacheAccessMutex);
-        node->getEffectInstance()->getImageFromCacheAndConvertIfNeeded(true, eStorageModeRAM, eStorageModeRAM, *key, mipmapLevel, NULL, NULL, RectI(), depth, components, EffectInstance::InputImagesMap(), RenderStatsPtr(), OSGLContextAttacherPtr(), &image);
+        node->getEffectInstance()->getImageFromCacheAndConvertIfNeeded(true, eStorageModeRAM, eStorageModeRAM, *key, mipmapLevel, NULL, NULL, RectI(), depth, components, EffectInstance::InputImagesMap(), RenderStatsPtr(), &image);
     }
 
     if (image) {
@@ -3251,8 +3251,7 @@ RotoContextPrivate::renderBezier(cairo_t* cr,
     }
 
 
-
-    for (double t = startTime; t <= endTime; t+=mbFrameStep) {
+    for (double t = startTime; t <= endTime; t += mbFrameStep) {
 
         double fallOff = bezier->getFeatherFallOff(t);
         double featherDist = bezier->getFeatherDistance(t);
@@ -3297,10 +3296,10 @@ RotoContextPrivate::renderBezier(cairo_t* cr,
         // strangely, the above-mentioned cairo bug doesn't affect this function
         BezierCPs cps = bezier->getControlPoints_mt_safe();
         renderInternalShape(t, mipmapLevel, shapeColor, opacity, transform, cr, mesh, cps);
-        
+
 #endif
-        
-        
+
+
         RotoContextPrivate::applyAndDestroyMask(cr, mesh);
     }
 } // RotoContextPrivate::renderBezier
@@ -3546,7 +3545,7 @@ RotoContextPrivate::renderFeather_cairo(const std::list<RotoFeatherVertex>& vert
     assert(vertices.size() >= 3 && vertices.size() % 3 == 0);
 
     double fallOffInverse = 1. / fallOff;
-    
+
     std::list<RotoFeatherVertex>::const_iterator next = vertices.begin();
     ++next;
     std::list<RotoFeatherVertex>::const_iterator nextNext = next;
@@ -3696,7 +3695,7 @@ RotoContextPrivate::renderFeather_cairo(const std::list<RotoFeatherVertex>& vert
         assert(it != vertices.end());
         ++it;
         assert(it != vertices.end());
-    } // for (std::list<RotoFeatherVertex>::const_iterator it = vertices.begin(); it!=vertices.end(); ) 
+    } // for (std::list<RotoFeatherVertex>::const_iterator it = vertices.begin(); it!=vertices.end(); )
 } // RotoContextPrivate::renderFeather_cairo
 
 
@@ -3901,10 +3900,10 @@ RotoContextPrivate::computeTriangles(const Bezier * bezier, double time, unsigne
         if ( fprev != fIt->end() ) {
             ++fprev;
         }
-        if ( fnext != fIt->end() ) {
+
+        if (fnext != fIt->end()) {
             ++fnext;
         }
-
 
 
         for (;;) {
@@ -4135,7 +4134,7 @@ RotoContextPrivate::renderInternalShape_cairo(const std::list<RotoTriangles>& tr
             assert(cairo_pattern_status(mesh) == CAIRO_STATUS_SUCCESS);
 
             cairo_mesh_pattern_end_patch(mesh);
-            
+
             prevPrev = prev;
             prev = &(*(cur));
         }
@@ -4679,8 +4678,9 @@ RotoContext::getOrCreateGlobalMergeNode(int *availableInputIndex)
     args.setProperty<bool>(kCreateNodeArgsPropOutOfProject, true);
     args.setProperty<bool>(kCreateNodeArgsPropNoNodeGUI, true);
     args.setProperty<std::string>(kCreateNodeArgsPropNodeInitialName, fixedNamePrefix.toStdString());
-    
+
     NodePtr mergeNode = node->getApp()->createNode(args);
+
     if (!mergeNode) {
         return mergeNode;
     }

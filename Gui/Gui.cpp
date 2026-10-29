@@ -58,6 +58,7 @@ GCC_DIAG_UNUSED_PRIVATE_FIELD_ON
 #include "Gui/ProjectGui.h"
 #include "Gui/ToolButton.h"
 #include "Gui/RenderStatsDialog.h"
+#include "Gui/StageOutline.h"
 #include "Gui/ViewerTab.h"
 
 NATRON_NAMESPACE_ENTER
@@ -129,6 +130,10 @@ Gui::~Gui()
     for (U32 i = 0; i < _imp->_toolButtons.size(); ++i) {
         delete _imp->_toolButtons[i];
     }
+    // Viewers and panes call back into Gui as they are destroyed. Release
+    // the central widget while the pane registries in _imp still exist,
+    // before QMainWindow's base destructor destroys its remaining children.
+    delete takeCentralWidget();
 }
 
 bool
@@ -244,9 +249,14 @@ Gui::abortProject(bool quitApp,
 
     _imp->setUndoRedoActions(0, 0);
     if (quitApp) {
+        // quit() may synchronously delete this window. Finish local cleanup
+        // first and do not access Gui after handing shutdown to the app.
+        _imp->_currentUndoAction = 0;
+        _imp->_currentRedoAction = 0;
         if (app) {
             app->quit();
         }
+        return true;
     } else {
         {
             // we do not need this list anymore, avoid using it
@@ -255,6 +265,7 @@ Gui::abortProject(bool quitApp,
         }
 
         setGuiAboutToClose(true);
+        _imp->_stageOutline->resetSource();
         if (app) {
             app->resetPreviewProvider();
             if (!blocking) {
@@ -300,12 +311,13 @@ Gui::closeEvent(QCloseEvent* e)
     if ( app && app->isClosing() ) {
         e->ignore();
     } else {
+        // Render shutdown can complete asynchronously. GuiAppInstance owns
+        // window deletion once those jobs finish, rather than Qt's
+        // WA_DeleteOnClose path deleting it before the app is ready.
+        e->ignore();
         if ( !abortProject(true, true, true) ) {
-            e->ignore();
-
             return;
         }
-        e->accept();
     }
 }
 

@@ -19,7 +19,7 @@
 
 set(Natron_SOURCES NatronApp_main.cpp)
 if(WIN32)
-    list(APPEND Natron_SOURCES ../Natron.rc)
+    list(APPEND Natron_SOURCES ../Natron.rc ../Global/WindowsUtf8.manifest)
 endif()
 add_executable(Natron ${Natron_SOURCES})
 if(APPLE)
@@ -49,6 +49,7 @@ target_include_directories(Natron
 )
 
 install(TARGETS Natron DESTINATION "${CMAKE_INSTALL_BINDIR}")
+natron_deploy_usd_resources(Natron)
 install(FILES ../Gui/Resources/Applications/fr.natron.Natron.desktop
     DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
 install(FILES ../Gui/Resources/Metainfo/fr.natron.Natron.appdata.xml

@@ -48,15 +48,14 @@ class UpdateViewerParams
 {
 public:
 
-    struct CachedTile
-    {
+    struct CachedTile {
         TextureRect rect;
         RectI rectRounded;
         // This is a pointer to the data held in the cache. If this is set the ramBuffer is no more than cachedFrame->data()
         // use a shared_ptr here, so that the cache entry is never released before the end of updateViewer()
         FrameEntryPtr cachedData;
         bool isCached;
-        unsigned char* ramBuffer; // a pointer to the RAM buffer held either by the cached frame or allocated by malloc()
+        unsigned char *ramBuffer; // a pointer to the RAM buffer held either by the cached frame or allocated by malloc()
         std::size_t bytesCount; // number of bytes in the texture
 
 
@@ -83,6 +82,7 @@ public:
         , tileSize(0)
         , nbCachedTile(0)
         , colorImage()
+        , nativeImageTransfer(false)
         , rod()
         , pixelAspectRatio(1.)
         , abortInfo()
@@ -133,12 +133,13 @@ public:
 
     // The image which was used to make the texture
     ImagePtr colorImage;
+    bool nativeImageTransfer; // The display copies colorImage directly on the shared Vulkan device.
 
     // The RoD of the src image
     RectD rod;
 
     // The RoI of the viewer, rounded to the tile size
-    RectI roi,roiNotRoundedToTileSize;
+    RectI roi, roiNotRoundedToTileSize;
 
     // The Par of the input image
     double pixelAspectRatio;

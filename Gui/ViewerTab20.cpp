@@ -29,7 +29,8 @@
 #include <cassert>
 #include <stdexcept>
 
-#include "Global/GLIncludes.h" //!<must be included before QGlWidget because of gl.h and glew.h
+#include "Engine/OverlayDrawList.h"
+#include "Engine/EffectInstance.h"
 
 #include <QDebug>
 
@@ -58,40 +59,44 @@ GCC_DIAG_UNUSED_PRIVATE_FIELD_ON
 
 NATRON_NAMESPACE_ENTER
 
-#ifdef NATRON_TRANSFORM_AFFECTS_OVERLAYS
-//OpenGL is column-major for matrixes
-static void
-transformToOpenGLMatrix(const Transform::Matrix3x3& mat,
-                        GLdouble* oglMat)
+namespace {
+bool supportsNodeOverlay(const NodePtr& node)
 {
-    oglMat[0] = mat.a; oglMat[4] = mat.b; oglMat[8]  = 0; oglMat[12] = mat.c;
-    oglMat[1] = mat.d; oglMat[5] = mat.e; oglMat[9]  = 0; oglMat[13] = mat.f;
-    oglMat[2] = 0;     oglMat[6] = 0;     oglMat[10] = 1; oglMat[14] = 0;
-    oglMat[3] = mat.g; oglMat[7] = mat.h; oglMat[11] = 0; oglMat[15] = mat.i;
+    return node && (node->getEffectInstance()->supportsOverlayDrawList() || node->hasHostOverlay());
 }
-
-#endif
+}
 
 void
 ViewerTab::drawOverlays(double time,
                         const RenderScale & renderScale) const
 {
+    if (!_imp->viewer || !_imp->viewer->supportsNodeOverlays()) {
+        return;
+    }
+
+    auto* draw = _imp->viewer->overlayDrawList();
+
+    if (!draw) {
+        return;
+    }
+
+    const double frameTime = time;
     NodePtr rotoPaintNode;
     RotoStrokeItemPtr curStroke;
     bool isDrawing;
 
     getGui()->getApp()->getActiveRotoDrawingStroke(&rotoPaintNode, &curStroke, &isDrawing);
 
-    if ( !getGui() ||
-         !getGui()->getApp() ||
-         !_imp->viewer ||
-         getGui()->getApp()->isClosing() ||
-         isFileDialogViewer() ||
-         (getGui()->isGUIFrozen() && !isDrawing) ) {
+    if (!getGui() ||
+        !getGui()->getApp() ||
+        !_imp->viewer ||
+        getGui()->getApp()->isClosing() ||
+        isFileDialogViewer() ||
+        (getGui()->isGUIFrozen() && !isDrawing)) {
         return;
     }
 
-    if ( getGui()->getApp()->isShowingDialog() ) {
+    if (getGui()->getApp()->isShowingDialog()) {
         /*
            We may enter a situation where a plug-in called EffectInstance::message to show a dialog
            and would block the main thread until the user would click OK but Qt would request a paintGL() on the viewer
@@ -107,43 +112,51 @@ ViewerTab::drawOverlays(double time,
 
     ///Draw overlays in reverse order of appearance so that the first (top) panel is drawn on top of everything else
     for (NodesList::reverse_iterator it = nodes.rbegin(); it != nodes.rend(); ++it) {
-        NodeGuiPtr nodeUi = std::dynamic_pointer_cast<NodeGui>( (*it)->getNodeGui() );
+        if (!supportsNodeOverlay(*it)) {
+            continue;
+        }
+
+        time = frameTime;
+        OverlayDrawScope drawState(*draw);
+        NodeGuiPtr nodeUi = std::dynamic_pointer_cast<NodeGui>((*it)->getNodeGui());
 #ifdef NATRON_TRANSFORM_AFFECTS_OVERLAYS
+
         if (!nodeUi) {
             continue;
         }
+
         double transformedTime;
         bool ok = _imp->getTimeTransform(time, view, *it, getInternalNode(), &transformedTime);
+
         if (!ok && appPTR->getCurrentSettings()->viewerOverlaysPath()) {
             // overlay is not visible in current viewer, even though its parameter panel is open.
             continue;
         }
+
         bool overlayDeemed = false;
+
         if (ok) {
             if (time != transformedTime) {
                 //when retimed, modify the overlay color so it looks deemed to indicate that the user
                 //cannot modify it
                 overlayDeemed = true;
             }
+
             time = transformedTime;
         }
+
         nodeUi->setOverlayLocked(overlayDeemed);
 
         Transform::Matrix3x3 mat(1, 0, 0, 0, 1, 0, 0, 0, 1);
         ok = _imp->getOverlayTransform(time, view, *it, getInternalNode(), &mat);
-        GLfloat oldMat[16];
-        if (ok) {
-            //Ok we've got a transform here, apply it to the OpenGL model view matrix
 
-            GLdouble oglMat[16];
-            transformToOpenGLMatrix(mat, oglMat);
-            glMatrixMode(GL_MODELVIEW);
-            glGetFloatv(GL_MODELVIEW_MATRIX, oldMat);
-            glMultMatrixd(oglMat);
+        if (ok) {
+            draw->transform(mat);
         }
 
 #endif
         bool isInActiveViewerUI = _imp->hasInactiveNodeViewerContext(*it);
+
         if (!isInActiveViewerUI) {
             EffectInstancePtr effect = (*it)->getEffectInstance();
             assert(effect);
@@ -151,24 +164,27 @@ ViewerTab::drawOverlays(double time,
             effect->drawOverlay_public(time, renderScale, view);
         }
 
-#ifdef NATRON_TRANSFORM_AFFECTS_OVERLAYS
-        if (ok) {
-            glMatrixMode(GL_MODELVIEW);
-            glLoadMatrixf(oldMat);
-        }
-#endif
+
     }
 } // ViewerTab::drawOverlays
 
 bool
 ViewerTab::notifyOverlaysPenDown_internal(const NodePtr& node,
-                                          const RenderScale & renderScale,
-                                          PenType pen,
-                                          const QPointF & viewportPos,
-                                          const QPointF & pos,
-                                          double pressure,
-                                          double timestamp)
+        const RenderScale & renderScale,
+        PenType pen,
+        const QPointF & viewportPos,
+        const QPointF & pos,
+        double pressure,
+        double timestamp)
 {
+    if (!supportsNodeOverlay(node)) {
+        return false;
+    }
+
+    if (!_imp->viewer || !_imp->viewer->supportsNodeOverlays()) {
+        return false;
+    }
+
     QPointF transformPos;
     double time = getGui()->getApp()->getTimeLine()->currentFrame();
     ViewIdx view = getCurrentView();
@@ -179,6 +195,7 @@ ViewerTab::notifyOverlaysPenDown_internal(const NodePtr& node,
 #else
     double transformedTime;
     bool ok = _imp->getTimeTransform(time, view, node, getInternalNode(), &transformedTime);
+
     if (ok) {
         /*
          * Do not allow interaction with retimed interacts otherwise the user may end up modifying keyframes at unexpected
@@ -188,11 +205,13 @@ ViewerTab::notifyOverlaysPenDown_internal(const NodePtr& node,
         if (time != transformedTime) {
             return false;
         }
+
         time = transformedTime;
     }
 
     Transform::Matrix3x3 mat(1, 0, 0, 0, 1, 0, 0, 0, 1);
     ok = _imp->getOverlayTransform(time, view, node, getInternalNode(), &mat);
+
     if (!ok) {
         transformPos = pos;
     } else {
@@ -203,22 +222,27 @@ ViewerTab::notifyOverlaysPenDown_internal(const NodePtr& node,
             p.y = pos.y();
             p.z = 1;
             p = Transform::matApply(mat, p);
+
             if (p.z < 0) {
                 // the transformed position has a negative z, don't send it
                 return false;
             }
+
             transformPos.rx() = p.x / p.z;
             transformPos.ry() = p.y / p.z;
         }
     }
+
 #endif
 
     bool isInActiveViewerUI = _imp->hasInactiveNodeViewerContext(node);
+
     if (!isInActiveViewerUI) {
         EffectInstancePtr effect = node->getEffectInstance();
         assert(effect);
         effect->setCurrentViewportForOverlays_public(_imp->viewer);
         bool didSmthing = effect->onOverlayPenDown_public(time, renderScale, view, viewportPos, transformPos, pressure, timestamp, pen);
+
         if (didSmthing) {
             //http://openfx.sourceforge.net/Documentation/1.3/ofxProgrammingReference.html
             // if the instance returns kOfxStatOK, the host should not pass the pen motion
@@ -240,11 +264,15 @@ ViewerTab::notifyOverlaysPenDown(const RenderScale & renderScale,
                                  double pressure,
                                  double timestamp)
 {
-    if ( !getGui()->getApp() || getGui()->getApp()->isClosing() ) {
+    if (!_imp->viewer || !_imp->viewer->supportsNodeOverlays()) {
         return false;
     }
 
-    if ( getGui()->getApp()->isShowingDialog() ) {
+    if (!getGui()->getApp() || getGui()->getApp()->isClosing()) {
+        return false;
+    }
+
+    if (getGui()->getApp()->isShowingDialog()) {
         /*
            We may enter a situation where a plug-in called EffectInstance::message to show a dialog
            and would block the main thread until the user would click OK but Qt would request a paintGL() on the viewer
@@ -262,14 +290,21 @@ ViewerTab::notifyOverlaysPenDown(const RenderScale & renderScale,
     getGui()->getNodesEntitledForOverlays(nodes);
 
     ViewIdx view = getCurrentView();
+
     for (NodesList::const_iterator it = nodes.begin(); it != nodes.end(); ++it) {
+        if (!supportsNodeOverlay(*it)) {
+            continue;
+        }
+
         double transformedTime;
         bool ok = _imp->getTimeTransform(timestamp, view, *it, getInternalNode(), &transformedTime);
+
         if (!ok && appPTR->getCurrentSettings()->viewerOverlaysPath()) {
             // overlay is not visible in current viewer, even though its parameter panel is open.
             continue;
         }
-        if ( notifyOverlaysPenDown_internal(*it, renderScale, pen, viewportPos, pos, pressure, transformedTime) ) {
+
+        if (notifyOverlaysPenDown_internal(*it, renderScale, pen, viewportPos, pos, pressure, transformedTime)) {
             return true;
         }
     }
@@ -277,6 +312,7 @@ ViewerTab::notifyOverlaysPenDown(const RenderScale & renderScale,
     if (getGui()->getApp()->getOverlayRedrawRequestsCount() > 0) {
         getGui()->getApp()->redrawAllViewers();
     }
+
     getGui()->getApp()->clearOverlayRedrawRequests();
 
     return false;
@@ -287,7 +323,11 @@ ViewerTab::notifyOverlaysPenDoubleClick(const RenderScale & renderScale,
                                         const QPointF & viewportPos,
                                         const QPointF & pos)
 {
-    if ( !getGui()->getApp() || getGui()->getApp()->isClosing() ) {
+    if (!_imp->viewer || !_imp->viewer->supportsNodeOverlays()) {
+        return false;
+    }
+
+    if (!getGui()->getApp() || getGui()->getApp()->isClosing()) {
         return false;
     }
 
@@ -296,7 +336,12 @@ ViewerTab::notifyOverlaysPenDoubleClick(const RenderScale & renderScale,
 
 
     ViewIdx view = getCurrentView();
+
     for (NodesList::const_iterator it = nodes.begin(); it != nodes.end(); ++it) {
+        if (!supportsNodeOverlay(*it)) {
+            continue;
+        }
+
         QPointF transformPos;
         double time = getGui()->getApp()->getTimeLine()->currentFrame();
 #ifndef NATRON_TRANSFORM_AFFECTS_OVERLAYS
@@ -304,14 +349,17 @@ ViewerTab::notifyOverlaysPenDoubleClick(const RenderScale & renderScale,
 #else
         double transformedTime;
         bool ok = _imp->getTimeTransform(time, view, *it, getInternalNode(), &transformedTime);
+
         if (!ok && appPTR->getCurrentSettings()->viewerOverlaysPath()) {
             // overlay is not visible in current viewer, even though its parameter panel is open.
             continue;
         }
+
         time = transformedTime;
 
         Transform::Matrix3x3 mat(1, 0, 0, 0, 1, 0, 0, 0, 1);
         ok = _imp->getOverlayTransform(time, view, *it, getInternalNode(), &mat);
+
         if (!ok) {
             transformPos = pos;
         } else {
@@ -322,23 +370,28 @@ ViewerTab::notifyOverlaysPenDoubleClick(const RenderScale & renderScale,
                 p.y = pos.y();
                 p.z = 1;
                 p = Transform::matApply(mat, p);
+
                 if (p.z < 0) {
                     // the transformed position has a negative z, don't send it
                     return false;
                 }
+
                 transformPos.rx() = p.x / p.z;
                 transformPos.ry() = p.y / p.z;
             }
         }
+
 #endif
 
         bool isInActiveViewerUI = _imp->hasInactiveNodeViewerContext(*it);
+
         if (!isInActiveViewerUI) {
             EffectInstancePtr effect = (*it)->getEffectInstance();
             assert(effect);
             effect->setCurrentViewportForOverlays_public(_imp->viewer);
 
             bool didSmthing = effect->onOverlayPenDoubleClicked_public(time, renderScale, view, viewportPos, transformPos);
+
             if (didSmthing) {
                 //http://openfx.sourceforge.net/Documentation/1.3/ofxProgrammingReference.html
                 // if the instance returns kOfxStatOK, the host should not pass the pen motion
@@ -354,12 +407,20 @@ ViewerTab::notifyOverlaysPenDoubleClick(const RenderScale & renderScale,
 
 bool
 ViewerTab::notifyOverlaysPenMotion_internal(const NodePtr& node,
-                                            const RenderScale & renderScale,
-                                            const QPointF & viewportPos,
-                                            const QPointF & pos,
-                                            double pressure,
-                                            double timestamp)
+        const RenderScale & renderScale,
+        const QPointF & viewportPos,
+        const QPointF & pos,
+        double pressure,
+        double timestamp)
 {
+    if (!supportsNodeOverlay(node)) {
+        return false;
+    }
+
+    if (!_imp->viewer || !_imp->viewer->supportsNodeOverlays()) {
+        return false;
+    }
+
     double time = getGui()->getApp()->getTimeLine()->currentFrame();
     ViewIdx view = getCurrentView();
 
@@ -369,10 +430,12 @@ ViewerTab::notifyOverlaysPenMotion_internal(const NodePtr& node,
 #else
     double transformedTime;
     bool ok = _imp->getTimeTransform(time, view, node, getInternalNode(), &transformedTime);
+
     if (!ok && appPTR->getCurrentSettings()->viewerOverlaysPath()) {
         // overlay is not visible in current viewer, even though its parameter panel is open.
         return false;
     }
+
     if (ok) {
         /*
          * Do not allow interaction with retimed interacts otherwise the user may end up modifying keyframes at unexpected
@@ -382,12 +445,14 @@ ViewerTab::notifyOverlaysPenMotion_internal(const NodePtr& node,
         if (time != transformedTime) {
             return false;
         }
+
         time = transformedTime;
     }
 
 
     Transform::Matrix3x3 mat(1, 0, 0, 0, 1, 0, 0, 0, 1);
     ok = _imp->getOverlayTransform(time, view, node, getInternalNode(), &mat);
+
     if (!ok) {
         transformPos = pos;
     } else {
@@ -398,20 +463,24 @@ ViewerTab::notifyOverlaysPenMotion_internal(const NodePtr& node,
             p.y = pos.y();
             p.z = 1;
             p = Transform::matApply(mat, p);
+
             if (p.z < 0) {
                 // the transformed position has a negative z, don't send it
                 return false;
             }
+
             transformPos.rx() = p.x / p.z;
             transformPos.ry() = p.y / p.z;
         }
     }
+
 #endif
 
     bool isInActiveViewerUI = _imp->hasInactiveNodeViewerContext(node);
+
     if (!isInActiveViewerUI) {
         ///If we are dragging with mouse, set draft mode (not for roto though)
-        if ( _imp->hasPenDown && !getGui()->isDraftRenderEnabled() ) {
+        if (_imp->hasPenDown && !getGui()->isDraftRenderEnabled()) {
             getGui()->setDraftRenderEnabled(true);
         }
 
@@ -419,6 +488,7 @@ ViewerTab::notifyOverlaysPenMotion_internal(const NodePtr& node,
         assert(effect);
         effect->setCurrentViewportForOverlays_public(_imp->viewer);
         bool didSmthing = effect->onOverlayPenMotion_public(time, renderScale, view, viewportPos, transformPos, pressure, timestamp);
+
         if (didSmthing) {
             if (_imp->hasPenDown) {
                 _imp->hasCaughtPenMotionWhileDragging = true;
@@ -442,13 +512,17 @@ ViewerTab::notifyOverlaysPenMotion(const RenderScale & renderScale,
                                    double pressure,
                                    double timestamp)
 {
-    bool didSomething = false;
-
-    if ( !getGui()->getApp() || getGui()->getApp()->isClosing() ) {
+    if (!_imp->viewer || !_imp->viewer->supportsNodeOverlays()) {
         return false;
     }
 
-    if ( getGui()->getApp()->isShowingDialog() ) {
+    bool didSomething = false;
+
+    if (!getGui()->getApp() || getGui()->getApp()->isClosing()) {
+        return false;
+    }
+
+    if (getGui()->getApp()->isShowingDialog()) {
         /*
            We may enter a situation where a plug-in called EffectInstance::message to show a dialog
            and would block the main thread until the user would click OK but Qt would request a paintGL() on the viewer
@@ -462,14 +536,19 @@ ViewerTab::notifyOverlaysPenMotion(const RenderScale & renderScale,
     getGui()->getNodesEntitledForOverlays(nodes);
 
     for (NodesList::const_iterator it = nodes.begin(); it != nodes.end(); ++it) {
-        if ( notifyOverlaysPenMotion_internal(*it, renderScale, viewportPos, pos, pressure, timestamp) ) {
+        if (!supportsNodeOverlay(*it)) {
+            continue;
+        }
+
+        if (notifyOverlaysPenMotion_internal(*it, renderScale, viewportPos, pos, pressure, timestamp)) {
             return true;
         }
     }
 
-    if ( !didSomething && (getGui()->getApp()->getOverlayRedrawRequestsCount() > 0) ) {
+    if (!didSomething && (getGui()->getApp()->getOverlayRedrawRequestsCount() > 0)) {
         getGui()->getApp()->redrawAllViewers();
     }
+
     getGui()->getApp()->clearOverlayRedrawRequests();
 
     return didSomething;
@@ -482,13 +561,17 @@ ViewerTab::notifyOverlaysPenUp(const RenderScale & renderScale,
                                double pressure,
                                double timestamp)
 {
-    bool didSomething = false;
-
-    if ( !getGui()->getApp() || getGui()->getApp()->isClosing() ) {
+    if (!_imp->viewer || !_imp->viewer->supportsNodeOverlays()) {
         return false;
     }
 
-    if ( getGui()->getApp()->isShowingDialog() ) {
+    bool didSomething = false;
+
+    if (!getGui()->getApp() || getGui()->getApp()->isClosing()) {
+        return false;
+    }
+
+    if (getGui()->getApp()->isShowingDialog()) {
         /*
            We may enter a situation where a plug-in called EffectInstance::message to show a dialog
            and would block the main thread until the user would click OK but Qt would request a paintGL() on the viewer
@@ -501,7 +584,8 @@ ViewerTab::notifyOverlaysPenUp(const RenderScale & renderScale,
 
     ///Reset draft
     bool mustTriggerRender = false;
-    if ( getGui()->isDraftRenderEnabled() ) {
+
+    if (getGui()->isDraftRenderEnabled()) {
         getGui()->setDraftRenderEnabled(false);
         mustTriggerRender = _imp->hasCaughtPenMotionWhileDragging;
     }
@@ -516,16 +600,22 @@ ViewerTab::notifyOverlaysPenUp(const RenderScale & renderScale,
     ViewIdx view = getCurrentView();
 
     for (NodesList::const_iterator it = nodes.begin(); it != nodes.end(); ++it) {
+        if (!supportsNodeOverlay(*it)) {
+            continue;
+        }
+
         QPointF transformPos;
 #ifndef NATRON_TRANSFORM_AFFECTS_OVERLAYS
         transformPos = pos;
 #else
         double transformedTime;
         bool ok = _imp->getTimeTransform(time, view, *it, getInternalNode(), &transformedTime);
+
         if (!ok && appPTR->getCurrentSettings()->viewerOverlaysPath()) {
             // overlay is not visible in current viewer, even though its parameter panel is open.
             continue;
         }
+
         if (ok) {
             /*
              * Do not allow interaction with retimed interacts otherwise the user may end up modifying keyframes at unexpected
@@ -535,11 +625,13 @@ ViewerTab::notifyOverlaysPenUp(const RenderScale & renderScale,
             if (time != transformedTime) {
                 return false;
             }
+
             time = transformedTime;
         }
 
         Transform::Matrix3x3 mat(1, 0, 0, 0, 1, 0, 0, 0, 1);
         ok = _imp->getOverlayTransform(time, view, *it, getInternalNode(), &mat);
+
         if (!ok) {
             transformPos = pos;
         } else {
@@ -550,17 +642,21 @@ ViewerTab::notifyOverlaysPenUp(const RenderScale & renderScale,
                 p.y = pos.y();
                 p.z = 1;
                 p = Transform::matApply(mat, p);
+
                 if (p.z < 0) {
                     // the transformed position has a negative z, send it (because a penup may be necessary for a good execution of the plugin) but reverse z
                     p.z = - p.z;
                 }
+
                 transformPos.rx() = p.x / p.z;
                 transformPos.ry() = p.y / p.z;
             }
         }
+
 #endif
 
         bool isInActiveViewerUI = _imp->hasInactiveNodeViewerContext(*it);
+
         if (!isInActiveViewerUI) {
             EffectInstancePtr effect = (*it)->getEffectInstance();
             assert(effect);
@@ -570,9 +666,10 @@ ViewerTab::notifyOverlaysPenUp(const RenderScale & renderScale,
     }
 
 
-    if ( !mustTriggerRender && !didSomething && (getGui()->getApp()->getOverlayRedrawRequestsCount() > 0) ) {
+    if (!mustTriggerRender && !didSomething && (getGui()->getApp()->getOverlayRedrawRequestsCount() > 0)) {
         getGui()->getApp()->redrawAllViewers();
     }
+
     getGui()->getApp()->clearOverlayRedrawRequests();
 
     if (mustTriggerRender) {
@@ -649,22 +746,34 @@ ViewerTab::checkNodeViewerContextShortcuts(const NodePtr& node,
 
 bool
 ViewerTab::notifyOverlaysKeyDown_internal(const NodePtr& node,
-                                          const RenderScale & renderScale,
-                                          Key k,
-                                          KeyboardModifiers km,
-                                          Qt::Key qKey,
-                                          const Qt::KeyboardModifiers& mods)
+        const RenderScale & renderScale,
+        Key k,
+        KeyboardModifiers km,
+        Qt::Key qKey,
+        const Qt::KeyboardModifiers& mods)
 {
+    if (!supportsNodeOverlay(node)) {
+        // Parameter buttons and tool groups need no plug-in draw action.
+        return _imp->viewer && _imp->viewer->supportsNodeOverlays() &&
+               checkNodeViewerContextShortcuts(node, qKey, mods);
+    }
+
+    if (!_imp->viewer || !_imp->viewer->supportsNodeOverlays()) {
+        return false;
+    }
+
     double time = getGui()->getApp()->getTimeLine()->currentFrame();
     ViewIdx view = getCurrentView();
 
 #ifdef NATRON_TRANSFORM_AFFECTS_OVERLAYS
     double transformedTime;
     bool ok = _imp->getTimeTransform(time, ViewIdx(0), node, getInternalNode(), &transformedTime);
+
     if (!ok && appPTR->getCurrentSettings()->viewerOverlaysPath()) {
         // overlay is not visible in current viewer, even though its parameter panel is open.
         return false;
     }
+
     if (ok) {
         /*
          * Do not allow interaction with retimed interacts otherwise the user may end up modifying keyframes at unexpected
@@ -674,11 +783,14 @@ ViewerTab::notifyOverlaysKeyDown_internal(const NodePtr& node,
         if (time != transformedTime) {
             return false;
         }
+
         time = transformedTime;
     }
+
 #endif
 
     bool isInActiveViewerUI = _imp->hasInactiveNodeViewerContext(node);
+
     if (!isInActiveViewerUI) {
         EffectInstancePtr effect = node->getEffectInstance();
         assert(effect);
@@ -689,6 +801,7 @@ ViewerTab::notifyOverlaysKeyDown_internal(const NodePtr& node,
         if (!didSmthing) {
             didSmthing = effect->onOverlayKeyDown_public(time, renderScale, view, k, km);
         }
+
         if (didSmthing) {
             //http://openfx.sourceforge.net/Documentation/1.3/ofxProgrammingReference.html
             // if the instance returns kOfxStatOK, the host should not pass the pen motion
@@ -705,10 +818,14 @@ bool
 ViewerTab::notifyOverlaysKeyDown(const RenderScale & renderScale,
                                  QKeyEvent* e)
 {
+    if (!_imp->viewer || !_imp->viewer->supportsNodeOverlays()) {
+        return false;
+    }
+
     bool didSomething = false;
     GuiAppInstancePtr app = getGui()->getApp();
 
-    if ( !app  || app->isClosing() ) {
+    if (!app  || app->isClosing()) {
         return false;
     }
 
@@ -721,13 +838,14 @@ ViewerTab::notifyOverlaysKeyDown(const RenderScale & renderScale,
                       e->key() == Qt::Key_Meta;
     Qt::Key qKey = (Qt::Key)e->key();
     Qt::KeyboardModifiers qMods = e->modifiers();
-    Key natronKey = QtEnumConvert::fromQtKey(qKey );
+    Key natronKey = QtEnumConvert::fromQtKey(qKey);
     KeyboardModifiers natronMod = QtEnumConvert::fromQtModifiers(qMods);
     NodesList nodes;
     getGui()->getNodesEntitledForOverlays(nodes);
 
     for (NodesList::const_iterator it = nodes.begin(); it != nodes.end(); ++it) {
-        if ( notifyOverlaysKeyDown_internal(*it, renderScale, natronKey, natronMod, qKey, qMods) ) {
+
+        if (notifyOverlaysKeyDown_internal(*it, renderScale, natronKey, natronMod, qKey, qMods)) {
             if (isModifier) {
                 continue;
             }
@@ -744,6 +862,7 @@ ViewerTab::notifyOverlaysKeyDown(const RenderScale & renderScale,
     if (app->getOverlayRedrawRequestsCount() > 0) {
         app->redrawAllViewers();
     }
+
     app->clearOverlayRedrawRequests();
 
     return didSomething;
@@ -753,10 +872,14 @@ bool
 ViewerTab::notifyOverlaysKeyUp(const RenderScale & renderScale,
                                QKeyEvent* e)
 {
+    if (!_imp->viewer || !_imp->viewer->supportsNodeOverlays()) {
+        return false;
+    }
+
     bool didSomething = false;
     GuiAppInstancePtr app = getGui()->getApp();
 
-    if ( !app || app->isClosing() ) {
+    if (!app || app->isClosing()) {
         return false;
     }
 
@@ -764,17 +887,24 @@ ViewerTab::notifyOverlaysKeyUp(const RenderScale & renderScale,
     ViewIdx view = getCurrentView();
     NodesList nodes;
     getGui()->getNodesEntitledForOverlays(nodes);
+
     for (NodesList::const_iterator it = nodes.begin(); it != nodes.end(); ++it) {
+        if (!supportsNodeOverlay(*it)) {
+            continue;
+        }
+
         EffectInstancePtr effect = (*it)->getEffectInstance();
         assert(effect);
 
 #ifdef NATRON_TRANSFORM_AFFECTS_OVERLAYS
         double transformedTime;
         bool ok = _imp->getTimeTransform(time, ViewIdx(0), *it, getInternalNode(), &transformedTime);
+
         if (!ok && appPTR->getCurrentSettings()->viewerOverlaysPath()) {
             // overlay is not visible in current viewer, even though its parameter panel is open.
             continue;
         }
+
         if (ok) {
             /*
              * Do not allow interaction with retimed interacts otherwise the user may end up modifying keyframes at unexpected
@@ -784,16 +914,19 @@ ViewerTab::notifyOverlaysKeyUp(const RenderScale & renderScale,
             if (time != transformedTime) {
                 return false;
             }
+
             time = transformedTime;
         }
+
 #endif
 
 
         bool isInActiveViewerUI = _imp->hasInactiveNodeViewerContext(*it);
+
         if (!isInActiveViewerUI) {
             effect->setCurrentViewportForOverlays_public(_imp->viewer);
-            didSomething |= effect->onOverlayKeyUp_public( time, renderScale, view,
-                                                           QtEnumConvert::fromQtKey( (Qt::Key)e->key() ), QtEnumConvert::fromQtModifiers( e->modifiers() ) );
+            didSomething |= effect->onOverlayKeyUp_public(time, renderScale, view,
+                            QtEnumConvert::fromQtKey((Qt::Key)e->key()), QtEnumConvert::fromQtModifiers(e->modifiers()));
         }
     }
 
@@ -820,22 +953,34 @@ ViewerTab::notifyOverlaysKeyUp(const RenderScale & renderScale,
 
 bool
 ViewerTab::notifyOverlaysKeyRepeat_internal(const NodePtr& node,
-                                            const RenderScale & renderScale,
-                                            Key k,
-                                            KeyboardModifiers km,
-                                            Qt::Key qKey,
-                                            const Qt::KeyboardModifiers& mods)
+        const RenderScale & renderScale,
+        Key k,
+        KeyboardModifiers km,
+        Qt::Key qKey,
+        const Qt::KeyboardModifiers& mods)
 {
+    if (!supportsNodeOverlay(node)) {
+        // Parameter buttons and tool groups need no plug-in draw action.
+        return _imp->viewer && _imp->viewer->supportsNodeOverlays() &&
+               checkNodeViewerContextShortcuts(node, qKey, mods);
+    }
+
+    if (!_imp->viewer || !_imp->viewer->supportsNodeOverlays()) {
+        return false;
+    }
+
     ViewIdx view = getCurrentView();
     double time = getGui()->getApp()->getTimeLine()->currentFrame();
 
 #ifdef NATRON_TRANSFORM_AFFECTS_OVERLAYS
     double transformedTime;
     bool ok = _imp->getTimeTransform(time, ViewIdx(0), node, getInternalNode(), &transformedTime);
+
     if (!ok && appPTR->getCurrentSettings()->viewerOverlaysPath()) {
         // overlay is not visible in current viewer, even though its parameter panel is open.
         return false;
     }
+
     if (ok) {
         /*
          * Do not allow interaction with retimed interacts otherwise the user may end up modifying keyframes at unexpected
@@ -845,11 +990,14 @@ ViewerTab::notifyOverlaysKeyRepeat_internal(const NodePtr& node,
         if (time != transformedTime) {
             return false;
         }
+
         time = transformedTime;
     }
+
 #endif
 
     bool isInActiveViewerUI = _imp->hasInactiveNodeViewerContext(node);
+
     if (!isInActiveViewerUI) {
         EffectInstancePtr effect = node->getEffectInstance();
         assert(effect);
@@ -860,6 +1008,7 @@ ViewerTab::notifyOverlaysKeyRepeat_internal(const NodePtr& node,
         if (!didSmthing) {
             didSmthing = effect->onOverlayKeyRepeat_public(time, renderScale, view, k, km);
         }
+
         if (didSmthing) {
             //http://openfx.sourceforge.net/Documentation/1.3/ofxProgrammingReference.html
             // if the instance returns kOfxStatOK, the host should not pass the pen motion
@@ -877,18 +1026,23 @@ bool
 ViewerTab::notifyOverlaysKeyRepeat(const RenderScale & renderScale,
                                    QKeyEvent* e)
 {
-    if ( !getGui()->getApp() || getGui()->getApp()->isClosing() ) {
+    if (!_imp->viewer || !_imp->viewer->supportsNodeOverlays()) {
+        return false;
+    }
+
+    if (!getGui()->getApp() || getGui()->getApp()->isClosing()) {
         return false;
     }
 
     Qt::Key qKey = (Qt::Key)e->key();
     Qt::KeyboardModifiers qMods = e->modifiers();
-    Key natronKey = QtEnumConvert::fromQtKey( qKey);
-    KeyboardModifiers natronMod = QtEnumConvert::fromQtModifiers( qMods );
+    Key natronKey = QtEnumConvert::fromQtKey(qKey);
+    KeyboardModifiers natronMod = QtEnumConvert::fromQtModifiers(qMods);
     NodesList nodes;
 
     for (NodesList::const_iterator it = nodes.begin(); it != nodes.end(); ++it) {
-        if ( notifyOverlaysKeyRepeat_internal(*it, renderScale, natronKey, natronMod, qKey, qMods) ) {
+
+        if (notifyOverlaysKeyRepeat_internal(*it, renderScale, natronKey, natronMod, qKey, qMods)) {
             return true;
         }
     }
@@ -896,6 +1050,7 @@ ViewerTab::notifyOverlaysKeyRepeat(const RenderScale & renderScale,
     if (getGui()->getApp()->getOverlayRedrawRequestsCount() > 0) {
         getGui()->getApp()->redrawAllViewers();
     }
+
     getGui()->getApp()->clearOverlayRedrawRequests();
 
 
@@ -905,11 +1060,15 @@ ViewerTab::notifyOverlaysKeyRepeat(const RenderScale & renderScale,
 bool
 ViewerTab::notifyOverlaysFocusGained(const RenderScale & renderScale)
 {
-    if ( !getGui()->getApp() || getGui()->getApp()->isClosing() ) {
+    if (!_imp->viewer || !_imp->viewer->supportsNodeOverlays()) {
         return false;
     }
 
-    if ( getGui()->getApp()->isShowingDialog() ) {
+    if (!getGui()->getApp() || getGui()->getApp()->isClosing()) {
+        return false;
+    }
+
+    if (getGui()->getApp()->isShowingDialog()) {
         /*
            We may enter a situation where a plug-in called EffectInstance::message to show a dialog
            and would block the main thread until the user would click OK but Qt would request a paintGL() on the viewer
@@ -925,35 +1084,46 @@ ViewerTab::notifyOverlaysFocusGained(const RenderScale & renderScale)
     bool ret = false;
     NodesList nodes;
     getGui()->getNodesEntitledForOverlays(nodes);
+
     for (NodesList::const_iterator it = nodes.begin(); it != nodes.end(); ++it) {
+        if (!supportsNodeOverlay(*it)) {
+            continue;
+        }
+
         EffectInstancePtr effect = (*it)->getEffectInstance();
         assert(effect);
 
 #ifdef NATRON_TRANSFORM_AFFECTS_OVERLAYS
         double transformedTime;
         bool ok = _imp->getTimeTransform(time, ViewIdx(0), *it, getInternalNode(), &transformedTime);
+
         if (!ok && appPTR->getCurrentSettings()->viewerOverlaysPath()) {
             // overlay is not visible in current viewer, even though its parameter panel is open.
             continue;
         }
+
         if (ok) {
             time = transformedTime;
         }
+
 #endif
 
         bool isInActiveViewerUI = _imp->hasInactiveNodeViewerContext(*it);
+
         if (!isInActiveViewerUI) {
             effect->setCurrentViewportForOverlays_public(_imp->viewer);
             bool didSmthing = effect->onOverlayFocusGained_public(time, renderScale, view);
+
             if (didSmthing) {
                 ret = true;
             }
         }
     }
 
-    if ( !ret && (getGui()->getApp()->getOverlayRedrawRequestsCount() > 0) ) {
+    if (!ret && (getGui()->getApp()->getOverlayRedrawRequestsCount() > 0)) {
         getGui()->getApp()->redrawAllViewers();
     }
+
     getGui()->getApp()->clearOverlayRedrawRequests();
 
     return ret;
@@ -962,11 +1132,15 @@ ViewerTab::notifyOverlaysFocusGained(const RenderScale & renderScale)
 bool
 ViewerTab::notifyOverlaysFocusLost(const RenderScale & renderScale)
 {
-    if ( !getGui()->getApp() || getGui()->getApp()->isClosing() ) {
+    if (!_imp->viewer || !_imp->viewer->supportsNodeOverlays()) {
         return false;
     }
 
-    if ( getGui()->getApp()->isShowingDialog() ) {
+    if (!getGui()->getApp() || getGui()->getApp()->isClosing()) {
+        return false;
+    }
+
+    if (getGui()->getApp()->isShowingDialog()) {
         /*
            We may enter a situation where a plug-in called EffectInstance::message to show a dialog
            and would block the main thread until the user would click OK but Qt would request a paintGL() on the viewer
@@ -982,25 +1156,35 @@ ViewerTab::notifyOverlaysFocusLost(const RenderScale & renderScale)
     bool ret = false;
     NodesList nodes;
     getGui()->getNodesEntitledForOverlays(nodes);
+
     for (NodesList::const_iterator it = nodes.begin(); it != nodes.end(); ++it) {
+        if (!supportsNodeOverlay(*it)) {
+            continue;
+        }
+
 #ifdef NATRON_TRANSFORM_AFFECTS_OVERLAYS
         double transformedTime;
         bool ok = _imp->getTimeTransform(time, ViewIdx(0), *it, getInternalNode(), &transformedTime);
+
         if (!ok && appPTR->getCurrentSettings()->viewerOverlaysPath()) {
             // overlay is not visible in current viewer, even though its parameter panel is open.
             continue;
         }
+
         if (ok) {
             time = transformedTime;
         }
+
 #endif
         bool isInActiveViewerUI = _imp->hasInactiveNodeViewerContext(*it);
+
         if (!isInActiveViewerUI) {
             EffectInstancePtr effect = (*it)->getEffectInstance();
             assert(effect);
 
             effect->setCurrentViewportForOverlays_public(_imp->viewer);
             bool didSmthing = effect->onOverlayFocusLost_public(time, renderScale, view);
+
             if (didSmthing) {
                 ret = true;
             }
@@ -1008,9 +1192,10 @@ ViewerTab::notifyOverlaysFocusLost(const RenderScale & renderScale)
     }
 
 
-    if ( !ret && (getGui()->getApp()->getOverlayRedrawRequestsCount() > 0) ) {
+    if (!ret && (getGui()->getApp()->getOverlayRedrawRequestsCount() > 0)) {
         getGui()->getApp()->redrawAllViewers();
     }
+
     getGui()->getApp()->clearOverlayRedrawRequests();
 
     return ret;
