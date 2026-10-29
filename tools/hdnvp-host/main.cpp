@@ -23,6 +23,7 @@
 #include <pxr/imaging/hd/instancerTopologySchema.h>
 #include <pxr/imaging/hd/task.h>
 #include <pxr/imaging/hd/tokens.h>
+#include <pxr/imaging/hdsi/domeLightCameraVisibilitySceneIndex.h>
 #include <pxr/usd/usd/stage.h>
 #include <pxr/usd/usdGeom/camera.h>
 #include <pxr/usdImaging/usdImaging/sceneIndices.h>
@@ -205,7 +206,8 @@ public:
             if(!UsdGeomCamera(stage->GetPrimAtPath(SdfPath("/Natron/Camera"))))throw std::runtime_error("Missing Natron camera");
             index.reset(HdRenderIndex::New(delegate.Get(),HdDriverVector()));
             UsdImagingCreateSceneIndicesInfo info;info.stage=stage;indices=UsdImagingCreateSceneIndices(info);
-            index->InsertSceneIndex(indices.finalSceneIndex,SdfPath::AbsoluteRootPath());scenePath=scene;++sceneOpens;
+            domeVisibility=HdsiDomeLightCameraVisibilitySceneIndex::New(indices.finalSceneIndex);
+            index->InsertSceneIndex(domeVisibility,SdfPath::AbsoluteRootPath());scenePath=scene;++sceneOpens;
         } else {
             // Force generated layers to refresh even for updates within one
             // file-timestamp tick, and batch composition notices. Keep every
@@ -218,6 +220,7 @@ public:
             }else stage->GetRootLayer()->Reload(true);
         }
         sourceRevision=revision;
+        domeVisibility->SetDomeLightCameraVisibility(!(request.count("transparentBackground") && request.at("transparentBackground").GetBool()));
         // Match the composition's per-asset working set after open/reload.
         // The UI's Outline must inspect the same populated stage as Hydra.
         if(auto assets=stage->GetPrimAtPath(SdfPath("/Natron/Assets"))) {
@@ -316,16 +319,18 @@ public:
             {"requests",JsValue(++requests)},{"denoiser",JsValue(denoiser)},{"renderMode",JsValue(std::string(batch?"batch":"interactive"))},
             {"picks",JsValue(picks)},{"revision",JsValue(request.count("revision")?string(request,"revision"):std::string())},
             {"unresolvedPicks",JsValue(unresolvedPicks)},
+            {"plateCompositing",JsValue(true)},
             {"transport",JsValue(std::string(header?"sharedMemory":"files"))},
             {"wallMs",JsValue(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count())},{"stats",JsValue(stats)}};
     }
 private:
     // Destroy tasks/buffers/index before their delegate and its GPU resources.
     void destroyBuffers(){for(auto& buffer:buffers)if(buffer){delegate->DestroyBprim(buffer);buffer=nullptr;}}
-    void clearScene(){task.reset();destroyBuffers();index.reset();indices={};stage.Reset();scenePath.clear();width=height=0;}
+    void clearScene(){task.reset();destroyBuffers();index.reset();domeVisibility.Reset();indices={};stage.Reset();scenePath.clear();width=height=0;}
     HdPluginRenderDelegateUniqueHandle delegate;
     UsdStageRefPtr stage;UsdImagingSceneIndices indices;std::unique_ptr<HdRenderIndex> index;
     std::array<HdRenderBuffer*,6> buffers{};std::shared_ptr<Task> task;
+    HdsiDomeLightCameraVisibilitySceneIndexRefPtr domeVisibility;
     std::string scenePath,sourceRevision;bool loadPayloads=true,batchMode=true;int width=0,height=0;int64_t sceneOpens=0,requests=0;
 };
 }

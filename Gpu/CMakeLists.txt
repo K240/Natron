@@ -49,7 +49,7 @@ add_custom_command(OUTPUT "${display_header}"
 add_library(NatronUfbx STATIC ../libs/ufbx/ufbx.c)
 target_include_directories(NatronUfbx PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../libs/ufbx")
 set_target_properties(NatronUfbx PROPERTIES POSITION_INDEPENDENT_CODE ON AUTOMOC OFF AUTORCC OFF)
-add_library(NatronGpu STATIC VulkanDevice.cpp VulkanMemory.cpp ViewerFrame.cpp ViewerRenderer.cpp RasterViewerRenderer.cpp ViewerDisplayConversion.cpp ImageOperations.cpp FragmentProgram.cpp LutTexture.cpp CardScene.cpp Lighting.cpp Mesh.cpp MeshRenderer.cpp FbxMesh.cpp UsdScene.cpp UsdSceneBridge.cpp UsdStageValue.cpp
+add_library(NatronGpu STATIC VulkanDevice.cpp VulkanMemory.cpp ViewerFrame.cpp ViewerRenderer.cpp RasterViewerRenderer.cpp ViewerDisplayConversion.cpp ImageOperations.cpp FragmentProgram.cpp LutTexture.cpp CardScene.cpp Compositing.cpp Lighting.cpp Mesh.cpp MeshRenderer.cpp FbxMesh.cpp UsdScene.cpp UsdSceneBridge.cpp UsdStageValue.cpp
     "${shader_header}" "${viewer_header}" "${operations_header}" "${display_header}")
 target_compile_features(NatronGpu PUBLIC cxx_std_17)
 target_compile_definitions(NatronGpu PUBLIC VK_NO_PROTOTYPES VOLK_NAMESPACE)

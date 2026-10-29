@@ -21,10 +21,13 @@ struct UsdPrimInfo {
     bool active=true,loaded=true,instance=false,instanceProxy=false,hasChildren=false,hasPayload=false;
     bool hasBounds=false;
     Vec3 minimum,maximum; // world space, right-handed Y-up meters
+    bool hasTransform=false;
+    Matrix transform; // composed world transform in the same native space
     std::vector<std::string> layers,apis;
     std::vector<std::pair<std::string,std::string>> properties;
 };
 struct UsdPrimPage {std::vector<UsdPrimInfo> prims;bool more=false;};
+struct UsdCompositingTarget {std::string path;Compositing value;};
 
 // A published, branch-private composition. No USD handles cross this interface.
 // Source layers are read-only; all authored opinions are in the private root.
@@ -40,9 +43,13 @@ public:
     double timeCode() const;
     double metersPerUnit() const;
     bool loadPayloads() const;
+    std::vector<UsdCompositingTarget> compositingTargets() const;
+    // Private renderer-only lighting probes. The published stage and source
+    // layers remain immutable. Empty receivers request the occluder matte.
+    std::shared_ptr<const UsdSceneValue> compositingProbe(const std::vector<std::string>& receivers, bool reference, bool reflection = false, double roughness = .2) const;
     UsdPrimPage children(const std::string& path="/",size_t offset=0,size_t limit=256) const;
     UsdPrimInfo inspect(const std::string& path) const;
-    Camera camera(const std::string& path) const;
+    Camera camera(const std::string& path, bool retainFilmGate = false) const;
     void saveAssembly(const std::string& filename) const;
     // Renderer transport separates frequently changing camera opinions from
     // geometry/source arcs; returns true only when the latter file changed.

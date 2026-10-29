@@ -66,7 +66,11 @@ def Xform "World" {
         auto mesh=value->inspect("/Natron/Assets/a/Source/Mesh");
         require(mesh.ownerId=="readerA" && mesh.material=="/Natron/Assets/a/Source/Paint","Reference binding/ownership lost");
         require(mesh.hasBounds && std::abs(mesh.minimum.x)<1e-6 && std::abs(mesh.maximum.x-2)<1e-6,"Source root transform was overwritten");
+        require(mesh.hasTransform && std::abs(mesh.transform.point({}).x-1)<1e-6,"Inspector lost the composed world transform");
+        require(!value->inspect("/Natron/Assets/a/Source/Paint").hasTransform,"Material advertised transform controls");
+        require(!value->inspect("/Natron/Assets/a/Source/Off").hasTransform,"Inactive Prim advertised transform controls");
         auto moved=value->inspect("/Natron/Assets/b/Source/Mesh");require(moved.hasBounds && std::abs(moved.minimum.x-5)<1e-6,"Per-source transform failed");
+        require(moved.hasTransform && std::abs(moved.transform.point({}).x-6)<1e-6,"Inspector omitted the asset mounting transform");
         auto sample=[](const UsdPrimInfo& info){for(const auto& p:info.properties)if(p.first=="test:sample")return p.second;return std::string();};
         require(sample(mesh)=="10" && sample(moved)=="20","Independent source sampling failed");
         require(!value->inspect("/Natron/Assets/a/Source/Off").active,"Inactive prim omitted");
@@ -86,6 +90,11 @@ def Xform "World" {
         delta.paths={"/World/Mesh"};
         auto sharedEdit=UsdSceneValue::compose(native,{shot},45,{delta,delta});
         require(std::abs(sharedEdit->inspect("/World/Mesh").minimum.x-3)<1e-6,"Shared upstream USD edit applied more than once");
+        UsdPrimEdit around;around.kind=UsdPrimEdit::Kind::Transform;around.identity="pivot";around.paths={"/World/Mesh","/World"};
+        around.transform=Matrix::transform({1,0,0},{0,0,90},{2,2,2})*Matrix::transform({-1,0,0},{});
+        const auto pivoted=UsdSceneValue::compose(native,{shot},46,{around})->inspect("/World/Mesh");
+        require(pivoted.hasBounds && std::abs((pivoted.minimum.x+pivoted.maximum.x)*.5-1)<1e-6 && std::abs((pivoted.minimum.y+pivoted.maximum.y)*.5)<1e-6,"World pivot moved the selection center");
+        require(std::abs(pivoted.maximum.y-pivoted.minimum.y-4)<1e-6,"Parent and child received the pivot delta twice");
         UsdPrimEdit hide;hide.kind=UsdPrimEdit::Kind::Visibility;hide.paths={"/World/Mesh"};hide.visible=false;
         require(UsdSceneValue::compose(native,{shot},46,{hide})->inspect("/World/Mesh").visibility=="invisible","USD visibility opinion failed");
         UsdPrimEdit bind;bind.kind=UsdPrimEdit::Kind::Material;bind.paths={"/World/Mesh"};bind.materialPath="/World/Paint";
@@ -106,6 +115,7 @@ def Xform "Payload" (prepend payload = @asset.usda@</World>) {}
 )USD");
         auto p=a;p.filename=payload.toStdString();p.loadPayloads=false;
         auto unloaded=UsdSceneValue::compose(native,{p},46);auto item=unloaded->inspect("/Natron/Assets/a/Source");require(item.hasPayload && !item.loaded && !item.hasChildren,"Outline loaded a payload implicitly");
+        require(!item.hasTransform,"Unloaded payload advertised transform controls");
         p.loadPayloads=true;auto loaded=UsdSceneValue::compose(native,{p},47);require(loaded->inspect("/Natron/Assets/a/Source/Mesh").hasBounds,"Explicit payload policy not applied");
         const auto variantFile=directory.filePath(QStringLiteral("variants.usda"));
         auto variants=UsdStage::CreateInMemory();UsdGeomSetStageMetersPerUnit(variants,.01);UsdGeomSetStageUpAxis(variants,UsdGeomTokens->z);variants->SetTimeCodesPerSecond(48);

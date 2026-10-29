@@ -74,6 +74,10 @@ GuiApplicationManager::GuiApplicationManager()
 
 GuiApplicationManager::~GuiApplicationManager()
 {
+    // NodeGui teardown still accesses shared GUI state (notably the node
+    // clipboard). Close instances while this derived manager's private state
+    // is alive, rather than waiting for the AppManager base destructor.
+    quitApplication();
     for (AppShortcuts::iterator it = _imp->_actionShortcuts.begin(); it != _imp->_actionShortcuts.end(); ++it) {
         for (GroupShortcuts::iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
             delete it2->second;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <Python.h>
 #include "Gui/Scene3DViewer.h"
+#include "Gpu/Compositing.h"
 #include <algorithm>
 #include <cmath>
 #include <set>
@@ -34,6 +35,16 @@
 NATRON_NAMESPACE_ENTER
 using namespace Gpu::Cards;
 namespace {
+std::vector<float> compositingPreview(const HdNvpFrame& frame,const Gpu::Cards::Settings& s,const Texture* plate){
+    auto pixels=frame.color;
+    if(s.pass==RenderPass::Color){compositePlate(pixels,frame.shadow,plate,s.width,s.height,frame.reflection);return pixels;}
+    if(s.pass==RenderPass::Reflection){pixels=frame.reflection;if(pixels.empty())pixels.resize(size_t(s.width)*s.height*4);makeReflectionPreview(pixels);return pixels;}
+    pixels.assign(size_t(s.width)*s.height*4,0);
+    for(size_t i=0;i<size_t(s.width)*s.height;++i){
+        const float v=s.pass==RenderPass::Depth?(i<frame.depth.size()?frame.depth[i]:0):s.pass==RenderPass::Shadow?(i*4+3<frame.shadow.size()?frame.shadow[i*4+3]:0):(i<frame.occlusion.size()?frame.occlusion[i]:0);
+        for(int c=0;c<3;++c)pixels[i*4+c]=v;pixels[i*4+3]=s.pass==RenderPass::Depth?float(v>0):1;
+    }return pixels;
+}
 NodePtr findRenderer(const NodePtr& root,std::set<Node*>& seen) {
     if(!root || !seen.insert(root.get()).second)return {};
     if(auto native=dynamic_cast<NativeScene3D*>(root->getEffectInstance().get()))
@@ -64,11 +75,16 @@ Matrix orientation(const Matrix& matrix) {
 }
 struct Ray {Vec3 origin,direction;};
 QString objectKind(Scene3DKind kind) {
-    const char* names[]={"Card","Camera","Axis","TransformGeo","Scene","Project3D","Render3D","ReadGeo","ReadCamera","Light","PBRMaterial","ReadUSD","ReadUSDCamera"};
+    const char* names[]={"Card","Camera","Axis","TransformGeo","Scene","Project3D","Render3D","ReadGeo","ReadCamera","Light","PBRMaterial","ReadUSD","ReadUSDCamera","USDTransform","USDVisibility","BindMaterial","USDCompositing","ReconstructionScene","SceneCamera","SceneSetup","ShadowCatcher","Occluder","ReflectionCatcher"};
     return QString::fromLatin1(names[int(kind)]);
 }
 bool geometryLeaf(Scene3DKind kind){return kind==Scene3DKind::Card || kind==Scene3DKind::ReadGeo || kind==Scene3DKind::ReadUSD;}
-bool cameraKind(Scene3DKind kind){return kind==Scene3DKind::Camera || kind==Scene3DKind::ReadCamera || kind==Scene3DKind::ReadUSDCamera;}
+bool cameraKind(Scene3DKind kind){return kind==Scene3DKind::Camera || kind==Scene3DKind::ReadCamera || kind==Scene3DKind::ReadUSDCamera || kind==Scene3DKind::SceneCamera;}
+std::map<const Node*,std::set<int64_t>> pointSelections(const Scene3DSnapshot& scene){
+    std::map<const Node*,std::set<int64_t>> result;
+    for(const auto& p:scene.guidePoints)if(!result.count(p.owner.get())){auto n=dynamic_cast<NativeScene3D*>(p.owner->getEffectInstance().get());const auto ids=n?n->selectedLandmarks():std::vector<int64_t>();result[p.owner.get()]={ids.begin(),ids.end()};}
+    return result;
+}
 std::vector<Vec3> geometryCorners(const Card& card) {
     if(!card.mesh)return {{-card.width*.5,-card.height*.5,0},{card.width*.5,-card.height*.5,0},{card.width*.5,card.height*.5,0},{-card.width*.5,card.height*.5,0}};
     const auto& lo=card.mesh->bounds.minimum;const auto& hi=card.mesh->bounds.maximum;
@@ -77,8 +93,8 @@ std::vector<Vec3> geometryCorners(const Card& card) {
 }
 Ray rayAt(QPointF position,const QRectF& imageRect,const Camera& camera) {
     const double nx=2*(position.x()-imageRect.left())/imageRect.width()-1+2*camera.offsetX;
-    const double ny=1-2*(position.y()-imageRect.top())/imageRect.height()+2*camera.offsetY*imageRect.width()/imageRect.height();
-    const double tx=camera.orthographic?camera.orthoWidth*.5:camera.aperture/(2*camera.focal),ty=tx*imageRect.height()/imageRect.width();
+    const double ny=1-2*(position.y()-imageRect.top())/imageRect.height()+2*camera.offsetY*camera.filmAspect(imageRect.width()/imageRect.height());
+    const double tx=camera.orthographic?camera.orthoWidth*.5:camera.aperture/(2*camera.focal),ty=tx/camera.filmAspect(imageRect.width()/imageRect.height());
     return {camera.transform.point(camera.orthographic?Vec3{nx*tx,ny*ty,0}:Vec3{}),
             camera.transform.vector(camera.orthographic?Vec3{0,0,-1}:Vec3{nx*tx,ny*ty,-1})};
 }
@@ -103,10 +119,17 @@ QString Scene3DViewer::stageBranch()const {
 QStringList Scene3DViewer::selectedPrimPaths()const {QStringList result;for(const auto& p:_primSelection)result<<QString::fromStdString(p.path);return result;}
 void Scene3DViewer::setPrimSelection(const std::vector<UsdPrimInfo>& prims) {
     if(prims.empty()){_primSelection.clear();update();return;}
-    endDrag();_primSelection=prims;_selection.clear();_selected.reset();_selectedObject=-1;
+    const auto previous=_selected.lock();const auto previousSelection=_selection;
+    _primSelection=prims;_selection.clear();_selected.reset();_selectedObject=-1;
     // Reveal owning nodes while keeping prim-level selection independent.
     std::map<NodeGraph*,NodesGuiList> graphs;std::set<Node*> seen;
-    for(const auto& prim:prims)for(const auto& object:_scene.objects) {
+    // The last matching edit is closest to this branch's output. Re-selecting
+    // its Prims resumes that edit rather than moving the whole imported asset.
+    auto edit=std::find_if(_scene.objects.rbegin(),_scene.objects.rend(),[&](const Scene3DObject& object){return object.targetsPrims(prims);});
+    if(edit!=_scene.objects.rend()) {
+        _selection.push_back(edit->owner);_selected=edit->owner;_selectedObject=int(std::distance(edit,_scene.objects.rend()))-1;
+        if(auto gui=std::dynamic_pointer_cast<NodeGui>(edit->owner->getNodeGui())){gui->ensurePanelCreated();graphs[gui->getDagGui()].push_back(gui);}
+    } else for(const auto& prim:prims)for(const auto& object:_scene.objects) {
         auto native=dynamic_cast<NativeScene3D*>(object.owner->getEffectInstance().get());
         if(native && native->sceneId()==prim.ownerId && seen.insert(object.owner.get()).second) {
             if(auto gui=std::dynamic_pointer_cast<NodeGui>(object.owner->getNodeGui()))graphs[gui->getDagGui()].push_back(gui);
@@ -116,6 +139,9 @@ void Scene3DViewer::setPrimSelection(const std::vector<UsdPrimInfo>& prims) {
             }
         }
     }
+    bool same=previous==_selected.lock() && previousSelection.size()==_selection.size();
+    if(same)for(size_t i=0;i<_selection.size();++i)if(previousSelection[i].lock()!=_selection[i].lock()){same=false;break;}
+    if(!same)endDrag();
     for(const auto& pair:graphs)pair.first->setSelection(pair.second);
     _graphSelection.clear();for(const int index:graphSelectionIndices())_graphSelection.push_back(_scene.objects[index].owner);
     updateHandles();update();
@@ -125,6 +151,7 @@ void Scene3DViewer::endDrag() {
     _dragAxis=-1;_dragKnob.reset();_dragTargets.clear();_marquee=false;
 }
 void Scene3DViewer::setGizmoMode(int mode) {
+    if(_pointSelectionMode)setPointSelectionMode(false);
     mode=std::clamp(mode,0,2);if(mode==_gizmoMode)return;
     endDrag();_gizmoMode=mode;updateHandles();Q_EMIT gizmoModeChanged(mode);update();
 }
@@ -145,9 +172,10 @@ QVariantList Scene3DViewer::sceneObjects() const {
     for(size_t i=0;i<_scene.objects.size();++i) {
         const auto& object=_scene.objects[i];const Vec3 center=object.transform.point({});QVariantMap info;
         info[QStringLiteral("node")]=QString::fromStdString(object.owner->getScriptName_mt_safe());info[QStringLiteral("kind")]=objectKind(object.kind);
-        info[QStringLiteral("time")]=object.time;info[QStringLiteral("editable")]=object.time==_time;info[QStringLiteral("renderCamera")]=object.renderCamera;
+        info[QStringLiteral("time")]=object.time;info[QStringLiteral("editable")]=object.time==_time && object.kind!=Scene3DKind::SceneCamera;info[QStringLiteral("renderCamera")]=object.renderCamera;
         info[QStringLiteral("projectionCamera")]=object.projectionCamera;info[QStringLiteral("worldOrigin")]=QVariantList{center.x,center.y,center.z};
         info[QStringLiteral("cameraAspect")]=object.cameraAspect;
+        if(object.itemIndex>=0 && size_t(object.itemIndex)<_scene.items.size())info[QStringLiteral("compositingRole")]=int(_scene.items[object.itemIndex].card.compositing.role);
         if(i<_objectDisplay.size()) {
             info[QStringLiteral("icon")]=_objectDisplay[i].icon;info[QStringLiteral("visible")]=_objectDisplay[i].visible;
             info[QStringLiteral("frustum")]=QVariant::fromValue(_objectDisplay[i].farPlane);
@@ -163,7 +191,7 @@ void Scene3DViewer::setLookThroughCamera(bool value) {
     endDrag();_lookThrough=value;_dirty=true;Q_EMIT lookThroughCameraChanged(value);refreshScene();
 }
 void Scene3DViewer::lookThroughPrim(const QString& path,const Camera& camera) {
-    if(_lookThrough && _lookCameraPath==path && _lookCamera.transform.m==camera.transform.m && _lookCamera.focal==camera.focal && _lookCamera.aperture==camera.aperture && _lookCamera.orthographic==camera.orthographic && _lookCamera.orthoWidth==camera.orthoWidth && _lookCamera.nearClip==camera.nearClip && _lookCamera.farClip==camera.farClip && _lookCamera.offsetX==camera.offsetX && _lookCamera.offsetY==camera.offsetY)return;
+    if(_lookThrough && _lookCameraPath==path && _lookCamera.transform.m==camera.transform.m && _lookCamera.focal==camera.focal && _lookCamera.aperture==camera.aperture && _lookCamera.apertureAspect==camera.apertureAspect && _lookCamera.orthographic==camera.orthographic && _lookCamera.orthoWidth==camera.orthoWidth && _lookCamera.nearClip==camera.nearClip && _lookCamera.farClip==camera.farClip && _lookCamera.offsetX==camera.offsetX && _lookCamera.offsetY==camera.offsetY)return;
     endDrag();_lookCameraPath=path;_lookCamera=camera;_lookThrough=true;_dirty=true;Q_EMIT lookThroughCameraChanged(true);refreshScene();
 }
 void Scene3DViewer::resetView(){endDrag();_yaw=25;_pitch=-15;_distance=7;_pivot={};_dirty=true;refreshScene();}
@@ -172,8 +200,13 @@ void Scene3DViewer::frameSelection() {
     const auto objects=selectedObjects();
     const bool includeScene=objects.empty() || std::any_of(objects.begin(),objects.end(),[](const Scene3DObject* object){return object->itemIndex<0;});
     std::vector<Vec3> points;
+    const auto selections=pointSelections(_scene);bool framingPoints=false;
+    if(_pointSelectionMode)for(const auto& entry:selections)if(!entry.second.empty())framingPoints=true;
+    if(_primSelection.empty() && includeScene){
+        for(const auto& p:_scene.guidePoints)if(!framingPoints||selections.at(p.owner.get()).count(p.trackId))points.push_back(p.position);
+    }
     for(const auto& prim:_primSelection)if(prim.hasBounds)for(int i=0;i<8;++i)points.push_back({i&1?prim.maximum.x:prim.minimum.x,i&2?prim.maximum.y:prim.minimum.y,i&4?prim.maximum.z:prim.minimum.z});
-    for(const auto& item:_scene.items)if(_primSelection.empty() && (includeScene || isSelected(item.owner))) {
+    for(const auto& item:_scene.items)if(!framingPoints && _primSelection.empty() && (includeScene || isSelected(item.owner))) {
         const auto& card=item.card;
         if(!card.bindingPaths.empty())continue;
         if(card.opacity<=0 || (card.mesh && card.mesh->triangles.empty()))continue;
@@ -182,7 +215,7 @@ void Scene3DViewer::frameSelection() {
     // Geometry may be offset from its node origin (especially deformed FBX).
     // Only non-geometry selections need their editor origins included in the fit.
     const bool geometryEmpty=points.empty();
-    for(const auto object:objects)if(_primSelection.empty() && (object->itemIndex<0 || geometryEmpty))points.push_back(object->transform.point({}));
+    for(const auto object:objects)if(!framingPoints && _primSelection.empty() && (object->itemIndex<0 || geometryEmpty))points.push_back(object->transform.point({}));
     if(points.empty()){_pivot={};_distance=7;}
     else {
         Vec3 lo=points.front(),hi=lo;
@@ -271,8 +304,9 @@ void Scene3DViewer::refreshScene() {
             Format format;source->getApp()->getProject()->getProjectDefaultFormat(&format);
             _settings.height=std::max(1,int(double(_settings.width)*format.height()/(format.width()*format.getPixelAspectRatio())));
         }
-        const bool depthPreview=native->depthPreviewAt(time,_tab->getCurrentView());
-        _settings.pass=depthPreview?RenderPass::Depth:RenderPass::Color;
+        _settings.pass=native->displayPassAt(time,_tab->getCurrentView());
+        _plate=(_lookThrough && _lookCameraPath.isEmpty())?native->backgroundAt(time,_tab->getCurrentView(),true):nullptr;
+        _settings.transparentBackground=bool(_plate);
         _settings.lights=_scene.lights;
         _settings.edits=_scene.usdEdits;
         _settings.stageCamera=std::make_shared<Camera>(_scene.camera);
@@ -291,12 +325,11 @@ void Scene3DViewer::refreshScene() {
                     if(!reply.error.isEmpty()){_error=reply.error;update();return;}
                     setProperty("hdNvpReport",QString::fromStdString(reply.frame.report));
                     _pickFrame={};_pickFrame.revision=reply.frame.revision;_pickFrame.primIds=std::move(reply.frame.primIds);_pickFrame.instanceIds=std::move(reply.frame.instanceIds);_pickFrame.picks=std::move(reply.frame.picks);
-                    auto pixels=std::move(reply.frame.color);
-                    if(_settings.pass==RenderPass::Depth)for(size_t i=0;i<reply.frame.depth.size();++i){for(int c=0;c<3;++c)pixels[i*4+c]=reply.frame.depth[i];pixels[i*4+3]=reply.frame.depth[i]>0?1.f:0.f;}
+                    auto pixels=compositingPreview(reply.frame,_settings,_plate.get());
                     _error.clear();applyPixels(std::move(pixels));
                 });
             }
-            const auto bridge=_usdBridge;const auto cards=_cards;const auto camera=_camera;const auto settings=_settings;const auto sources=_scene.usdSources;
+            const auto bridge=_usdBridge;const auto cards=_cards;const auto camera=_camera;const auto settings=_settings;const auto sources=_scene.usdSources;const auto plate=_plate;
             const auto quality=native->hdNvpSettingsAt(time,_tab->getCurrentView(),true);
             _previewValueBefore=_usdBridge->sceneValue();
             _outlineReset=reload;
@@ -306,10 +339,10 @@ void Scene3DViewer::refreshScene() {
             _previewCancelled=std::make_shared<std::atomic<bool>>(false);const auto cancelled=_previewCancelled;
             const QPointer<Scene3DViewer> target(this);
             const auto pending=std::make_shared<std::atomic<bool>>(false);
-            _previewWatcher->setFuture(QtConcurrent::run([bridge,cards,camera,settings,sources,quality,cancelled,target,pending]{PreviewReply reply;try{
-                reply.frame=bridge->render(cards,camera,settings,quality,[cancelled]{return cancelled->load();},sources,[target,cancelled,settings,pending](const HdNvpFrame& frame){
+            _previewWatcher->setFuture(QtConcurrent::run([bridge,cards,camera,settings,sources,quality,cancelled,target,pending,plate]{PreviewReply reply;try{
+                reply.frame=bridge->render(cards,camera,settings,quality,[cancelled]{return cancelled->load();},sources,[target,cancelled,settings,pending,plate](const HdNvpFrame& frame){
                     if(!target || pending->exchange(true))return;
-                    auto pixels=frame.color;if(settings.pass==RenderPass::Depth)for(size_t i=0;i<frame.depth.size();++i){for(int c=0;c<3;++c)pixels[i*4+c]=frame.depth[i];pixels[i*4+3]=frame.depth[i]>0?1.f:0.f;}
+                    auto pixels=compositingPreview(frame,settings,plate.get());
                     QMetaObject::invokeMethod(target,[target,cancelled,pending,pixels=std::move(pixels)]()mutable{pending->store(false);if(target && !cancelled->load() && !target->_dirty){target->setProperty("progressiveFrames",target->property("progressiveFrames").toInt()+1);target->applyPixels(std::move(pixels));}},Qt::QueuedConnection);
                 });
             }catch(const std::exception& e){reply.error=QString::fromUtf8(e.what());}return reply;}));
@@ -320,6 +353,15 @@ void Scene3DViewer::refreshScene() {
             pixels=_renderer->render(_cards,_camera,_settings);_backend=QStringLiteral("Vulkan");
         }catch(const std::exception&) {pixels=renderCpu(_cards,_camera,_settings);_backend=QStringLiteral("CPU");}
         if(_stageValue){_stageValue.reset();Q_EMIT stageValueChanged(true);}
+        if(_settings.pass==RenderPass::Color){auto shadowSettings=_settings;shadowSettings.pass=RenderPass::Shadow;std::vector<float> shadow;
+            if(std::any_of(_cards.begin(),_cards.end(),[](const auto& c){return catchesShadows(c.compositing.role);})){
+                if(_backend==QStringLiteral("Vulkan"))try{shadow=_renderer->render(_cards,_camera,shadowSettings);}catch(const std::exception&){shadow=renderCpu(_cards,_camera,shadowSettings);}
+                else shadow=renderCpu(_cards,_camera,shadowSettings);
+            }
+            std::vector<float> reflection;if(std::any_of(_cards.begin(),_cards.end(),[](const auto& c){return catchesReflections(c.compositing.role) && c.compositing.reflectionStrength>0;})){auto rs=_settings;rs.pass=RenderPass::Reflection;reflection=renderCpu(_cards,_camera,rs);}
+            compositePlate(pixels,shadow,_plate.get(),_settings.width,_settings.height,reflection);
+        }else if(_settings.pass==RenderPass::Reflection)makeReflectionPreview(pixels);
+        else if(_settings.pass==RenderPass::Shadow || _settings.pass==RenderPass::Occlusion){for(size_t i=0;i<pixels.size();i+=4){const float v=_settings.pass==RenderPass::Shadow?pixels[i+3]:pixels[i];for(int c=0;c<3;++c)pixels[i+c]=v;pixels[i+3]=1;}}
         applyPixels(std::move(pixels));
     }catch(const std::exception& e){endDrag();_handlesVisible=false;_snapshotValid=false;_objectDisplay.clear();_scene={};_cards.clear();_selectedObject=-1;_error=QString::fromUtf8(e.what());_frame={};if(_stageValue){_stageValue.reset();Q_EMIT stageValueChanged(true);}}
     update();
@@ -352,7 +394,7 @@ void Scene3DViewer::applyPixels(std::vector<float> pixels) {
 QPointF Scene3DViewer::project(Vec3 world,bool* visible) const {
     const Vec3 q=_camera.transform.inverse().point(world);
     const double aspect=double(_settings.width)/_settings.height;
-    const double tx=_camera.orthographic?_camera.orthoWidth*.5:_camera.aperture/(2*_camera.focal),ty=tx/aspect;
+    const double tx=_camera.orthographic?_camera.orthoWidth*.5:_camera.aperture/(2*_camera.focal),ty=tx/_camera.filmAspect(aspect);
     const bool valid=-q.z>_camera.nearClip;
     if(visible)*visible=valid;if(!valid)return {-100000,-100000};
     const double nx=(_camera.orthographic?q.x/tx:q.x/(-q.z*tx))-2*_camera.offsetX,ny=(_camera.orthographic?q.y/ty:q.y/(-q.z*ty))-2*_camera.offsetY*tx/ty;
@@ -420,6 +462,9 @@ void Scene3DViewer::selectObjects(const std::vector<int>& indices,bool updateGra
     QStringList paths;for(const auto& weak:_selection)if(auto node=weak.lock())if(auto native=dynamic_cast<NativeScene3D*>(node->getEffectInstance().get())) {
         if(geometryLeaf(native->kind()) && native->kind()!=Scene3DKind::ReadUSD)paths<<QStringLiteral("/Natron/Geometry/n_")+QString::fromStdString(native->sceneId());
         else if(native->kind()==Scene3DKind::Light)paths<<QStringLiteral("/Natron/Lights/n_")+QString::fromStdString(native->sceneId());
+        else if(native->kind()==Scene3DKind::USDTransform) {
+            for(const auto& object:_scene.objects)if(object.owner==node){for(const auto& path:object.primPaths)paths<<QString::fromStdString(path);break;}
+        }
     }Q_EMIT primPathsSelected(paths);
 }
 bool Scene3DViewer::syncGraphSelection() {
@@ -445,7 +490,7 @@ void Scene3DViewer::updateObjects() {
         for(int plane=0;plane<2;++plane) {
             const double z=plane?depth:nearDepth;
             const double halfWidth=camera.orthographic?camera.orthoWidth*.5:z*camera.aperture/(2*camera.focal);
-            const double halfHeight=halfWidth/object.cameraAspect;
+            const double halfHeight=halfWidth/camera.filmAspect(object.cameraAspect);
             QPolygonF polygon;bool allVisible=true;
             for(const Vec3 p:std::array<Vec3,4>{{{-halfWidth,-halfHeight,-z},{halfWidth,-halfHeight,-z},{halfWidth,halfHeight,-z},{-halfWidth,halfHeight,-z}}}) {
                 polygon<<project(camera.transform.point(p+Vec3{2*halfWidth*camera.offsetX,2*halfWidth*camera.offsetY,0}),&visible);allVisible &= visible;
@@ -456,7 +501,8 @@ void Scene3DViewer::updateObjects() {
 }
 void Scene3DViewer::updateHandles() {
     _handlesVisible=false;for(auto& ring:_rotationRings)ring.clear();
-    const auto item=selectedObject();if(!item || _frame.isNull() || item->time!=_time)return;
+    if(_pointSelectionMode)return;
+    const auto item=selectedObject();if(!item || _frame.isNull() || item->time!=_time || item->kind==Scene3DKind::SceneCamera)return;
     const auto objects=selectedObjects();const bool multiple=objects.size()>1;
     if(multiple && std::any_of(objects.begin(),objects.end(),[&](const Scene3DObject* object){return !geometryLeaf(object->kind) || object->time!=_time;}))return;
     const Vec3 center=multiple && _gizmoMode==0?selectionCenter():item->transform.point({});bool visible;
@@ -528,11 +574,18 @@ void Scene3DViewer::paintEvent(QPaintEvent*) {
             bool visible;polygon<<project(item.card.transform.point(p),&visible);allVisible &= visible;
         }
         if(!allVisible)continue;
-        painter.setPen(QPen(active?QColor(255,200,70):QColor(190,190,190),active?2:1));
+        const auto role=item.card.compositing.role;
+        painter.setPen(QPen(active?QColor(255,200,70):role==GeometryRole::Occluder?QColor(80,190,255):catchesReflections(role)?QColor(80,220,190):catchesShadows(role)?QColor(190,130,240):QColor(190,190,190),active?2:1));
         if(item.card.mesh) {
             for(int j=0;j<4;++j){painter.drawLine(polygon[j],polygon[(j+1)%4]);painter.drawLine(polygon[j+4],polygon[(j+1)%4+4]);painter.drawLine(polygon[j],polygon[j+4]);}
         }else painter.drawPolygon(polygon);
         if(active)painter.drawText(polygon[3]+QPointF(4,-4),QString::fromStdString(item.owner->getLabel()));
+    }
+    const auto selections=pointSelections(_scene);
+    for(const auto& point:_scene.guidePoints){bool visible=false;const auto pixel=project(point.position,&visible);if(!visible)continue;
+        const bool selected=selections.at(point.owner.get()).count(point.trackId)!=0;
+        painter.setPen(QPen(selected?QColor(255,180,55):QColor(100,230,140),selected?7:3));painter.drawPoint(pixel);
+        if(selected)painter.drawText(pixel+QPointF(6,-4),QString::number(point.trackId));
     }
     if(_handlesVisible) {
         const std::array<QColor,3> colors{QColor(255,90,90),QColor(90,230,110),QColor(90,140,255)};
@@ -592,6 +645,7 @@ void Scene3DViewer::paintEvent(QPaintEvent*) {
     if(_previewRunning)title+=tr(" · Rendering...");
     if(!_primSelection.empty())title+=tr(" · %1 prims selected").arg(_primSelection.size());
     if(_settings.pass==Gpu::Cards::RenderPass::Depth)title+=QStringLiteral(" · ")+tr("Depth preview");
+    if(_settings.pass==Gpu::Cards::RenderPass::Reflection)title+=QStringLiteral(" · ")+tr("Reflection contribution (gray = unchanged)");
     const auto objects=selectedObjects();
     if(objects.size()>1)title+=tr(" · %1 objects selected").arg(objects.size());
     else if(const auto object=selectedObject())title+=QStringLiteral(" · ")+objectKind(object->kind)+QStringLiteral(": ")+QString::fromStdString(object->owner->getLabel());
@@ -600,6 +654,7 @@ void Scene3DViewer::paintEvent(QPaintEvent*) {
     else if(const auto object=selectedObject())if(object->time!=_time)
         painter.drawText(12,38,tr("Fixed projection: edit this camera at reference frame %1").arg(object->time));
     painter.drawText(12,height()-12,tr("W/E/R: tools   Shift: add   Box: select   Alt: orbit   Middle: pan   Wheel: dolly   F: frame"));
+    if(_pointSelectionMode)painter.drawText(12,38,tr("Points mode: click landmarks; Shift adds/removes. Use SceneSetup controls for ground, scale and placement."));
 }
 int Scene3DViewer::hitObject(QPointF position) const {
     if(_previewRunning)return -1;
@@ -634,6 +689,36 @@ void Scene3DViewer::selectAt(QPointF position) {
         try{setPrimSelection({_stageValue->inspect(path.toStdString())});Q_EMIT primPathsSelected({path});}catch(const std::exception&){}return;
     }
     selectObject(hitObject(position),true);
+}
+void Scene3DViewer::setPointSelectionMode(bool enabled){
+    if(enabled==_pointSelectionMode)return;endDrag();_pointSelectionMode=enabled;
+    if(enabled){selectObjects({},false);_primSelection.clear();Q_EMIT primPathsSelected({});}
+    updateHandles();update();Q_EMIT pointSelectionModeChanged(enabled);
+}
+QVariantList Scene3DViewer::guideLandmarks()const{
+    QVariantList result;const auto selections=pointSelections(_scene);
+    for(const auto& point:_scene.guidePoints){bool visible=false;const auto pixel=project(point.position,&visible);
+        result.push_back(QVariantMap{{QStringLiteral("id"),QString::number(point.trackId)},{QStringLiteral("node"),QString::fromStdString(point.owner->getScriptName())},
+            {QStringLiteral("position"),QVariantList{point.position.x,point.position.y,point.position.z}},{QStringLiteral("pixel"),pixel},
+            {QStringLiteral("visible"),visible && _imageRect.contains(pixel)},{QStringLiteral("selected"),selections.at(point.owner.get()).count(point.trackId)!=0},
+            {QStringLiteral("rms"),point.errorPixels}});
+    }return result;
+}
+int Scene3DViewer::hitLandmark(QPointF position)const{
+    double distance=8;int hit=-1;double nearestDepth=1e100;const auto inverse=_camera.transform.inverse();
+    for(size_t i=0;i<_scene.guidePoints.size();++i){const auto& point=_scene.guidePoints[i];auto owner=dynamic_cast<NativeScene3D*>(point.owner->getEffectInstance().get());
+        if(!owner || owner->kind()!=Scene3DKind::SceneSetup)continue;bool visible=false;const auto p=project(point.position,&visible);if(!visible || !_imageRect.contains(p))continue;
+        const double d=QLineF(position,p).length(),depth=-inverse.point(point.position).z;
+        if(d<distance-.25 || (d<distance+.25 && depth<nearestDepth)){distance=d;nearestDepth=depth;hit=int(i);}
+    }return hit;
+}
+void Scene3DViewer::selectLandmark(int index,bool add){
+    Scene3DGuidePoint chosen;if(index>=0)chosen=_scene.guidePoints[size_t(index)];
+    if(!add){std::set<Node*> owners;for(const auto& p:_scene.guidePoints)if(owners.insert(p.owner.get()).second)if(auto n=dynamic_cast<NativeScene3D*>(p.owner->getEffectInstance().get()))n->selectLandmarks({});}
+    if(index>=0)if(auto n=dynamic_cast<NativeScene3D*>(chosen.owner->getEffectInstance().get())){
+        auto ids=n->selectedLandmarks();const auto it=std::find(ids.begin(),ids.end(),chosen.trackId);if(it==ids.end())ids.push_back(chosen.trackId);else if(add)ids.erase(it);n->selectLandmarks(ids);
+        if(auto gui=std::dynamic_pointer_cast<NodeGui>(chosen.owner->getNodeGui())){gui->getDagGui()->selectNode(gui,false);gui->setVisibleSettingsPanel(true);}
+    }_dirty=true;refreshScene();update();
 }
 QString Scene3DViewer::primAt(QPointF position)const {
     if(_previewRunning || _dirty || !_stageValue || _pickFrame.revision!=_stageValue->revision() || !_imageRect.contains(position))return {};
@@ -683,6 +768,7 @@ void Scene3DViewer::mousePressEvent(QMouseEvent* event) {
     setFocus();endDrag();refreshScene();_lastMouse=_dragStart=event->position();
     if(!_error.isEmpty()){event->accept();return;}
     if(event->button()==Qt::LeftButton && !(event->modifiers()&Qt::AltModifier)) {
+        if(_pointSelectionMode){selectLandmark(hitLandmark(event->position()),bool(event->modifiers()&Qt::ShiftModifier));event->accept();return;}
         if(event->modifiers()&Qt::ShiftModifier) {
             _marquee=true;_marqueeAdd=true;_marqueeEnd=_dragStart;_marqueeStartHit=hitObject(_dragStart);_dragTime=_time;
             event->accept();return;
@@ -852,6 +938,7 @@ void Scene3DViewer::keyPressEvent(QKeyEvent* event) {
     }else if(event->key()==Qt::Key_F) {
         frameSelection();event->accept();
     }else if(event->key()==Qt::Key_H){setLookThroughCamera(!_lookThrough);event->accept();}
+    else if(event->key()==Qt::Key_P){setPointSelectionMode(!_pointSelectionMode);event->accept();}
     else QWidget::keyPressEvent(event);
 }
 void Scene3DViewer::resizeEvent(QResizeEvent* event){endDrag();QWidget::resizeEvent(event);_dirty=true;}

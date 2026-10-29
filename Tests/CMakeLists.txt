@@ -18,9 +18,41 @@
 # ***** END LICENSE BLOCK *****
 
 set(Tests_HEADERS BaseTest.h)
+add_executable(NatronCompositing Compositing_Test.cpp)
+target_link_libraries(NatronCompositing PRIVATE NatronGpu Qt6::Core Qt6::Gui)
+set_target_properties(NatronCompositing PROPERTIES AUTOMOC OFF AUTORCC OFF)
+add_test(NAME CompositingCpu COMMAND NatronCompositing)
+set_tests_properties(CompositingCpu PROPERTIES TIMEOUT 60)
+add_executable(NatronReflection Reflection_Test.cpp)
+target_link_libraries(NatronReflection PRIVATE NatronGpu Qt6::Core Qt6::Gui)
+set_target_properties(NatronReflection PROPERTIES AUTOMOC OFF AUTORCC OFF)
+add_test(NAME ReflectionCpu COMMAND NatronReflection)
+set_tests_properties(ReflectionCpu PROPERTIES TIMEOUT 90)
+add_executable(NatronCameraSolve CameraSolve_Test.cpp)
+target_link_libraries(NatronCameraSolve PRIVATE NatronReconstruction)
+set_target_properties(NatronCameraSolve PROPERTIES AUTOMOC OFF AUTORCC OFF)
+add_test(NAME CameraSolveCpu COMMAND NatronCameraSolve)
+set_tests_properties(CameraSolveCpu PROPERTIES TIMEOUT 90)
+add_executable(NatronFeatureTracking FeatureTracking_Test.cpp)
+target_link_libraries(NatronFeatureTracking PRIVATE NatronReconstruction Qt6::Core Qt6::Gui)
+set_target_properties(NatronFeatureTracking PROPERTIES AUTOMOC OFF AUTORCC OFF)
+add_test(NAME FeatureTrackingCpu COMMAND NatronFeatureTracking)
+set_tests_properties(FeatureTrackingCpu PROPERTIES TIMEOUT 120)
+add_executable(NatronCameraIntrinsics CameraIntrinsics_Test.cpp)
+target_link_libraries(NatronCameraIntrinsics PRIVATE NatronReconstruction)
+set_target_properties(NatronCameraIntrinsics PROPERTIES AUTOMOC OFF AUTORCC OFF)
+add_test(NAME CameraIntrinsicsCpu COMMAND NatronCameraIntrinsics)
+set_tests_properties(CameraIntrinsicsCpu PROPERTIES TIMEOUT 180)
+add_executable(NatronSceneFrame SceneFrame_Test.cpp)
+target_link_libraries(NatronSceneFrame PRIVATE NatronReconstruction)
+set_target_properties(NatronSceneFrame PROPERTIES AUTOMOC OFF AUTORCC OFF)
+add_test(NAME SceneFrameCpu COMMAND NatronSceneFrame)
+set_tests_properties(SceneFrameCpu PROPERTIES TIMEOUT 90)
 if(NATRON_ENABLE_USD)
     find_package(pxr CONFIG REQUIRED)
     add_executable(NatronUsdSceneBridge UsdSceneBridge_Test.cpp)
+    add_dependencies(NatronCompositing NatronUsdSceneBridge)
+    add_dependencies(NatronReflection NatronUsdSceneBridge)
     # These USD executables share one runtime directory. Deploy schema resources
     # once so concurrent post-build copies cannot overwrite each other.
     natron_deploy_usd_resources(NatronUsdSceneBridge)
@@ -33,6 +65,13 @@ if(NATRON_ENABLE_USD)
     target_compile_definitions(NatronUsdStageValue PRIVATE QT_NO_KEYWORDS)
     add_test(NAME UsdStageComposition COMMAND NatronUsdStageValue)
     set_tests_properties(UsdStageComposition PROPERTIES TIMEOUT 60)
+    add_executable(NatronCameraSolveUsd CameraSolveUsd_Test.cpp)
+    add_dependencies(NatronCameraSolveUsd NatronUsdSceneBridge)
+    target_link_libraries(NatronCameraSolveUsd PRIVATE NatronReconstruction NatronReconstructionUsd NatronGpu Qt6::Core)
+    target_compile_definitions(NatronCameraSolveUsd PRIVATE QT_NO_KEYWORDS)
+    set_target_properties(NatronCameraSolveUsd PROPERTIES AUTOMOC OFF AUTORCC OFF)
+    add_test(NAME CameraSolveUsd COMMAND NatronCameraSolveUsd)
+    set_tests_properties(CameraSolveUsd PROPERTIES TIMEOUT 90)
     add_executable(NatronUsdScene UsdScene_Test.cpp UsdTexture_Test.cpp)
     add_dependencies(NatronUsdScene NatronUsdSceneBridge)
     target_link_libraries(NatronUsdScene PRIVATE NatronGpu usdUtils Qt6::Gui)
@@ -55,6 +94,7 @@ set(Tests_SOURCES
     Lut_Test.cpp
     OfxDrawSuite_Test.cpp
     OverlayDrawList_Test.cpp
+    SchedulerShutdown_Test.cpp
     Tracker_Test.cpp
     wmain.cpp
 )

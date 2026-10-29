@@ -115,6 +115,7 @@
 #include "Engine/GroupOutput.h"
 #include "Engine/JoinViewsNode.h"
 #include "Engine/NativeScene3D.h"
+#include "Engine/CameraTracker.h"
 #include "Engine/LibraryBinary.h"
 #include "Engine/Log.h"
 #include "Engine/MemoryInfo.h" // getSystemTotalRAM, printAsRAM
@@ -1477,6 +1478,8 @@ AppManager::loadBuiltinNodePlugins(IOPluginsMap* /*readersMap*/,
     registerBuiltInPlugin<RotoSmear>(QString::fromUtf8(""), false, true);
     registerBuiltInPlugin<PrecompNode>(QString::fromUtf8(NATRON_IMAGES_PATH "precompNodeIcon.png"), false, false);
     registerBuiltInPlugin<TrackerNode>(QString::fromUtf8(NATRON_IMAGES_PATH "trackerNodeIcon.png"), false, false);
+    registerBuiltInPlugin<CameraTracker>(QString(), false, false);
+    registerBuiltInPlugin<CameraTrackerUndistort>(QString(), false, false);
     registerBuiltInPlugin<JoinViewsNode>(QString::fromUtf8(NATRON_IMAGES_PATH "joinViewsNode.png"), false, false);
     registerBuiltInPlugin<OneViewNode>(QString::fromUtf8(NATRON_IMAGES_PATH "oneViewNode.png"), false, false);
     registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::Card>>(QString(), false, false);
@@ -1496,6 +1499,12 @@ AppManager::loadBuiltinNodePlugins(IOPluginsMap* /*readersMap*/,
     registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::USDVisibility>>(QString(), false, false);
     registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::BindMaterial>>(QString(), false, false);
     registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::USDCompositing>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::ReconstructionScene>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::SceneCamera>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::SceneSetup>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::ShadowCatcher>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::Occluder>>(QString(), false, false);
+    registerBuiltInPlugin<BuiltinScene3D<Scene3DKind::ReflectionCatcher>>(QString(), false, false);
 #ifdef NATRON_ENABLE_IO_META_NODES
     registerBuiltInPlugin<ReadNode>(QString::fromUtf8(NATRON_IMAGES_PATH "readImage.png"), false, false);
     registerBuiltInPlugin<WriteNode>(QString::fromUtf8(NATRON_IMAGES_PATH "writeImage.png"), false, false);

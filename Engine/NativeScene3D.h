@@ -7,10 +7,25 @@
 #include "Gpu/FbxMesh.h"
 #include "Gpu/UsdScene.h"
 #include "Gpu/UsdSceneBridge.h"
+#include "Scene/SceneFrame.h"
 #include <mutex>
 
 NATRON_NAMESPACE_ENTER
-enum class Scene3DKind { Card, Camera, Axis, TransformGeo, Scene, Project3D, Render3D, ReadGeo, ReadCamera, Light, PBRMaterial, ReadUSD, ReadUSDCamera, USDTransform, USDVisibility, BindMaterial, USDCompositing };
+enum class Scene3DKind { Card, Camera, Axis, TransformGeo, Scene, Project3D, Render3D, ReadGeo, ReadCamera, Light, PBRMaterial, ReadUSD, ReadUSDCamera, USDTransform, USDVisibility, BindMaterial, USDCompositing, ReconstructionScene, SceneCamera, SceneSetup, ShadowCatcher, Occluder, ReflectionCatcher };
+struct ReconstructionLayoutState;
+struct Scene3DGuidePoint {
+    Gpu::Cards::Vec3 position;
+    int64_t trackId=0;
+    NodePtr owner,source;
+    double errorPixels=0;
+};
+struct Scene3DReconstruction {
+    NodePtr owner;
+    std::shared_ptr<const Scene::CameraReconstruction> value;
+    std::string fingerprint;
+    bool metricScale=false;
+    double clipScale=1, imagePixelAspect=1;
+};
 struct Scene3DMapSource {
     EffectInstancePtr source;
     unsigned channel = 0;
@@ -37,6 +52,15 @@ struct Scene3DObject {
     double time = 0, cameraAspect = 1;
     int itemIndex = -1;
     bool worldSpace = false, renderCamera = false, projectionCamera = false;
+    std::vector<std::string> primPaths; // USDTransform's exact branch targets
+    bool targetsPrims(const std::vector<Gpu::Cards::UsdPrimInfo>& prims) const {
+        if(kind!=Scene3DKind::USDTransform || prims.empty() || primPaths.size()!=prims.size())return false;
+        for(const auto& prim:prims) {
+            bool found=false;for(const auto& path:primPaths)if(path==prim.path){found=true;break;}
+            if(!found)return false;
+        }
+        return true;
+    }
 };
 struct Scene3DSnapshot {
     struct EnvironmentSource {size_t lightIndex=0;EffectInstancePtr source;double time=0;};
@@ -46,6 +70,8 @@ struct Scene3DSnapshot {
     std::vector<EnvironmentSource> environmentSources;
     std::vector<Gpu::Cards::UsdSceneSource> usdSources;
     std::vector<Gpu::Cards::UsdPrimEdit> usdEdits;
+    std::vector<Scene3DGuidePoint> guidePoints;
+    std::vector<Scene3DReconstruction> reconstructions;
     Gpu::Cards::Camera camera;
 };
 class NativeScene3D : public EffectInstance {
@@ -89,10 +115,18 @@ public:
     int rendererBackendAt(double time,ViewIdx view) const;
     Gpu::Cards::HdNvpSettings hdNvpSettingsAt(double time,ViewIdx view,bool draft) const;
     KnobDoublePtr translationKnob() const {return _translate.lock();}
+    std::vector<int64_t> selectedLandmarks() const;
+    void selectLandmarks(const std::vector<int64_t>& ids);
+    void layoutAction(const std::string& action);
     static const ImagePlaneDesc& depthPlane();
     static const ImagePlaneDesc& albedoPlane();
     static const ImagePlaneDesc& normalPlane();
     static const ImagePlaneDesc& positionPlane();
+    static const ImagePlaneDesc& shadowPlane();
+    static const ImagePlaneDesc& occlusionPlane();
+    static const ImagePlaneDesc& reflectionPlane();
+    Gpu::Cards::RenderPass displayPassAt(double time,ViewIdx view)const;
+    std::shared_ptr<const Gpu::Cards::Texture> backgroundAt(double time,ViewIdx view,bool draft)const;
     bool depthPreviewAt(double time, ViewIdx view) const;
     std::array<double,2> depthPreviewRangeAt(double time, ViewIdx view) const;
 protected:
@@ -103,6 +137,12 @@ protected:
     void getComponentsNeededAndProduced(double time, ViewIdx view, ComponentsNeededMap* comps,
                                         double* passTime, int* passView, int* passInput) override;
 private:
+    void initializeLayoutKnobs(const KnobPagePtr& page);
+    Gpu::Cards::Compositing compositingAt(double time,ViewIdx view)const;
+    bool layoutKnobChanged(KnobI* knob);
+    void updateLayoutStatus();
+    Scene3DSnapshot layoutSceneAt(double time,ViewIdx view,bool preserveUsd)const;
+    mutable std::shared_ptr<ReconstructionLayoutState> _layout;
     std::shared_ptr<Gpu::Cards::UsdSceneAsset> usdAssetAt(ViewIdx view) const;
     std::shared_ptr<const Gpu::Cards::UsdScenePose> usdPoseAt(double time, ViewIdx view) const;
     std::shared_ptr<Gpu::Cards::FbxMeshAsset> fbxAssetAt(ViewIdx view) const;
@@ -116,8 +156,15 @@ private:
     void appendParentObjects(Scene3DSnapshot& scene, double time, ViewIdx view, bool worldSpace = false) const;
     Scene3DKind _kind;
     KnobDoubleWPtr _translate, _rotate, _scale, _size, _opacity, _focal, _aperture, _near, _far, _orthoWidth;
+    KnobDoubleWPtr _usdPivot;
     KnobBoolWPtr _orthographic, _freeze;
     KnobBoolWPtr _visible, _cameraVisible, _shadowVisible, _reflectionVisible, _holdout;
+    void updateCompositingControls();
+    KnobBoolWPtr _catchShadows, _catchReflections;
+    KnobDoubleWPtr _reflectionStrength, _reflectionRoughness;
+    KnobChoiceWPtr _compositingRole;
+    KnobDoubleWPtr _shadowDensity;
+    KnobColorWPtr _shadowTint;
     KnobChoiceWPtr _imageTiming;
     KnobStringWPtr _usdTargets, _usdCamera;
     KnobIntWPtr _reference;

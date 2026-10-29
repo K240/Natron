@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "Gpu/UsdSceneBridge.h"
+#include "Gpu/Compositing.h"
 #include "Gpu/HdNvpFrameProtocol.h"
 #include <algorithm>
 #include <cmath>
@@ -79,10 +80,12 @@ void transform(const UsdGeomXformable& prim,const Matrix& m) {
 }
 const char* wrap(TextureAddress a) {switch(a){case TextureAddress::Clamp:return "clamp";case TextureAddress::Repeat:return "repeat";case TextureAddress::Mirror:return "mirror";default:return "black";}}
 bool same(Vec3 a,Vec3 b){return a.x==b.x && a.y==b.y && a.z==b.z;}
-bool same(const Camera& a,const Camera& b){return a.transform.m==b.transform.m && a.focal==b.focal && a.aperture==b.aperture && a.orthographic==b.orthographic && a.orthoWidth==b.orthoWidth && a.nearClip==b.nearClip && a.farClip==b.farClip && a.offsetX==b.offsetX && a.offsetY==b.offsetY && a.ownerId==b.ownerId && a.label==b.label;}
+bool same(const Camera& a,const Camera& b){return a.transform.m==b.transform.m && a.focal==b.focal && a.aperture==b.aperture && a.apertureAspect==b.apertureAspect && a.orthographic==b.orthographic && a.orthoWidth==b.orthoWidth && a.nearClip==b.nearClip && a.farClip==b.farClip && a.offsetX==b.offsetX && a.offsetY==b.offsetY && a.ownerId==b.ownerId && a.label==b.label;}
 bool same(const UsdSceneSource& a,const UsdSceneSource& b){return a.filename==b.filename && a.variants==b.variants && a.ownerId==b.ownerId && a.label==b.label && a.mountPath==b.mountPath && a.primPath==b.primPath && a.transform.m==b.transform.m && a.timeCode==b.timeCode && a.metersPerUnit==b.metersPerUnit && a.timeCodesPerSecond==b.timeCodesPerSecond && a.zUp==b.zUp && a.loadPayloads==b.loadPayloads && a.revision==b.revision;}
-bool same(const UsdPrimEdit& a,const UsdPrimEdit& b){return a.kind==b.kind && a.identity==b.identity && a.paths==b.paths && a.transform.m==b.transform.m && a.visible==b.visible && a.materialPath==b.materialPath && a.cameraVisible==b.cameraVisible && a.shadowVisible==b.shadowVisible && a.reflectionVisible==b.reflectionVisible && a.holdout==b.holdout;}
+bool same(const UsdPrimEdit& a,const UsdPrimEdit& b){return a.kind==b.kind && a.identity==b.identity && a.paths==b.paths && a.transform.m==b.transform.m && a.visible==b.visible && a.materialPath==b.materialPath && a.cameraVisible==b.cameraVisible && a.shadowVisible==b.shadowVisible && a.reflectionVisible==b.reflectionVisible && a.holdout==b.holdout && a.role==b.role && a.shadowDensity==b.shadowDensity && same(a.shadowTint,b.shadowTint) && a.reflectionStrength==b.reflectionStrength && a.reflectionRoughness==b.reflectionRoughness;}
+bool same(const Compositing& a,const Compositing& b){return a.role==b.role && a.cameraVisible==b.cameraVisible && a.shadowVisible==b.shadowVisible && a.reflectionVisible==b.reflectionVisible && a.holdout==b.holdout && a.shadowDensity==b.shadowDensity && same(a.shadowTint,b.shadowTint) && a.reflectionStrength==b.reflectionStrength && a.reflectionRoughness==b.reflectionRoughness;}
 bool same(const Card& a,const Card& b) {
+    if(!same(a.compositing,b.compositing))return false;
     if(a.transform.m!=b.transform.m || a.width!=b.width || a.height!=b.height || a.opacity!=b.opacity || a.texture!=b.texture || a.mesh!=b.mesh || a.projected!=b.projected || a.projectionAspect!=b.projectionAspect || a.projectionFrozen!=b.projectionFrozen || a.projectionReferenceTime!=b.projectionReferenceTime || a.projectionImageTime!=b.projectionImageTime || !same(a.projector,b.projector) || a.label!=b.label || a.ownerId!=b.ownerId || a.instanceId!=b.instanceId || a.overrideMaterial!=b.overrideMaterial || a.bindingPaths!=b.bindingPaths)return false;
     const auto& x=a.material;const auto& y=b.material;if(x.lit!=y.lit || x.baseColor!=y.baseColor || !same(x.emission,y.emission) || x.metallic!=y.metallic || x.roughness!=y.roughness || x.ior!=y.ior)return false;
     for(int i=0;i<3;++i)if(a.maps[i].texture!=b.maps[i].texture || a.maps[i].channel!=b.maps[i].channel || a.maps[i].useMeshUv!=b.maps[i].useMeshUv)return false;return true;
@@ -121,7 +124,7 @@ void writeTiff(const QString& path,int width,int height,const QByteArray& pixels
 }
 }
 struct UsdSceneBridge::Impl {
-    std::string geometryText;uint64_t geometryRevision=0;
+    std::string geometryText;uint64_t geometryRevision=0;bool probeFiles=false;
     std::string publishedText;
     std::vector<UsdSceneSource> publishedSources;
     std::vector<UsdPrimEdit> publishedEdits;
@@ -224,7 +227,7 @@ struct UsdSceneBridge::Impl {
             q[i]=binary(axes[i],"ND_add_float",dot,sign*inverse.m[12+i]);
         }
         auto denominator=binary("SafeDepth","ND_max_float",q[2],std::max(1e-8,card.projector.nearClip));
-        const double tx=card.projector.orthographic?card.projector.orthoWidth*.5:card.projector.aperture/(2*card.projector.focal),ty=tx/card.projectionAspect;
+        const double tx=card.projector.orthographic?card.projector.orthoWidth*.5:card.projector.aperture/(2*card.projector.focal),ty=tx/card.projector.filmAspect(card.projectionAspect);
         std::array<UsdShadeShader,2> uv,gateUv;
         for(int i=0;i<2;++i) {
             auto v=q[i];const auto prefix=i==0?std::string("U"):std::string("V");
@@ -232,7 +235,7 @@ struct UsdSceneBridge::Impl {
             // Retain the same graph topology when camera projection changes.
             auto mixed=node((prefix+"Projection").c_str(),"ND_mix_float",SdfValueTypeNames->Float);connect(mixed,"fg",SdfValueTypeNames->Float,v);connect(mixed,"bg",SdfValueTypeNames->Float,division);scalar(mixed,"mix",card.projector.orthographic?1:0);v=mixed;
             v=binary((prefix+"Scale").c_str(),"ND_multiply_float",v,1/(2*(i==0?tx:ty)));
-            v=binary((prefix+"Center").c_str(),"ND_add_float",v,.5-(i==0?card.projector.offsetX:card.projector.offsetY*card.projectionAspect));
+            v=binary((prefix+"Center").c_str(),"ND_add_float",v,.5-(i==0?card.projector.offsetX:card.projector.offsetY*card.projector.filmAspect(card.projectionAspect)));
             gateUv[i]=v;
             v=binary((prefix+"DataScale").c_str(),"ND_multiply_float",v,card.texture?card.texture->imageUvScale[i]:1);v=binary((prefix+"DataOffset").c_str(),"ND_add_float",v,card.texture?card.texture->imageUvOffset[i]:0);
             uv[i]=v;
@@ -265,7 +268,7 @@ struct UsdSceneBridge::Impl {
         transform(camera,cameraMatrix);camera.SetResetXformStack(true);
         const double aperture=(card.projector.orthographic?card.projector.orthoWidth*10:card.projector.aperture*.01)/meters;
         put(camera.CreateProjectionAttr(),card.projector.orthographic?UsdGeomTokens->orthographic:UsdGeomTokens->perspective);
-        put(camera.CreateFocalLengthAttr(),float(card.projector.focal*.01/meters));put(camera.CreateHorizontalApertureAttr(),float(aperture));put(camera.CreateVerticalApertureAttr(),float(aperture/card.projectionAspect));
+        put(camera.CreateFocalLengthAttr(),float(card.projector.focal*.01/meters));put(camera.CreateHorizontalApertureAttr(),float(aperture));put(camera.CreateVerticalApertureAttr(),float(aperture/card.projector.filmAspect(card.projectionAspect)));
         put(camera.CreateHorizontalApertureOffsetAttr(),float(aperture*card.projector.offsetX));put(camera.CreateVerticalApertureOffsetAttr(),float(aperture*card.projector.offsetY));
         put(camera.CreateClippingRangeAttr(),GfVec2f(card.projector.nearClip/meters,card.projector.farClip/meters));
         prim.CreateRelationship(TfToken("natron:projection:camera")).SetTargets({cameraPath});
@@ -318,9 +321,16 @@ struct UsdSceneBridge::Impl {
         auto cameraTransform=basis.inverse()*camera.transform;for(int col=0;col<3;++col)for(int row=0;row<3;++row)cameraTransform.m[col*4+row]*=meters;
         transform(c,cameraTransform);c.SetResetXformStack(true);put(c.CreateProjectionAttr(),camera.orthographic?UsdGeomTokens->orthographic:UsdGeomTokens->perspective);
         put(c.CreateFocalLengthAttr(),float(camera.focal*.01/meters));const double aperture=(camera.orthographic?camera.orthoWidth*10:camera.aperture*.01)/meters;
-        put(c.CreateHorizontalApertureAttr(),float(aperture));put(c.CreateVerticalApertureAttr(),float(aperture/aspect));
+        put(c.CreateHorizontalApertureAttr(),float(aperture));put(c.CreateVerticalApertureAttr(),float(aperture/camera.filmAspect(aspect)));
         put(c.CreateHorizontalApertureOffsetAttr(),float(aperture*camera.offsetX));put(c.CreateVerticalApertureOffsetAttr(),float(aperture*camera.offsetY));
         put(c.CreateClippingRangeAttr(),GfVec2f(camera.nearClip/meters,camera.farClip/meters));return c;
+    }
+    void exportInspectionCamera(const QString& path) {
+        // Public scene values intentionally omit this camera. Every private
+        // transport assembly, including lighting probes, needs its own copy.
+        const auto transport=SdfLayer::FindOrOpen(path.toStdString());transport->Reload();
+        const SdfPath cameraPath("/Natron/InspectionCamera");
+        if(!SdfCopySpec(stage->GetRootLayer(),cameraPath,transport,cameraPath) || !transport->Export(path.toStdString()))throw std::runtime_error("Cannot export inspection camera");
     }
     QString exportScene(const std::vector<Card>& cards,const Camera& viewCamera,const Settings& settings,const std::vector<UsdSceneSource>& sources) {
         const auto& camera=settings.stageCamera?*settings.stageCamera:viewCamera;
@@ -368,6 +378,19 @@ struct UsdSceneBridge::Impl {
             UsdGeomPrimvarsAPI pv(mesh);for(int j=0;j<4;++j)put(pv.CreatePrimvar(TfToken(j==0?"st":"map"+std::to_string(j-1)),SdfValueTypeNames->TexCoord2fArray,UsdGeomTokens->vertex).GetAttr(),uvs[j]);
             put(pv.CreatePrimvar(TfToken("colorSt"),SdfValueTypeNames->TexCoord2fArray,UsdGeomTokens->vertex).GetAttr(),colorUvs);
             material(mesh.GetPrim(),card,card.material,path.AppendChild(TfToken("Material")));
+            const auto& comp=card.compositing;validateCompositing(comp);
+            put(mesh.GetPrim().CreateAttribute(TfToken("natron:compositingRole"),SdfValueTypeNames->Int),int(comp.role));
+            put(mesh.GetPrim().CreateAttribute(TfToken("natron:shadowDensity"),SdfValueTypeNames->Float),float(comp.shadowDensity));
+            put(mesh.GetPrim().CreateAttribute(TfToken("natron:shadowTint"),SdfValueTypeNames->Color3f),GfVec3f(comp.shadowTint.x,comp.shadowTint.y,comp.shadowTint.z));
+            put(mesh.GetPrim().CreateAttribute(TfToken("natron:reflectionStrength"),SdfValueTypeNames->Float),float(comp.reflectionStrength));
+            put(mesh.GetPrim().CreateAttribute(TfToken("natron:reflectionRoughness"),SdfValueTypeNames->Float),float(comp.reflectionRoughness));
+            put(pv.CreatePrimvar(TfToken("natron:compositingRole"),SdfValueTypeNames->Int,UsdGeomTokens->constant).GetAttr(),int(comp.role));
+            put(pv.CreatePrimvar(TfToken("natron:rayMask"),SdfValueTypeNames->Int,UsdGeomTokens->constant).GetAttr(),(comp.cameraVisible?1:0)|(comp.reflectionVisible?2:0)|(comp.shadowVisible?4:0));
+            put(pv.CreatePrimvar(TfToken("natron:holdout"),SdfValueTypeNames->Int,UsdGeomTokens->constant).GetAttr(),comp.holdout || comp.role!=GeometryRole::Surface?1:0);
+            put(pv.CreatePrimvar(TfToken("natron:shadowDensity"),SdfValueTypeNames->Float,UsdGeomTokens->constant).GetAttr(),float(comp.shadowDensity));
+            put(pv.CreatePrimvar(TfToken("natron:shadowTint"),SdfValueTypeNames->Color3f,UsdGeomTokens->constant).GetAttr(),GfVec3f(comp.shadowTint.x,comp.shadowTint.y,comp.shadowTint.z));
+            put(pv.CreatePrimvar(TfToken("natron:reflectionStrength"),SdfValueTypeNames->Float,UsdGeomTokens->constant).GetAttr(),float(comp.reflectionStrength));
+            put(pv.CreatePrimvar(TfToken("natron:reflectionRoughness"),SdfValueTypeNames->Float,UsdGeomTokens->constant).GetAttr(),float(comp.reflectionRoughness));
             size_t groupCount=0;
             if(card.mesh) {
                 std::map<std::array<double,12>,size_t> groups;std::vector<Material> materials;std::vector<VtIntArray> faces;
@@ -428,11 +451,9 @@ struct UsdSceneBridge::Impl {
         const bool changed=!next || authored!=publishedText || !same(sources,publishedSources) || !same(settings.edits,publishedEdits);
         if(changed)next=UsdSceneValue::compose(authored,sources,++revision,settings.edits);
         const QString path=directory.filePath(QStringLiteral("scene.usda"));
-        if(next->saveRenderAssembly(path.toStdString(),directory.filePath(QStringLiteral("geometry.usda")).toStdString(),geometryText,!changed))++geometryRevision;
-        if(settings.stageCamera) {
-            const auto transport=SdfLayer::FindOrOpen(path.toStdString());transport->Reload();
-            if(!SdfCopySpec(stage->GetRootLayer(),SdfPath("/Natron/InspectionCamera"),transport,SdfPath("/Natron/InspectionCamera")) || !transport->Export(path.toStdString()))throw std::runtime_error("Cannot export inspection camera");
-        }
+        if(next->saveRenderAssembly(path.toStdString(),directory.filePath(QStringLiteral("geometry.usda")).toStdString(),geometryText,!changed && !probeFiles))++geometryRevision;
+        probeFiles=false;
+        if(settings.stageCamera)exportInspectionCamera(path);
         if(!sameInputs){publishedText=std::move(authored);publishedSources=sources;publishedEdits=settings.edits;publishedCards=cards;publishedLights=settings.lights;publishedCamera=camera;publishedAspect=stageAspect;}
         std::atomic_store(&value,next);return path;
     }
@@ -453,15 +474,55 @@ std::string UsdSceneBridge::exportScene(const std::vector<Card>& cards,const Cam
     std::lock_guard<std::mutex> lock(_impl->mutex);return _impl->exportScene(cards,camera,settings,sources).toStdString();
 }
 HdNvpFrame UsdSceneBridge::render(const std::vector<Card>& cards,const Camera& camera,const Settings& settings,const HdNvpSettings& quality,const std::function<bool()>& abort,const std::vector<UsdSceneSource>& sources,const std::function<void(const HdNvpFrame&)>& progress) {
-    std::lock_guard<std::mutex> lock(_impl->mutex);const QString host=QString::fromStdString(hostPath());
+    std::lock_guard<std::mutex> lock(_impl->mutex);
+    _impl->exportScene(cards,camera,settings,sources);const auto value=sceneValue();
+    const auto targets=value->compositingTargets();std::vector<float> shadow,occlusion,reflection;
+    std::map<std::array<double,4>,std::vector<std::string>> groups;
+    for(const auto& target:targets)if(catchesShadows(target.value.role) && target.value.cameraVisible && target.value.shadowDensity>0){const auto& c=target.value;groups[{c.shadowDensity,c.shadowTint.x,c.shadowTint.y,c.shadowTint.z}].push_back(target.path);}
+    HdNvpSettings probeQuality=quality;probeQuality.denoiser=HdNvpDenoiser::None;probeQuality.bounces=1;
+    Settings probeSettings=settings;probeSettings.transparentBackground=true;
+    for(const auto& group:groups){
+        auto lit=renderValue(value->compositingProbe(group.second,false),camera,probeSettings,probeQuality,abort,sources,{});
+        auto ref=renderValue(value->compositingProbe(group.second,true),camera,probeSettings,probeQuality,abort,sources,{});
+        if(shadow.empty())shadow.resize(lit.color.size());
+        for(size_t i=0;i<shadow.size();i+=4){
+            auto luma=[&](const auto& p){return .2126*p[i]+.7152*p[i+1]+.0722*p[i+2];};
+            const float a=shadowOpacity(luma(lit.color),luma(ref.color),group.first[0])*std::clamp(ref.color[i+3],0.f,1.f);
+            shadow[i]+=float(group.first[1])*a;shadow[i+1]+=float(group.first[2])*a;shadow[i+2]+=float(group.first[3])*a;shadow[i+3]+=a;
+        }
+    }
+    if(std::any_of(targets.begin(),targets.end(),[](const auto& t){return t.value.role==GeometryRole::Occluder || (t.value.role==GeometryRole::Surface && t.value.holdout);})){
+        auto matte=renderValue(value->compositingProbe({},false),camera,probeSettings,probeQuality,abort,sources,{});occlusion.resize(matte.color.size()/4);
+        for(size_t i=0;i<occlusion.size();++i)occlusion[i]=std::clamp(matte.color[i*4],0.f,1.f);
+    }
+    std::map<std::array<double,2>,std::vector<std::string>> reflectionGroups;
+    for(const auto& target:targets)if(catchesReflections(target.value.role) && target.value.cameraVisible && target.value.reflectionStrength>0){const auto& c=target.value;reflectionGroups[{c.reflectionStrength,c.reflectionRoughness}].push_back(target.path);}
+    HdNvpSettings reflectionQuality=probeQuality;reflectionQuality.bounces=std::max(2,quality.bounces);
+    for(const auto& group:reflectionGroups){
+        auto lit=renderValue(value->compositingProbe(group.second,false,true,group.first[1]),camera,probeSettings,reflectionQuality,abort,sources,{});
+        auto ref=renderValue(value->compositingProbe(group.second,true,true,group.first[1]),camera,probeSettings,reflectionQuality,abort,sources,{});
+        if(reflection.empty())reflection.resize(lit.color.size());
+        // Signed radiance replacement: CG can also darken an environment
+        // reflection. Common lights/environment cancel instead of being added twice.
+        for(size_t i=0;i<reflection.size();i+=4)for(int c=0;c<3;++c)reflection[i+c]+=float((lit.color[i+c]-ref.color[i+c])*group.first[0]);
+    }
+    auto presented=[&](const HdNvpFrame& frame){if(progress){auto result=frame;result.shadow=shadow;result.occlusion=occlusion;result.reflection=reflection;progress(result);}};
+    Settings beauty=settings;if(std::any_of(targets.begin(),targets.end(),[](const auto& t){return t.value.role!=GeometryRole::Surface && t.value.cameraVisible;}))beauty.transparentBackground=true;
+    auto frame=renderValue(value,camera,beauty,quality,abort,sources,presented);frame.shadow=std::move(shadow);frame.occlusion=std::move(occlusion);frame.reflection=std::move(reflection);return frame;
+}
+HdNvpFrame UsdSceneBridge::renderValue(const std::shared_ptr<const UsdSceneValue>& value,const Camera& camera,const Settings& settings,const HdNvpSettings& quality,const std::function<bool()>& abort,const std::vector<UsdSceneSource>& sources,const std::function<void(const HdNvpFrame&)>& progress) {
+    const QString host=QString::fromStdString(hostPath());
     if(abort && abort())throw std::runtime_error("hdNVP rendering cancelled");
     if(host.isEmpty() || !QFileInfo::exists(host))throw std::runtime_error("Build the hdNVP host with tools/build-hdnvp-host.ps1 or set NATRON_HDNVP_HOST.");
-    const QString scene=_impl->exportScene(cards,camera,settings,sources),output=_impl->directory.filePath(QStringLiteral("aovs"));
+    const QString scene=_impl->directory.filePath(QStringLiteral("scene.usda")),output=_impl->directory.filePath(QStringLiteral("aovs"));
+    if(value->saveRenderAssembly(scene.toStdString(),_impl->directory.filePath(QStringLiteral("geometry.usda")).toStdString(),_impl->geometryText,false))++_impl->geometryRevision;
+    if(settings.stageCamera)_impl->exportInspectionCamera(scene);
+    _impl->probeFiles=value!=sceneValue();
     const auto cancelled=std::make_shared<std::atomic<bool>>(false);
     std::mutex progressMutex;std::shared_ptr<HdNvpFrame> latest;
     auto present=[&]{std::shared_ptr<HdNvpFrame> frame;{std::lock_guard<std::mutex> lock(progressMutex);frame=std::move(latest);}if(frame && progress)progress(*frame);};
 #ifdef _WIN32
-    const bool sharedMemory=_impl->mapping(size_t(settings.width)*settings.height,settings.width,settings.height,sceneValue()->revision());
+    const bool sharedMemory=_impl->mapping(size_t(settings.width)*settings.height,settings.width,settings.height,value->revision());
 #endif
     // Natron renders from different pool threads. QProcess and its notifiers
     // stay on one dedicated thread for the entire lifetime of this bridge.
@@ -482,10 +543,10 @@ HdNvpFrame UsdSceneBridge::render(const std::vector<Card>& cards,const Camera& c
         case HdNvpDenoiser::None:denoiser=QStringLiteral("none");break;
         default:throw std::runtime_error("Invalid hdNVP denoiser");
     }
-    const auto value=sceneValue();
     const QJsonObject request{{QStringLiteral("scene"),scene},{QStringLiteral("output"),output},{QStringLiteral("time"),value->timeCode()},{QStringLiteral("loadPayloads"),value->loadPayloads()},{QStringLiteral("width"),settings.width},{QStringLiteral("height"),settings.height},{QStringLiteral("samples"),quality.samples},{QStringLiteral("bounces"),quality.bounces},{QStringLiteral("denoiser"),denoiser},{QStringLiteral("interactive"),quality.interactive}};
     uint64_t sourceRevision=_impl->geometryRevision;for(const auto& source:sources)sourceRevision^=source.revision+0x9e3779b97f4a7c15ULL+(sourceRevision<<6)+(sourceRevision>>2);
     auto message=request;message.insert(QStringLiteral("sourceRevision"),QString::number(sourceRevision));
+    message.insert(QStringLiteral("transparentBackground"),settings.transparentBackground);
     message.insert(QStringLiteral("camera"),settings.stageCamera?QStringLiteral("/Natron/InspectionCamera"):QStringLiteral("/Natron/Camera"));
     message.insert(QStringLiteral("revision"),QString::number(value->revision()));
 #ifdef _WIN32
@@ -530,6 +591,7 @@ HdNvpFrame UsdSceneBridge::render(const std::vector<Card>& cards,const Camera& c
     }
     if(cancelled->load() || response.value(QStringLiteral("cancelled")).toBool())throw std::runtime_error("hdNVP rendering cancelled");
     if(!response.value(QStringLiteral("ok")).toBool())throw std::runtime_error("hdNVP: "+response.value(QStringLiteral("error")).toString().toStdString());
+    if(settings.transparentBackground && !response.value(QStringLiteral("plateCompositing")).toBool())throw std::runtime_error("The hdNVP host needs transparent plate compositing support. Rebuild it with tools/build-hdnvp-host.ps1.");
     HdNvpFrame frame;frame.report=QJsonDocument(response).toJson(QJsonDocument::Compact).toStdString();
     auto read=[&](const char* name,auto& values,size_t count){
 #ifdef _WIN32
@@ -550,8 +612,8 @@ HdNvpFrame UsdSceneBridge::render(const std::vector<Card>& cards,const Camera& c
     const bool zUp=std::any_of(sources.begin(),sources.end(),[](const UsdSceneSource& s){return s.mountPath.empty() && s.zUp;});
     const auto rotation=Matrix::transform({},zUp?Vec3{-90,0,0}:Vec3{});
     frame.position.resize(pixels*3);
-    const Camera renderCamera=settings.stageCamera?camera:value->camera("/Natron/Camera");
-    const double tx=renderCamera.orthographic?renderCamera.orthoWidth*.5:renderCamera.aperture/(2*renderCamera.focal),ty=tx*settings.height/(settings.width*settings.pixelAspect);
+    const Camera renderCamera=settings.stageCamera?camera:value->camera("/Natron/Camera",true);
+    const double tx=renderCamera.orthographic?renderCamera.orthoWidth*.5:renderCamera.aperture/(2*renderCamera.focal),ty=tx/renderCamera.filmAspect(settings.width*settings.pixelAspect/settings.height);
     for(size_t i=0;i<pixels;++i) {
         const auto n=rotation.vector({frame.normal[i*3],frame.normal[i*3+1],frame.normal[i*3+2]});frame.normal[i*3]=float(n.x);frame.normal[i*3+1]=float(n.y);frame.normal[i*3+2]=float(n.z);
         if(frame.depth[i]>0) {

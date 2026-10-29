@@ -11,7 +11,7 @@ struct HdNvpSettings {
     bool interactive=false;
 };
 struct HdNvpFrame {
-    std::vector<float> color,depth,albedo,normal,position;
+    std::vector<float> color,depth,albedo,normal,position,shadow,occlusion,reflection;
     std::vector<int32_t> primIds,instanceIds;
     struct Pick {int32_t prim=-1,instance=-1;std::string path;};
     std::vector<Pick> picks;
@@ -36,6 +36,9 @@ public:
                      const std::vector<UsdSceneSource>& sources={},
                      const std::function<void(const HdNvpFrame&)>& progress={});
 private:
+    HdNvpFrame renderValue(const std::shared_ptr<const UsdSceneValue>& value,const Camera& camera,const Settings& settings,
+        const HdNvpSettings& quality,const std::function<bool()>& abort,const std::vector<UsdSceneSource>& sources,
+        const std::function<void(const HdNvpFrame&)>& progress);
     struct Impl;std::unique_ptr<Impl> _impl;
 };
 }}}

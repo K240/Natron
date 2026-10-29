@@ -613,10 +613,14 @@ ViewerTab::ViewerTab(const std::list<NodeGuiPtr> & existingNodesContext,
     auto gizmoTool = new ComboBox(_imp->firstSettingsRow);
     gizmoTool->setObjectName("Viewer3DGizmo");gizmoTool->addItem(tr("Move (W)"));gizmoTool->addItem(tr("Rotate (E)"));gizmoTool->addItem(tr("Scale (R)"));gizmoTool->hide();
     _imp->firstRowLayout->addWidget(gizmoTool);
+    auto points=new QToolButton(_imp->firstSettingsRow);points->setObjectName("Viewer3DPoints");points->setText(tr("Points"));points->setCheckable(true);points->hide();
+    points->setToolTip(tr("Select reconstruction landmarks (P). Shift-click adds/removes; SceneSetup controls set ground, scale and placement."));_imp->firstRowLayout->addWidget(points);
+    connect(points,&QToolButton::toggled,sceneViewer,&Scene3DViewer::setPointSelectionMode);
+    connect(sceneViewer,&Scene3DViewer::pointSelectionModeChanged,points,[points](bool enabled){QSignalBlocker block(points);points->setChecked(enabled);});
     auto outlineToggle=new QToolButton(_imp->firstSettingsRow);outlineToggle->setObjectName("Viewer3DOutline");outlineToggle->setText(tr("Outline"));outlineToggle->setToolTip(tr("Open or focus the dockable Stage Outline panel"));_imp->firstRowLayout->addWidget(outlineToggle);
     connect(outlineToggle,&QToolButton::clicked,this,[this]{getGui()->setActiveViewer(this);getGui()->showStageOutline();});
-    connect(threeD, &QToolButton::toggled, this, [this, sceneViewer, cameraView, gizmoTool](bool on) {
-        _imp->viewer->setVisible(!on);sceneViewer->setVisible(on);cameraView->setVisible(on);gizmoTool->setVisible(on);
+    connect(threeD, &QToolButton::toggled, this, [this, sceneViewer, cameraView, gizmoTool,points](bool on) {
+        _imp->viewer->setVisible(!on);sceneViewer->setVisible(on);cameraView->setVisible(on);gizmoTool->setVisible(on);points->setVisible(on);
         if(on){sceneViewer->refreshScene();sceneViewer->setFocus();}
     });
     connect(cameraView, &QToolButton::toggled, sceneViewer, &Scene3DViewer::setLookThroughCamera);

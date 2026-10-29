@@ -74,6 +74,7 @@ target_link_libraries(NatronEngine
         PkgConfig::Cairo
     PRIVATE
         NatronGpu
+        NatronReconstruction
         ${SHIBOKEN_LIB}
         ${PYSIDE_LIB}
         Qt::Core
@@ -86,6 +87,10 @@ target_link_libraries(NatronEngine
         openMVG
         tess
 )
+
+if(NATRON_ENABLE_USD)
+    target_link_libraries(NatronEngine PRIVATE NatronReconstructionUsd)
+endif()
 
 if(WIN32)
     #System library is required on windows to map network share names from drive letters

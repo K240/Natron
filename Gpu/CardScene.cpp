@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "Gpu/CardScene.h"
 #include "Gpu/Lighting.h"
+#include "Gpu/Compositing.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -70,9 +71,9 @@ std::array<float,4> Texture::sample(double u,double v) const {
     return r;
 }
 static void validateCamera(const Camera& c) {
-    for(double v:{c.focal,c.aperture,c.nearClip,c.farClip,c.orthoWidth,c.offsetX,c.offsetY})
+    for(double v:{c.focal,c.aperture,c.nearClip,c.farClip,c.orthoWidth,c.offsetX,c.offsetY,c.apertureAspect})
         if(!std::isfinite(v))throw std::invalid_argument("3D camera parameters must be finite.");
-    if(!(c.focal>0) || !(c.aperture>0) || !(c.nearClip>0) || !(c.farClip>c.nearClip) || !(c.orthoWidth>0))
+    if(c.apertureAspect<0 || !(c.focal>0) || !(c.aperture>0) || !(c.nearClip>0) || !(c.farClip>c.nearClip) || !(c.orthoWidth>0))
         throw std::invalid_argument("Invalid 3D camera parameters.");
     c.transform.inverse();
 }
@@ -82,6 +83,7 @@ static void validate(const Camera& c,const Settings& s,const std::vector<Card>& 
     validateCamera(c);
     validateLights(s.lights);
     for(const auto& card:cards) {
+        validateCompositing(card.compositing);
         validateMaterial(card.material);
         for(const auto& map:card.maps)if(map.channel>3)throw std::invalid_argument("Material map channel must be RGBA.");
         card.transform.inverse();
@@ -107,7 +109,7 @@ struct PreparedCard {
         projectorInverse(c.projected?c.projector.transform.inverse():Matrix()),opacity(float(std::clamp(c.opacity,0.,1.))) {}
 };
 Ray cameraRay(const Camera& camera,const Settings& s,double x,double y) {
-    const double aspect=s.width*s.pixelAspect/s.height, tx=camera.aperture/(2*camera.focal),ty=tx/aspect;
+    const double aspect=camera.filmAspect(s.width*s.pixelAspect/s.height), tx=camera.aperture/(2*camera.focal),ty=tx/aspect;
     const double nx=2*x/s.width-1+2*camera.offsetX,ny=2*y/s.height-1+2*camera.offsetY*aspect;
     return {camera.transform.point(camera.orthographic?Vec3{nx*camera.orthoWidth*.5,ny*camera.orthoWidth*.5/aspect,0}:Vec3{}),
             camera.transform.vector(camera.orthographic?Vec3{0,0,-1}:Vec3{nx*tx,ny*ty,-1})};
@@ -124,10 +126,10 @@ Hit intersectPrepared(const PreparedCard& prepared,const Camera& camera,const Ra
     if(card.projected) {
         const Vec3 q=prepared.projectorInverse.point(ray.origin+ray.direction*depth);
         if(-q.z<card.projector.nearClip || -q.z>card.projector.farClip) return {};
-        const double px=card.projector.aperture/(2*card.projector.focal),py=px/card.projectionAspect;
-        if(card.projector.orthographic) {u=q.x/card.projector.orthoWidth+.5;v=q.y/(card.projector.orthoWidth/card.projectionAspect)+.5;}
+        const double px=card.projector.aperture/(2*card.projector.focal),py=px/card.projector.filmAspect(card.projectionAspect);
+        if(card.projector.orthographic) {u=q.x/card.projector.orthoWidth+.5;v=q.y/(card.projector.orthoWidth/card.projector.filmAspect(card.projectionAspect))+.5;}
         else {u=q.x/(-q.z*px)*.5+.5;v=q.y/(-q.z*py)*.5+.5;}
-        u-=card.projector.offsetX;v-=card.projector.offsetY*card.projectionAspect;
+        u-=card.projector.offsetX;v-=card.projector.offsetY*card.projector.filmAspect(card.projectionAspect);
     }
     if(u<0 || u>1 || v<0 || v>1) return {};
     if(card.projected && card.texture) {
@@ -176,10 +178,10 @@ void meshHits(const PreparedCard& prepared,const Camera& camera,const Ray& ray,i
         if(card.projected) {
             const Vec3 q=prepared.projectorInverse.point(ray.origin+ray.direction*hit.depth);
             if(-q.z<card.projector.nearClip || -q.z>card.projector.farClip)continue;
-            const double px=card.projector.aperture/(2*card.projector.focal),py=px/card.projectionAspect;
-            if(card.projector.orthographic){hit.u=q.x/card.projector.orthoWidth+.5;hit.v=q.y/(card.projector.orthoWidth/card.projectionAspect)+.5;}
+            const double px=card.projector.aperture/(2*card.projector.focal),py=px/card.projector.filmAspect(card.projectionAspect);
+            if(card.projector.orthographic){hit.u=q.x/card.projector.orthoWidth+.5;hit.v=q.y/(card.projector.orthoWidth/card.projector.filmAspect(card.projectionAspect))+.5;}
             else {hit.u=q.x/(-q.z*px)*.5+.5;hit.v=q.y/(-q.z*py)*.5+.5;}
-            hit.u-=card.projector.offsetX;hit.v-=card.projector.offsetY*card.projectionAspect;
+            hit.u-=card.projector.offsetX;hit.v-=card.projector.offsetY*card.projector.filmAspect(card.projectionAspect);
             if(hit.u<0 || hit.u>1 || hit.v<0 || hit.v>1)continue;
         }else if(!card.texture || !card.texture->materialSampling){hit.u-=std::floor(hit.u);hit.v-=std::floor(hit.v);}
         if(card.texture && !card.texture->materialSampling) {
@@ -196,14 +198,15 @@ std::array<float,4> surfaceColor(const Card& card,const Hit& hit) {
     for(int c=0;c<3;++c)color[c]*=hit.tint[c]*hit.tint[3]*base[c]*base[3];
     color[3]*=hit.tint[3]*base[3];return color;
 }
-double shadowTransmission(const std::vector<PreparedCard>& cards,Vec3 point,Vec3 normal,Vec3 towardLight,double distance,double bias) {
+double shadowTransmission(const std::vector<PreparedCard>& cards,Vec3 point,Vec3 normal,Vec3 towardLight,double distance,double bias,bool reference=false) {
     const Ray ray{point+normal*bias,towardLight};Camera range;range.nearClip=bias;range.farClip=distance-bias;
     if(range.farClip<=range.nearClip)return 1;
     double transmission=1;std::vector<Hit> hits;std::vector<MeshHit> scratch;
     for(size_t i=0;i<cards.size();++i) {
         const auto& card=*cards[i].card;hits.clear();
+        if(!card.compositing.shadowVisible || (reference && card.compositing.role==GeometryRole::Surface && !card.compositing.holdout))continue;
         if(card.mesh)meshHits(cards[i],range,ray,int(i),hits,scratch);
-        else if(card.texture || card.material.lit) {
+        else if(card.texture || card.material.lit || card.compositing.role!=GeometryRole::Surface || card.compositing.holdout) {
             auto hit=intersectPrepared(cards[i],range,ray);if(hit.card>=0)hits.push_back(hit);
         }
         for(const auto& hit:hits) {
@@ -214,15 +217,17 @@ double shadowTransmission(const std::vector<PreparedCard>& cards,Vec3 point,Vec3
     return transmission;
 }
 std::array<float,4> litColor(const std::vector<PreparedCard>& cards,const Hit& hit,const Ray& ray,const Settings& settings,
-                           const std::vector<Matrix>& environmentInverses,std::array<float,4> color) {
-    if(!hit.material.lit || color[3]<=0)return color;
+                           const std::vector<Matrix>& environmentInverses,std::array<float,4> color,bool reference=false,bool receiver=false) {
+    if(!receiver && (!hit.material.lit || color[3]<=0))return color;
+    if(receiver)color={1,1,1,1};
     const Vec3 base{color[0]/color[3],color[1]/color[3],color[2]/color[3]},view=normalized(ray.direction*(-1));
     Vec3 normal=hit.normal;if(dot(normal,view)<0)normal=normal*(-1);
     const Vec3 geometricNormal=normal;
     Material material=hit.material;const auto& maps=cards[hit.card].card->maps;
-    if(maps[1].texture)material.roughness=std::clamp(double(maps[1].texture->sample(hit.mapUvs[1][0],hit.mapUvs[1][1])[maps[1].channel]),0.,1.);
-    if(maps[2].texture)material.metallic=std::clamp(double(maps[2].texture->sample(hit.mapUvs[2][0],hit.mapUvs[2][1])[maps[2].channel]),0.,1.);
-    if(maps[0].texture) {
+    if(receiver){material=Material();material.lit=true;material.roughness=1;material.ior=1;}
+    if(!receiver && maps[1].texture)material.roughness=std::clamp(double(maps[1].texture->sample(hit.mapUvs[1][0],hit.mapUvs[1][1])[maps[1].channel]),0.,1.);
+    if(!receiver && maps[2].texture)material.metallic=std::clamp(double(maps[2].texture->sample(hit.mapUvs[2][0],hit.mapUvs[2][1])[maps[2].channel]),0.,1.);
+    if(!receiver && maps[0].texture) {
         const Vec3 tangent=normalized(hit.tangent-normal*dot(normal,hit.tangent));
         const Vec3 crossBitangent=cross(normal,tangent);
         const Vec3 bitangent=crossBitangent*(dot(crossBitangent,hit.bitangent)<0?-1:1);
@@ -238,7 +243,7 @@ std::array<float,4> litColor(const std::vector<PreparedCard>& cards,const Hit& h
             for(bool specular:{false,true})for(unsigned i=0;i<light.environmentSamples;++i) {
                 const auto sample=environmentSample(material,base,normal,view,i,light.environmentSamples,specular);
                 if(dot(sample.weight,sample.weight)==0)continue;
-                const double transmission=light.shadows?shadowTransmission(cards,point,geometricNormal,sample.direction,1e30,light.shadowBias):1;
+                const double transmission=light.shadows?shadowTransmission(cards,point,geometricNormal,sample.direction,1e30,light.shadowBias,reference):1;
                 const Vec3 radiance=environmentRadiance(light,environmentInverses[lightIndex],sample.direction)*transmission;
                 shaded=shaded+Vec3{sample.weight.x*radiance.x,sample.weight.y*radiance.y,sample.weight.z*radiance.z};
             }
@@ -257,11 +262,53 @@ std::array<float,4> litColor(const std::vector<PreparedCard>& cards,const Hit& h
             }
         }
         if(dot(normal,toward)<=0 || attenuation<=0 || light.intensity==0)continue;
-        if(light.shadows)attenuation*=shadowTransmission(cards,point,geometricNormal,toward,distance,light.shadowBias);
+        if(light.shadows)attenuation*=shadowTransmission(cards,point,geometricNormal,toward,distance,light.shadowBias,reference);
         const Vec3 radiance=light.color*(light.intensity*std::exp2(light.exposure)*attenuation);
         shaded=shaded+shadeDirect(material,base,normal,view,toward,radiance);
     }
     color[0]=float(shaded.x*color[3]);color[1]=float(shaded.y*color[3]);color[2]=float(shaded.z*color[3]);return color;
+}
+Vec3 reflectedRadiance(const std::vector<PreparedCard>& cards,const Ray& ray,const Settings& settings,
+    const std::vector<Matrix>& environments,bool reference) {
+    Camera range;range.nearClip=1e-5;range.farClip=1e30;
+    std::vector<Hit> hits;std::vector<MeshHit> scratch;
+    for(size_t i=0;i<cards.size();++i){
+        const auto& card=*cards[i].card;const auto& comp=card.compositing;
+        if(!comp.reflectionVisible || (reference && comp.role==GeometryRole::Surface && !comp.holdout))continue;
+        if(!card.mesh && !card.texture && !card.material.lit && comp.role==GeometryRole::Surface && !comp.holdout)continue;
+        if(card.mesh)meshHits(cards[i],range,ray,int(i),hits,scratch);
+        else {auto h=intersectPrepared(cards[i],range,ray);if(h.card>=0){h.card=int(i);hits.push_back(h);}}
+    }
+    std::sort(hits.begin(),hits.end(),[](const auto& a,const auto& b){return a.depth<b.depth || (a.depth==b.depth && a.card<b.card);});
+    Vec3 result;double transmission=1;
+    for(const auto& hit:hits){
+        const auto& card=*cards[hit.card].card;auto c=surfaceColor(card,hit);
+        const double alpha=std::clamp(double(c[3]),0.,1.)*cards[hit.card].opacity;
+        if(card.compositing.role==GeometryRole::Surface && !card.compositing.holdout){
+            c=litColor(cards,hit,ray,settings,environments,c,reference);
+            result=result+Vec3{c[0],c[1],c[2]}*(transmission*cards[hit.card].opacity);
+        }
+        transmission*=1-alpha;if(transmission<1e-6)break;
+    }
+    for(size_t i=0;i<settings.lights.size();++i)if(settings.lights[i].type==LightType::Environment)
+        result=result+environmentRadiance(settings.lights[i],environments[i],ray.direction)*transmission;
+    return result;
+}
+Vec3 reflectionColor(const std::vector<PreparedCard>& cards,const Hit& hit,const Ray& ray,const Settings& settings,
+    const std::vector<Matrix>& environments) {
+    const auto& comp=cards[hit.card].card->compositing;if(comp.reflectionStrength==0)return {};
+    const auto point=ray.origin+ray.direction*hit.depth;const auto view=normalized(ray.direction*(-1));
+    auto normal=hit.normal;if(dot(normal,view)<0)normal=normal*(-1);
+    Material mirror;mirror.metallic=1;mirror.roughness=comp.reflectionRoughness;
+    Vec3 result;const unsigned count=comp.reflectionRoughness==0?1:32;
+    for(unsigned i=0;i<count;++i){
+        const auto sample=count==1?EnvironmentSample{normal*(2*dot(view,normal))-view,{1,1,1}}:
+            environmentSample(mirror,{1,1,1},normal,view,i,count,true);
+        if(dot(sample.weight,sample.weight)==0)continue;
+        const Ray reflected{point+normal*1e-5,sample.direction};
+        const auto delta=reflectedRadiance(cards,reflected,settings,environments,false)-reflectedRadiance(cards,reflected,settings,environments,true);
+        result=result+Vec3{delta.x*sample.weight.x,delta.y*sample.weight.y,delta.z*sample.weight.z};
+    }return result*comp.reflectionStrength;
 }
 }
 Hit intersect(const Card& card,const Camera& camera,const Settings& s,double x,double y) {
@@ -285,8 +332,9 @@ std::vector<float> renderCpu(const std::vector<Card>& cards,const Camera& camera
             hits.clear();
             const Ray ray=cameraRay(camera,s,x+(sx+.5)/s.samples,y+(sy+.5)/s.samples);
             for(size_t i=0;i<cards.size();++i) {
+                if(!cards[i].compositing.cameraVisible)continue;
                 if(cards[i].mesh){meshHits(prepared[i],camera,ray,int(i),hits,meshScratch);continue;}
-                if(!cards[i].texture && !cards[i].material.lit)continue;
+                if(!cards[i].texture && !cards[i].material.lit && cards[i].compositing.role==GeometryRole::Surface && !cards[i].compositing.holdout)continue;
                 Hit hit=intersectPrepared(prepared[i],camera,ray);
                 if(hit.card>=0) {hit.card=int(i);hits.push_back(hit);}
             }
@@ -298,12 +346,40 @@ std::vector<float> renderCpu(const std::vector<Card>& cards,const Camera& camera
                 const auto& card=cards[hit.card];auto color=surfaceColor(card,hit);
                 const float opacity=prepared[hit.card].opacity,alpha=std::clamp(color[3],0.f,1.f)*opacity;
                 const size_t at=(size_t(y)*s.width+x)*4;
+                const auto& comp=card.compositing;
                 if(s.pass==RenderPass::Depth) {
                     if(alpha<=0)continue;
                     const float depth=float(hit.depth);
                     if(result[at+3]==0 || depth<result[at])for(int c=0;c<3;++c)result[at+c]=depth;
                     result[at+3]+=1.f/(s.samples*s.samples);break;
                 }
+                if(s.pass==RenderPass::Shadow){
+                    if(comp.role==GeometryRole::Surface && !comp.holdout)continue;
+                    if(catchesShadows(comp.role)){
+                        const auto lit=litColor(prepared,hit,ray,s,environmentInverses,{1,1,1,1},false,true);
+                        const auto ref=litColor(prepared,hit,ray,s,environmentInverses,{1,1,1,1},true,true);
+                        auto luma=[](const auto& c){return .2126*c[0]+.7152*c[1]+.0722*c[2];};
+                        const float a=shadowOpacity(luma(lit),luma(ref),comp.shadowDensity)*alpha*transmission/(s.samples*s.samples);
+                        result[at]+=float(comp.shadowTint.x)*a;result[at+1]+=float(comp.shadowTint.y)*a;result[at+2]+=float(comp.shadowTint.z)*a;result[at+3]+=a;
+                    }
+                    transmission*=1-alpha;continue;
+                }
+                if(s.pass==RenderPass::Reflection){
+                    // Foreground CG is composited over this layer later; only
+                    // photographed proxy geometry clips the receiver here.
+                    if(comp.role==GeometryRole::Surface && !comp.holdout)continue;
+                    if(catchesReflections(comp.role)){
+                        const auto reflected=reflectionColor(prepared,hit,ray,s,environmentInverses);
+                        const float weight=alpha*transmission/(s.samples*s.samples);
+                        result[at]+=float(reflected.x)*weight;result[at+1]+=float(reflected.y)*weight;result[at+2]+=float(reflected.z)*weight;
+                    }
+                    transmission*=1-alpha;continue;
+                }
+                if(s.pass==RenderPass::Occlusion){
+                    if(comp.role==GeometryRole::Occluder || comp.holdout)for(int c=0;c<4;++c)result[at+c]+=alpha*transmission/(s.samples*s.samples);
+                    transmission*=1-alpha;continue;
+                }
+                if(comp.role!=GeometryRole::Surface || comp.holdout){transmission*=1-alpha;continue;}
                 color=litColor(prepared,hit,ray,s,environmentInverses,color);
                 const float weight=transmission/(s.samples*s.samples);
                 for(int c=0;c<3;++c) result[at+c]+=color[c]*opacity*weight;
@@ -392,11 +468,14 @@ Renderer::Renderer(std::shared_ptr<VulkanDevice> device):_device(std::move(devic
 }
 std::vector<float> Renderer::render(const std::vector<Card>& cards,const Camera& c,const Settings& s) {
     validate(c,s,cards);
-    if(std::any_of(cards.begin(),cards.end(),[](const Card& card){return bool(card.mesh) || card.material.lit;}))
+    // Native reflections share the CPU BVH ray tracer; GPU beauty/shadow passes
+    // retain their existing path. USD uses the full hdNVP path tracer instead.
+    if(s.pass==RenderPass::Reflection)return renderCpu(cards,c,s);
+    if(s.pass==RenderPass::Shadow || s.pass==RenderPass::Occlusion || std::any_of(cards.begin(),cards.end(),[](const Card& card){return bool(card.mesh) || card.material.lit || card.compositing.role!=GeometryRole::Surface || card.compositing.holdout || !card.compositing.cameraVisible || !card.compositing.shadowVisible;}))
         return renderMeshes(cards,c,s);
     if(cards.size()>maxCards)throw std::invalid_argument("Vulkan card renderer supports up to 16 cards; select CPU for larger scenes.");
     Uniforms u{};copyMatrix(u.camera,c.transform);
-    const double aspect=s.width*s.pixelAspect/s.height;
+    const double aspect=c.filmAspect(s.width*s.pixelAspect/s.height);
     u.film[0]=float(c.orthographic?c.orthoWidth*.5:c.aperture/(2*c.focal));u.film[1]=float(u.film[0]/aspect);u.film[2]=c.orthographic?1.f:0.f;u.film[3]=float(2*c.offsetX);u.clip[3]=float(2*c.offsetY*aspect);
     u.output[0]=float(s.width);u.output[1]=float(s.height);u.output[2]=float(cards.size());u.output[3]=float(s.samples);
     u.clip[0]=float(c.nearClip);u.clip[1]=float(c.farClip);u.clip[2]=s.pass==RenderPass::Depth?1.f:0.f;
@@ -408,9 +487,9 @@ std::vector<float> Renderer::render(const std::vector<Card>& cards,const Camera&
         dest.size[0]=float(card.width);dest.size[1]=float(card.height);dest.size[2]=float(std::clamp(card.opacity,0.,1.));dest.size[3]=card.projected?1.f:0.f;
         const auto& camera=card.projector;
         dest.projection[0]=float(camera.orthographic?camera.orthoWidth*.5:camera.aperture/(2*camera.focal));
-        dest.projection[1]=float(dest.projection[0]/card.projectionAspect);dest.projection[2]=camera.orthographic?1.f:0.f;
+        dest.projection[1]=float(dest.projection[0]/camera.filmAspect(card.projectionAspect));dest.projection[2]=camera.orthographic?1.f:0.f;
         dest.clip[0]=float(camera.nearClip);dest.clip[1]=float(camera.farClip);
-        dest.clip[2]=float(camera.offsetX);dest.clip[3]=float(camera.offsetY*card.projectionAspect);
+        dest.clip[2]=float(camera.offsetX);dest.clip[3]=float(camera.offsetY*camera.filmAspect(card.projectionAspect));
         dest.textureUv[0]=dest.textureUv[1]=1;
         if(card.texture && card.texture->width>0 && card.texture->height>0) {
             for(int j=0;j<2;++j) {

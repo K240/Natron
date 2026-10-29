@@ -157,6 +157,14 @@ bool
 GenericSchedulerThread::quitThread(bool allowRestarts)
 {
     if ( !isRunning() ) {
+        // A stopped scheduler can still have pool/backup work in flight. Also
+        // close its restart gate before project teardown changes graph inputs.
+        if (!allowRestarts) {
+            QMutexLocker k(&_imp->mustQuitMutex);
+            _imp->startingThreadAllowed = false;
+            _imp->lastQuitThreadAllowedRestart = false;
+        }
+        onQuitRequested(allowRestarts);
         return false;
     }
 
@@ -166,6 +174,10 @@ GenericSchedulerThread::quitThread(bool allowRestarts)
         QMutexLocker k(&_imp->mustQuitMutex);
         // We already called quitThread
         if (_imp->mustQuit || !_imp->lastQuitThreadAllowedRestart) {
+            if (!allowRestarts) {
+                _imp->lastQuitThreadAllowedRestart = false;
+                _imp->startingThreadAllowed = false;
+            }
             return true;
         }
         _imp->mustQuit = true;
@@ -210,32 +222,24 @@ GenericSchedulerThread::waitForThreadToQuit_not_main_thread()
 bool
 GenericSchedulerThreadPrivate::waitForThreadsToQuit_internal(bool allowBlockingForMainThread)
 {
-    if ( !_p->isRunning() ) {
-        return false;
-    }
-
-    {
-        QMutexLocker k(&threadStateMutex);
-        if (threadState == GenericSchedulerThread::eThreadStateStopped) {
-            return false;
-        }
-    }
-
     // This function may NOT be called on the main-thread, because we may deadlock if executeOnMainThread is called OR block the UI.
     if ( !allowBlockingForMainThread && ( QThread::currentThread() == qApp->thread() ) ) {
         return false;
     }
 
-    {
-        QMutexLocker k(&mustQuitMutex);
-        while (mustQuit) {
-            mustQuitCond.wait(k.mutex());
+    if (_p->isRunning()) {
+        {
+            QMutexLocker k(&mustQuitMutex);
+            while (mustQuit) {
+                mustQuitCond.wait(k.mutex());
+            }
         }
+        // Join even if resolveState() already marked the worker as stopped.
+        _p->wait();
     }
 
-    // call pthread_join() to ensure the thread has stopped, this should be instantaneous anyway since we ensured we returned from the run() function already
-    _p->wait();
-
+    // Viewer requests dispatch independent pool tasks. Their completion must
+    // be awaited even when the scheduler itself stopped before this call.
     _p->onWaitForThreadToQuit();
 
     return true;

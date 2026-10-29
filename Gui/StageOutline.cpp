@@ -64,7 +64,7 @@ StageOutline::StageOutline(Gui* gui):QWidget(gui),PanelWidget(this,gui) {
     _renderCameraButton=new QPushButton(tr("Set render camera"),this);_renderCameraButton->setObjectName("StageOutlineRenderCamera");_renderCameraButton->setEnabled(false);cameraRow->addWidget(_renderCameraButton);layout->addLayout(cameraRow);
     connect(_lookButton,&QPushButton::clicked,this,&StageOutline::lookThroughSelectedCamera);connect(_renderCameraButton,&QPushButton::clicked,this,&StageOutline::useSelectedRenderCamera);
     _editButton=new QToolButton(this);_editButton->setText(tr("Add USD edit"));_editButton->setObjectName("StageOutlineEdit");_editButton->setPopupMode(QToolButton::InstantPopup);_editButton->setEnabled(false);
-    auto edits=new QMenu(_editButton);edits->addAction(tr("Transform"),this,&StageOutline::addTransformEdit);edits->addAction(tr("Visibility"),this,&StageOutline::addVisibilityEdit);edits->addAction(tr("Bind material"),this,&StageOutline::addMaterialBinding);edits->addAction(tr("Compositing"),this,&StageOutline::addCompositingEdit);_editButton->setMenu(edits);layout->addWidget(_editButton);
+    auto edits=new QMenu(_editButton);edits->addAction(tr("Transform"),this,&StageOutline::addTransformEdit);edits->addAction(tr("Visibility"),this,&StageOutline::addVisibilityEdit);edits->addAction(tr("Bind material"),this,&StageOutline::addMaterialBinding);edits->addAction(tr("Compositing"),this,&StageOutline::addCompositingEdit);edits->addAction(tr("Shadow catcher"),this,&StageOutline::addShadowCatcherEdit);edits->addAction(tr("Occluder"),this,&StageOutline::addOccluderEdit);edits->addAction(tr("Reflection catcher"),this,&StageOutline::addReflectionCatcherEdit);_editButton->setMenu(edits);layout->addWidget(_editButton);
     connect(this,&StageOutline::selectionReady,this,&StageOutline::syncSelection);
     connect(this,&StageOutline::frameSelectionRequested,this,&StageOutline::frameSelection);
     connect(_sourceChoice,qOverload<int>(&QComboBox::currentIndexChanged),this,[this](int index){
@@ -170,7 +170,7 @@ void StageOutline::refreshSource() {
         if(!_bridge)_bridge=std::make_shared<UsdSceneBridge>();
         Gpu::Cards::Settings settings;settings.width=format.width();settings.height=format.height();settings.pixelAspect=format.getPixelAspectRatio();settings.lights=_scene.lights;settings.edits=_scene.usdEdits;
         const auto bridge=_bridge;const auto camera=_scene.camera;const auto sources=_scene.usdSources;
-        _composing=true;
+        _composing=true;_editButton->setEnabled(false);
         disconnect(_composer,nullptr,this,nullptr);
         connect(_composer,&QFutureWatcher<ComposeReply>::finished,this,[this,key,branch]{
             _composing=false;auto reply=_composer->result();
@@ -189,12 +189,15 @@ void StageOutline::syncSelection() {
     auto gui=getGui();auto source=_source.lock();
     const bool camera=source && _selected.size()==1 && _selected.front().type=="Camera";
     const bool usd=source && dynamic_cast<NativeScene3D*>(source->getEffectInstance().get())->rendererBackendAt(source->getApp()->getTimeLine()->currentFrame(),ViewIdx(0))==3;
-    _lookButton->setEnabled(camera);_renderCameraButton->setEnabled(camera && usd);_editButton->setEnabled(usd && !_selected.empty());
+    _lookButton->setEnabled(camera);_renderCameraButton->setEnabled(camera && usd);_editButton->setEnabled(usd && !_selected.empty() && !_composing);
     if(!gui || !source || !isVisible())return;
     // Graph ownership remains usable with no visible 3D Viewer.
     if(!_selected.empty() && _ownershipDirty) {
         std::map<NodeGraph*,NodesGuiList> graphs;std::set<Node*> seen;
-        for(const auto& prim:_selected)for(const auto& object:_scene.objects)if(auto native=dynamic_cast<NativeScene3D*>(object.owner->getEffectInstance().get())) {
+        auto edit=std::find_if(_scene.objects.rbegin(),_scene.objects.rend(),[&](const Scene3DObject& object){return object.targetsPrims(_selected);});
+        if(edit!=_scene.objects.rend()) {
+            if(auto nodeGui=std::dynamic_pointer_cast<NodeGui>(edit->owner->getNodeGui()))graphs[nodeGui->getDagGui()].push_back(nodeGui);
+        } else for(const auto& prim:_selected)for(const auto& object:_scene.objects)if(auto native=dynamic_cast<NativeScene3D*>(object.owner->getEffectInstance().get())) {
             if(native->sceneId()==prim.ownerId && seen.insert(object.owner.get()).second)if(auto nodeGui=std::dynamic_pointer_cast<NodeGui>(object.owner->getNodeGui()))graphs[nodeGui->getDagGui()].push_back(nodeGui);
         }
         for(const auto& pair:graphs)if(pair.first)pair.first->setSelection(pair.second);
@@ -207,7 +210,7 @@ void StageOutline::lookThroughSelectedCamera() {
     if(!_value || _selected.size()!=1 || _selected.front().type!="Camera")return;
     const auto path=QString::fromStdString(_selected.front().path);const auto value=_value;
     try {
-        const auto camera=value->camera(path.toStdString());auto gui=getGui();auto source=_source.lock();if(!gui || !source)return;
+        const auto camera=value->camera(path.toStdString(),true);auto gui=getGui();auto source=_source.lock();if(!gui || !source)return;
         auto viewers=gui->getViewersList();auto active=gui->getActiveViewer();if(std::find(viewers.begin(),viewers.end(),active)!=viewers.end()){viewers.remove(active);viewers.push_front(active);}
         QScopedValueRollback<bool> framing(_framingSelection,true);
         for(auto tab:viewers)if(Scene3DViewer::rendererForViewer(tab)==source) {
@@ -229,14 +232,39 @@ void StageOutline::addTransformEdit(){insertEdit("USDTransform");}
 void StageOutline::addVisibilityEdit(){insertEdit("USDVisibility");}
 void StageOutline::addMaterialBinding(){insertEdit("BindMaterial");}
 void StageOutline::addCompositingEdit(){insertEdit("USDCompositing");}
-void StageOutline::insertEdit(const std::string& plugin) {
+void StageOutline::addReflectionCatcherEdit(){insertEdit("USDCompositing",3);}
+void StageOutline::addShadowCatcherEdit(){insertEdit("USDCompositing",1);}
+void StageOutline::addOccluderEdit(){insertEdit("USDCompositing",2);}
+void StageOutline::insertEdit(const std::string& plugin,int compositingRole) {
     auto source=_source.lock();auto gui=getGui();if(!source || !gui || _selected.empty() || _composing)return;
     auto renderGui=std::dynamic_pointer_cast<NodeGui>(source->getNodeGui());if(!renderGui || !renderGui->getInputArrow(0))return;
     // Bind the exact inspected branch; a later source-combo change cannot
     // redirect an existing node's targets or insertion point.
     const auto paths=selectedPrimPaths().join(QLatin1Char('\n')).toStdString();
+    if(plugin=="USDCompositing" && compositingRole>0)for(const auto& prim:_selected)if(prim.type!="Mesh" && !((prim.type=="Xform" || prim.type=="Scope") && prim.hasBounds)){
+        _details->setPlainText(tr("Select Mesh geometry or a bounded Xform/Scope for a shadow/reflection catcher or occluder."));return;
+    }
+    Gpu::Cards::Vec3 pivot;
+    if(plugin=="USDTransform") {
+        bool first=true;Gpu::Cards::Vec3 minimum,maximum;
+        for(const auto& prim:_selected) {
+            if(!prim.hasTransform){_details->setPlainText(tr("Select active, loaded, transformable Prims to add a transform."));return;}
+            const auto lo=prim.hasBounds?prim.minimum:prim.transform.point({});
+            const auto hi=prim.hasBounds?prim.maximum:lo;
+            if(first){minimum=lo;maximum=hi;first=false;}
+            else {minimum={std::min(minimum.x,lo.x),std::min(minimum.y,lo.y),std::min(minimum.z,lo.z)};maximum={std::max(maximum.x,hi.x),std::max(maximum.y,hi.y),std::max(maximum.z,hi.z)};}
+        }
+        pivot=(minimum+maximum)*.5;
+    }
     CreateNodeArgs args("fr.inria.built-in."+plugin,source->getGroup());args.setProperty(kCreateNodeArgsPropAutoConnect,false);args.setProperty(kCreateNodeArgsPropAddUndoRedoCommand,false);
-    args.setPropertyN<std::string>(kCreateNodeArgsPropNodeInitialParamValues,{"primPaths"});args.setProperty<std::string>(std::string(kCreateNodeArgsPropParamValue)+"_primPaths",paths,0,false);
+    args.setPropertyN<std::string>(kCreateNodeArgsPropNodeInitialParamValues,plugin=="USDTransform"?std::vector<std::string>{"primPaths","pivot"}:plugin=="USDCompositing"?std::vector<std::string>{"primPaths","compositingRole"}:std::vector<std::string>{"primPaths"});
+    if(plugin=="USDCompositing")args.setProperty<int>(std::string(kCreateNodeArgsPropParamValue)+"_compositingRole",compositingRole,0,false);
+    args.setProperty<std::string>(std::string(kCreateNodeArgsPropParamValue)+"_primPaths",paths,0,false);
+    if(plugin=="USDTransform") {
+        args.setProperty<double>(std::string(kCreateNodeArgsPropParamValue)+"_pivot",pivot.x,0,false);
+        args.setProperty<double>(std::string(kCreateNodeArgsPropParamValue)+"_pivot",pivot.y,1,false);
+        args.setProperty<double>(std::string(kCreateNodeArgsPropParamValue)+"_pivot",pivot.z,2,false);
+    }
     auto node=gui->getApp()->createNode(args);if(!node)return;auto nodeGui=std::dynamic_pointer_cast<NodeGui>(node->getNodeGui());if(!nodeGui)return;
     NodesGuiList added{nodeGui};
     if(plugin=="BindMaterial") {
@@ -290,7 +318,7 @@ void StageOutline::refreshInspectionCameras() {
     auto gui=getGui();auto source=_source.lock();if(!gui || !source || !_value)return;
     for(auto tab:gui->getViewersList())if(Scene3DViewer::rendererForViewer(tab)==source)if(auto viewer=tab->findChild<Scene3DViewer*>()) {
         const auto path=viewer->property("lookThroughPrimPath").toString();if(path.isEmpty())continue;
-        try{viewer->lookThroughPrim(path,_value->camera(path.toStdString()));}catch(const std::exception&){viewer->setLookThroughCamera(false);}
+        try{viewer->lookThroughPrim(path,_value->camera(path.toStdString(),true));}catch(const std::exception&){viewer->setLookThroughCamera(false);}
     }
 }
 void StageOutline::fetch(QTreeWidgetItem* parent,size_t offset) {

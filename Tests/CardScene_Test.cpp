@@ -108,8 +108,10 @@ int main(int argc,char** argv) {
             InstanceOptions options;options.validation=true;auto instance=VulkanInstance::create(options);
             auto device=VulkanDevice::create(instance,argc>2?std::stoi(argv[2]):-1);Renderer renderer(device);
             Card noTexture=red;noTexture.texture.reset();Card zeroWidth=red;zeroWidth.width=0;
-            std::vector<std::vector<Card>> cases{{},{red},{blue,red},{a,b},{projected},{offsetProjection},{cropped},std::vector<Card>(16,projected),{blue,transparent},{noTexture},{zeroWidth}};
-            for(const auto pass:{RenderPass::Color,RenderPass::Depth})for(int samples:{1,2,4})for(const auto& cards:cases)for(const auto& view:{camera,moved,ortho,offset}) {
+            Camera calibrated=offset;calibrated.apertureAspect=1.71;
+            Card calibratedProjection=projected;calibratedProjection.projector=calibrated;
+            std::vector<std::vector<Card>> cases{{},{red},{blue,red},{a,b},{projected},{offsetProjection},{cropped},{calibratedProjection},std::vector<Card>(16,projected),{blue,transparent},{noTexture},{zeroWidth}};
+            for(const auto pass:{RenderPass::Color,RenderPass::Depth})for(int samples:{1,2,4})for(const auto& cards:cases)for(const auto& view:{camera,moved,ortho,offset,calibrated}) {
                 s.samples=samples;s.pass=pass;const auto cpu=renderCpu(cards,view,s),gpu=renderer.render(cards,view,s);
                 require(cpu.size()==gpu.size(),"GPU output dimensions differ.");
                 for(size_t i=0;i<cpu.size();++i)maxError=std::max(maxError,std::abs(cpu[i]-gpu[i]));

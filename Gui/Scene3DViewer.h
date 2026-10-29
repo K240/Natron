@@ -34,6 +34,8 @@ class Scene3DViewer : public QWidget {
     Q_PROPERTY(bool rendering READ rendering)
     Q_PROPERTY(QVariantList inspectionPivot READ inspectionPivot)
     Q_PROPERTY(double inspectionDistance READ inspectionDistance)
+    Q_PROPERTY(bool pointSelectionMode READ pointSelectionMode WRITE setPointSelectionMode)
+    Q_PROPERTY(QVariantList guideLandmarks READ guideLandmarks)
 public:
     explicit Scene3DViewer(ViewerTab* tab);
     static NodePtr rendererForViewer(ViewerTab* tab);
@@ -51,6 +53,8 @@ public:
     QVariantList sceneObjects() const;
     QVariantList inspectionPivot() const {return {_pivot.x,_pivot.y,_pivot.z};}
     double inspectionDistance() const {return _distance;}
+    bool pointSelectionMode()const{return _pointSelectionMode;}
+    QVariantList guideLandmarks()const;
     std::shared_ptr<const Gpu::Cards::UsdSceneValue> stageValue()const{return _stageValue;}
     QString stageBranch()const;
     NodePtr stageSource()const{return _source.lock();}
@@ -66,12 +70,14 @@ public Q_SLOTS:
     void resetView();
     void frameSelection();
     void refreshScene();
+    void setPointSelectionMode(bool enabled);
 Q_SIGNALS:
     void lookThroughCameraChanged(bool value);
     void gizmoModeChanged(int mode);
     void stageValueChanged(bool resetTree);
     void sceneSnapshotChanged();
     void primPathsSelected(QStringList paths);
+    void pointSelectionModeChanged(bool enabled);
 protected:
     void paintEvent(QPaintEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
@@ -94,6 +100,7 @@ private:
     Gpu::Cards::HdNvpFrame _pickFrame;
     Gpu::Cards::Camera _dragCamera;
     Gpu::Cards::Settings _settings;
+    std::shared_ptr<const Gpu::Cards::Texture> _plate;
     std::unique_ptr<Gpu::Cards::Renderer> _renderer;
     std::shared_ptr<Gpu::VulkanDevice> _device;
     std::shared_ptr<Gpu::Cards::UsdSceneBridge> _usdBridge;
@@ -149,6 +156,9 @@ private:
     };
     std::vector<ObjectDisplay> _objectDisplay;
     bool _marquee = false, _marqueeAdd = false;
+    bool _pointSelectionMode=false;
+    int hitLandmark(QPointF position)const;
+    void selectLandmark(int index,bool add);
     int _marqueeStartHit = -1;
     QPointF _marqueeEnd;
     QPointF project(Gpu::Cards::Vec3 world, bool* visible = nullptr) const;

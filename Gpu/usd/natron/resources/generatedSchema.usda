@@ -7,6 +7,11 @@ class "NatronCompositingAPI"
     bool natron:shadowVisible = true
     bool natron:reflectionVisible = true
     bool natron:holdout = false
+    int natron:compositingRole = 0
+    float natron:shadowDensity = 1
+    color3f natron:shadowTint = (0, 0, 0)
+    float natron:reflectionStrength = 0.25
+    float natron:reflectionRoughness = 0.2
 }
 
 class "NatronProjectionAPI"

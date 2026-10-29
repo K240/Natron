@@ -48,6 +48,9 @@ public Q_SLOTS:
     void addVisibilityEdit();
     void addMaterialBinding();
     void addCompositingEdit();
+    void addShadowCatcherEdit();
+    void addReflectionCatcherEdit();
+    void addOccluderEdit();
 Q_SIGNALS:
     void selectionReady();
     void frameSelectionRequested();
@@ -55,7 +58,7 @@ private:
     void syncSelection();
     void refreshInspectionCameras();
     void frameSelection();
-    void insertEdit(const std::string& plugin);
+    void insertEdit(const std::string& plugin,int compositingRole=0);
     void notifyGuiClosing() override;
     void enterEvent(QtCompat::QEnterEvent* event) override;
     void leaveEvent(QEvent* event) override;

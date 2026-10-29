@@ -3,12 +3,21 @@
 USD 3D compositing design
 =========================
 
-Status: proposed implementation design, 2026-10-13. The implementation baseline
-is commit ``f9f020dfc``. This document describes target behavior; it does not
-claim that the proposed nodes, schemas or renderer features already exist.
-See :ref:`maint-3d-compositing` for the current implementation and limitations.
-The composed-stage foundation and initial Stage Outline browsing/selection are
-now implemented; :ref:`maint-3d-stage-outline` describes their present scope.
+Status: original implementation design, 2026-10-13; capability summary updated
+2026-10-29 against ``5344d7689``. Some targets are now implemented; others remain
+proposals. See :ref:`maint-3d-compositing` for implemented behavior and
+:ref:`maint-3d-stage-outline` for the current Outline tools.
+
+The revised architecture and delivery order are in :ref:`maint-3d-redesign`.
+That proposal includes native camera solving and point-driven scene assembly
+as a primary workflow. The detailed comp/projection contracts below remain
+applicable except where the revised proposal explicitly changes the design.
+
+.. toctree::
+   :maxdepth: 2
+
+   3d-redesign
+   3d-workflow-review
 
 Design direction
 ----------------
@@ -94,30 +103,35 @@ file or node compatibility with Nuke.
 Current capability boundary
 ---------------------------
 
-Native nodes already provide cards, transforms, cameras, FBX animation,
-projection, PBR maps and lights through the older CPU/Vulkan scene path.
-The USD/hdNVP bridge preserves one complete imported USD stage, including
-references and instances, and renders native geometry/material/light additions.
-It returns float color/depth and integer picking buffers, with functioning
-OIDN/DLSS choices. These paths currently have different coverage.
+Native nodes provide cards, transforms, cameras, FBX animation, projection,
+PBR maps and lights through the CPU/Vulkan scene path. The USD/hdNVP path
+publishes branch-private composed stages with shot layers or namespaced,
+dependency-complete asset references, native additions and graph-authored
+USDTransform/USDVisibility/BindMaterial/USDCompositing opinions. Stage Outline
+supports inspection, selection, camera actions and edit-node insertion.
+USDTransform provides per-Prim move/rotate/scale Gizmos and a persisted pivot.
+Native CameraTracker and SceneSetup provide sparse camera reconstruction and
+point-driven alignment, placement and projected ground. The
+bridge implements ray-hit MaterialX projection, GPU prim/instance picking,
+progressive shared-memory previews, cooperative cancellation and OIDN/DLSS
+choices. The two paths still have different coverage and evaluation ownership.
 
 The following remain implementation work:
 
-* USD/hdNVP Project3D, arbitrary multi-root asset normalization and prim-scoped
-  edit-node overrides beyond the current asset assembly transforms.
-* Imported-object pixel picking and Outline camera/edit actions. The dockable
-  Outline panel supports source following/pinning, prim inspection/selection,
-  bounds framing and workspace restoration.
-* Progressive sample presentation and incremental texture transport. Completed
-  3D preview frames are now requested asynchronously.
-* Full imported camera optics and consistent render/projection framing.
-* Comp visibility, holdouts/catchers and additional public AOVs.
+* Shared renderer-independent scene evaluation and general point-cloud
+  loading/inspection beyond the reconstructed guide landmarks.
+* Arbitrary multi-root asset normalization and general per-node opinion-layer
+  composition beyond the present private-root implementation.
+* Explicit instance edit policy and broader selection/collection operations.
+* Incremental layer/property/texture transport beyond generated-file reloads.
+* Camera optics parity across import paths, dense reconstruction, catchers,
+  UV/motion outputs and temporal delivery tools.
 
-hdNVP's current ``render::AovContent`` supports color, depth, integer IDs,
-albedo and world-space shading normals. Natron currently exposes only the
-first four through its host, and only color/depth as image outputs. Position,
-UV, motion, lighting-component passes and Cryptomatte require renderer or
-bridge work; requesting an unsupported pass must not silently return zeros.
+The host transports color, depth, integer IDs, albedo and shading normals.
+Render3D exposes beauty, Depth.Z, Albedo, N and P image planes; P is reconstructed
+from depth and the matching camera by the bridge. Exact sampling/coverage
+contracts, UV, motion, lighting-component passes and Cryptomatte require further
+renderer/bridge work. Unsupported output requests must not silently return zeros.
 
 Scene representation and node evaluation
 ----------------------------------------
@@ -582,6 +596,19 @@ independent inspection/render camera actions, USDTransform/USDVisibility/
 BindMaterial/USDCompositing opinions, ray-hit MaterialX projection, shared
 memory with cooperative cancellation, progressive previews and depth/albedo/
 normal/position EXR outputs. See ``3d-compositing`` for the exact output and
-compatibility contracts. Direct Prim Gizmos, catchers, UV and temporal delivery
+compatibility contracts. USDTransform also provides per-Prim Gizmos with a
+persisted selection pivot. Catchers, UV and temporal delivery
 passes remain subsequent slices; schema declarations alone do not count as
 implemented renderer support.
+
+The native reconstruction slice now adds automatic feature tracking,
+CameraTracker controls and a linked ReconstructionScene/SceneCamera workflow.
+Real plates with known calibration or automatic focal/radial estimates can be
+tracked, solved, corrected and connected to USD/Render3D inside Natron, with
+persisted analysis, observability diagnostics and cancellation. See
+:ref:`maint-camera-tracker-native` for usage, scope and reproducible validation.
+The first layout milestone adds SceneSetup, selectable guide landmarks,
+ground/origin/metric-scale setup, point-to-Axis/Card creation, frozen projected
+ground and referenced USD asset placement. Camera, projectors and placed geometry
+share the same frame through subsequent alignment changes. See
+:ref:`maint-reconstruction-layout` for the workflow and its validation limits.

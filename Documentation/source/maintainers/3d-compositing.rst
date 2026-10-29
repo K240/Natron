@@ -936,7 +936,8 @@ Imported camera film offsets and focal multipliers are evaluated. Depth of
 field is not yet exposed by the Natron camera representation. Imported prim
 selection, GPU pixel picking and bounds framing are available through Stage
 Outline, including instance-proxy paths. USD edit nodes author per-prim
-opinions. Direct imported-prim Gizmos remain future work.
+opinions. USDTransform exposes move, rotate and scale Gizmos for its exact
+composed Prim selection, with a persisted world-space pivot.
 Native geometry and render camera Gizmos remain editable.
 
 .. _maint-3d-stage-outline:
@@ -1008,12 +1009,50 @@ An instance-proxy override privately makes that instance editable, preserving
 other instances. BindMaterial accepts PBRMaterial, Project3D or an image;
 ordinary imported textures use ``st``. Arbitrary rename/reparent is future work.
 
+To manipulate individual imported objects, select their Prims in Outline and
+choose **Add USD edit > Transform**. Enable the 3D Viewer, then use **W**, **E**
+and **R** for move, rotate and scale. Outline initializes the new node's
+**Pivot** at the combined world bounds of the selection; cameras and other
+transformable Prims without bounds use their composed world origins. Material,
+inactive and unloaded selections are rejected before creating an edit node.
+The pivot is editable and saved; existing or manually created USDTransform nodes
+default to zero, retaining their world-origin behavior. Translation is a delta
+from the upstream scene, and rotation/scale act about Pivot plus that delta.
+An enclosing TransformGeo or SceneSetup carries the editor's pivot and axes
+with its scene frame; transform opinions are converted to the same frame.
+For multiple Prims, one node applies a common transform about the selection
+pivot, including a parent/child selection without double application.
+
+Selecting these same Prims again resumes the closest downstream USDTransform
+whose target set matches exactly. Selecting its graph node also restores the
+Prim selection. Each drag has its own Undo/Redo operation, Escape cancels the
+current gesture, and animated controls auto-key at the current frame. Inspection
+refreshes preserve the active gesture. Source files and reader transforms stay
+unchanged. Individual instance-proxy editing follows the existing private
+override policy described above.
+
+``tools/usd-prim-gizmo-gui-smoke.py`` exercises move/rotate/scale, Undo/Redo,
+Escape, auto-key Undo after seeking, reselection, rejected material edits and
+project reload. Use a fresh owned profile::
+
+    .\tools\run-windows-owned-gui-test.ps1 -Script tools/usd-prim-gizmo-gui-smoke.py -Profile build/test-profiles/usd-prim-gizmos -Result build/usd-prim-gizmos/result.json -TimeoutSeconds 180
+
+Set ``NATRON_PRIM_GIZMO_TARGETS`` to comma-separated paths to exercise the
+fixture's instance proxy or multiple Prims. Set ``NATRON_PRIM_GIZMO_PARENT=1``
+to use an asset reference below a translated, rotated and nonuniformly scaled
+TransformGeo.
+It compares the transformed Prim's bounds center with its editor origin.
+The saved project and screenshot are written under ``build/usd-prim-gizmos``.
+The test checks the process exit code as well as the operation assertions.
+Scheduler shutdown drains outstanding
+pool renders even after its worker has stopped, before Viewer state is released.
+
 USDCompositing supports Mesh holdout and separate camera, shadow and indirect
 ray visibility. Reflection visibility currently governs all indirect rays,
 including diffuse bounces. Holdout cuts primary beauty/alpha but retains depth,
 picking and secondary-ray participation. This requires the matching hdNVP
 renderer changes, not just the Natron schema resources. Curves, volumes,
-catchers, UV, motion vectors, motion blur, DOF and Cryptomatte remain subsequent
+UV, motion vectors, motion blur, DOF and Cryptomatte remain subsequent
 delivery stages.
 
 Regression coverage is provided by ``UsdStageComposition`` and the real GUI
@@ -1079,3 +1118,225 @@ took 206 ms, first rendering 26.2 s (including a 23.4 s MaterialX pipeline
 creation), and a camera update 88 ms including IPC/readback. Eight-sample GPU
 ray dispatch was 34.2 ms after the update. These are measurements of that
 scene and run, not general frame-rate guarantees.
+
+.. _maint-3d-shadow-catcher:
+
+Shadow catchers and plate occlusion
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``ShadowCatcher`` and ``Occluder`` accept proxy geometry or a scene. A Card,
+ReadGeo mesh or ReadUSD asset can supply the proxy. Their effects are scoped
+to that branch; merge the proxy with the CG using Scene and connect the result
+to Render3D. Native CPU/Vulkan support these roles on their geometry, while
+USD / hdNVP also supports opinions on selected composed USD Prims.
+
+ShadowCatcher receives added CG shadows while its surface remains transparent
+in beauty. **Shadow density** controls the received lighting loss; zero removes
+the shadow while retaining geometric occlusion. **Shadow tint (linear)** is the
+straight scene-linear color of the shadow overlay, defaulting to black. Add
+scene lights and connect the real plate to Render3D's background. The background
+can be the CameraTracker's corrected plate. A visible projected ground is a
+different surface: use a catcher in its place, or wrap that ground with a
+ShadowCatcher, instead of stacking a visible coplanar card over the catcher.
+
+Occluder hides CG behind a proxy while leaving the real plate visible. It does
+not draw a colored surface into beauty. Camera/occlusion visibility, shadow
+visibility and secondary-ray visibility are independent. Secondary visibility
+on USD / hdNVP governs both diffuse and reflective indirect rays. Both matte
+roles retain geometry depth; moving a proxy behind an object stops it occluding
+that object. The current workflow targets opaque real objects. Translucent,
+refractive and volumetric plate occluders are not reconstructed by a holdout.
+
+For a tracked plate, use the SceneSetup workflow:
+
+#. Establish ground/origin/known-distance scale, then place the USD CG asset.
+#. Select an anchor point and set **Card / ground size**. Click **Create shadow
+   catcher ground** to create an aligned ground Card and ShadowCatcher.
+#. Click **Create key light**, then adjust its direction/intensity in the 3D
+   Viewer or parameter panel to match the photographed light. Additional
+   Light nodes can supply fill or environment lighting. Adjust the catcher's
+   density and tint to match the plate.
+#. Select points on a photographed foreground object and click **Create occluder
+   card**. The card initially faces the solved camera at the current frame.
+   Adjust its size and use W/E/R to move, rotate or scale it. For a shaped
+   object, substitute a mesh or USD proxy for the card.
+#. Use Render3D **Shadow mask** and **Occlusion mask** previews to inspect the
+   masks, then return Output to Color to see the final plate composite. Purple
+   catcher bounds and blue occluder bounds identify the proxy geometry in the
+   3D Viewer; these editor overlays are absent from rendered images.
+
+SceneSetup inserts the proxy, role node and Scene connection as one Undo/Redo
+operation. They share its frame with the camera, points and CG. The geometry's
+ordinary gizmos and animation controls remain editable. Linear downstream USD
+edit nodes do not prevent further SceneSetup placement.
+
+For individual objects inside a composed USD, select Mesh Prims or a bounded
+Xform/Scope in Stage Outline and choose **Add USD edit > Shadow catcher** or
+**Occluder**. These create USDCompositing with the corresponding **Geometry
+role** and target paths. Surface remains the default for existing projects.
+Material/camera-only selections are rejected for the new matte actions.
+Density and tint controls appear only for the catcher role. Use the existing
+USDTransform Prim gizmos to position the proxy. Subtree roles override source
+Mesh primvar defaults, with private per-instance overrides; source assets and
+other published branch values remain unchanged.
+
+Render3D adds two float layers, alongside its existing outputs:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Layer
+     - Contract
+   * - ``Shadow.RGBA``
+     - Premultiplied linear shadow tint and coverage. It includes receiver
+       coverage and foreground plate-proxy occlusion; the CG foreground is
+       composited over it separately.
+   * - ``Occlusion.R``
+     - Scalar visible occluder coverage, clipped by foreground geometry and
+       receiver depth. It is independent of the plate's alpha.
+
+Use a float EXR Writer with all planes enabled and linear output to export
+beauty, masks and Depth.Z. Output preview choices affect Color visualization;
+they do not replace these data layers. With foreground F, shadow S and plate B,
+the compositor first computes ``B'.rgb = B.rgb * (1-S.a) + S.rgb * B.a`` and
+``B'.a = B.a``, then composites F over B'. Thus shadows do not add coverage to
+transparent plate pixels. Without a plate it returns F over S, suitable for
+placing the result over an opaque plate in the node graph.
+
+CPU/Vulkan calculate the ratio of shadowed and reference diffuse illumination
+at receiver hits. The reference excludes added CG casters while retaining the
+proxy scene. No illumination produces zero shadow instead of a black receiver.
+Existing environment sample controls govern the compatibility renderer's
+sampling. USD / hdNVP uses private neutral-diffuse lighting probes and a separate
+beauty render. Catcher Meshes sharing density/tint are grouped into two probe
+renders. One additional unlit probe supplies an occluder mask when needed.
+Shadow probes use direct illumination (one bounce) without denoising; beauty
+retains the selected path-tracing quality. They do not derive indirect-only
+shadows. Reflections use the separate catcher workflow below.
+
+The auxiliary opinions preserve the published USD stage and external source
+files. Only completed probes are paired with the corresponding beauty frame;
+interrupted requests cannot publish an unfinished shadow/beauty combination.
+Progressive beauty updates use the completed masks, and cancellation remains
+cooperative. Plate composites and matte roles hide dome lights from primary
+camera rays while keeping their illumination. This requires the updated
+``tools/hdnvp-host``; an older worker is rejected with a rebuild diagnostic.
+
+``CompositingCpu`` checks shadow reception, independent caster visibility,
+density/tint, zero-light behavior, front/back proxy ordering and partial-alpha
+plate composition. ``NatronCompositing --gpu`` compares all four native passes
+against CPU with validation enabled. ``--hdnvp`` checks actual rendered shadow
+and occluder layers, multiple receivers and referenced USD subtree roles.
+The real-plate smokes also verify linear EXR channels and project reload::
+
+    .\tools\run-windows-qt6.ps1 -Program NatronCompositing -ProgramArguments @('--gpu')
+    .\tools\run-windows-qt6.ps1 -Program NatronCompositing -ProgramArguments @('--hdnvp')
+    .\tools\run-windows-owned-gui-test.ps1 -Program NatronRenderer -Script tools/shadow-catcher-smoke.py -Profile build/test-profiles/catcher-native -Result build/camera-tracker-real/catcher-native-result.json -TimeoutSeconds 300
+    $env:NATRON_SHADOW_BACKEND = 'hdNVP'
+    .\tools\run-windows-owned-gui-test.ps1 -Program NatronRenderer -Script tools/shadow-catcher-smoke.py -Profile build/test-profiles/catcher-usd -Result build/camera-tracker-real/catcher-usd-result.json -TimeoutSeconds 300
+    Remove-Item Env:NATRON_SHADOW_BACKEND
+    .\tools\run-windows-owned-gui-test.ps1 -Script tools/shadow-catcher-gui-smoke.py -Profile build/test-profiles/catcher-gui -Result build/camera-tracker-real/catcher-gui-result.json -TimeoutSeconds 240
+
+Use fresh owned profiles. Prepare the real-plate reconstruction/layout fixtures
+as described in :ref:`maint-reconstruction-layout`. Output projects, PNG previews
+and float EXRs stay under ``build/camera-tracker-real``. The known-distance and
+proxy geometry in these demos are artist-chosen layout constraints, not dataset
+ground-truth measurements. GUI checks cover the actual creation buttons,
+multi-node Undo/Redo, mask previews and proxy gizmo gestures without moving the
+reconstruction.
+
+.. _maint-3d-reflection-catcher:
+
+Reflection catchers on photographed surfaces
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``ReflectionCatcher`` adds the reflected contribution of CG to a real floor,
+table or other proxy surface. Connect a Card, ReadGeo mesh or ReadUSD asset to
+the catcher, merge it with the model using Scene and connect the real plate to
+Render3D's background. The proxy itself stays transparent in beauty and retains
+its depth, so photographed foreground proxies can occlude the reflection.
+
+For a tracked plate, select an anchor point in SceneSetup and click **Create
+reflection catcher ground**. This creates an aligned Card, ReflectionCatcher
+and Scene connection as one Undo/Redo operation. Adjust the proxy geometry with
+the normal gizmos. Turquoise bounds identify a reflection receiver in the 3D
+Viewer. Existing USD Mesh Prims or bounded Xform/Scope subtrees can instead use
+**Stage Outline > Add USD edit > Reflection catcher**. The resulting
+USDCompositing node has the same strength and roughness controls.
+
+**Reflection strength** scales the signed, scene-linear reflection difference.
+Zero preserves the underlying plate exactly; the default is 0.25. Values up to
+10 allow artistic amplification. **Reflection roughness** changes the receiver's
+specular BRDF: zero is a sharp mirror, while increasing it spreads and softens
+the reflected image. It is not an image-space blur. Both controls are animatable.
+Match scene lighting and camera to the photograph, and increase **Path samples**
+when rough reflections are noisy.
+
+To receive shadows and reflections on one surface, enable **Catch shadows** on
+ReflectionCatcher, or **Catch reflections** on an existing ShadowCatcher. In
+USDCompositing choose **Shadow and reflection catcher**. Reuse the existing
+ground; separate coplanar catcher cards compete for the same depth. Shadow
+density/tint and reflection strength/roughness remain independent. Existing
+projects retain their previous shadows because reflection reception defaults
+off on ShadowCatcher. Surface, ShadowCatcher and Occluder choice indices retain
+their existing values.
+
+The model's **Visible to secondary rays** controls whether it appears in the
+reflection, independently of camera visibility. A model hidden from the camera
+can still reflect. The receiver's own secondary visibility defaults off to
+avoid self-feedback; it does not disable reception. Occluders in front of a
+receiver clip the result, and proxy depth can be edited or animated normally.
+An opaque proxy can also block a reflected ray when its secondary visibility
+is enabled. This does not reconstruct a real object's translucency/refraction.
+
+USD / hdNVP renders a white-metal receiver twice: once with CG and once with
+added Surface geometry excluded from secondary rays. Primary CG is hidden in
+both probes, while its shadow visibility is preserved to keep direct-light
+shadow loss out of this difference. Common environment reflections and direct
+light highlights cancel. The result can be negative when a dark model replaces
+a brighter environment reflection; clamping it would lose dark reflections.
+Receivers sharing strength/roughness use two probe renders per group, without
+denoising and with at least two bounces. Beauty keeps the chosen quality. The
+published USD branch and source files remain immutable, including instanced
+and referenced receivers. Progressive beauty updates carry only completed
+reflection/shadow layers from the same request.
+
+Native CPU rendering supplies a one-reflection approximation using 32 GGX
+samples (one ideal ray at zero roughness), direct/environment lighting at the
+reflected surface and the existing mesh BVH. The Vulkan compatibility renderer
+uses this CPU calculation for the reflection layer while retaining GPU beauty
+and shadow rendering. Use USD / hdNVP for final path-traced model reflections
+and multiple secondary bounces. The receiver uses its geometric normals;
+recovering the photograph's material or hidden geometry remains artist work.
+
+Render3D exports **Reflection.RGB** as a signed float radiance difference, already
+scaled by strength and receiver/proxy coverage. It is an additive layer, not an
+RGBA image to place over the plate. The compositor computes
+``B'.rgb = B.rgb * (1-S.a) + S.rgb * B.a + Reflection.rgb * B.a``, preserves
+``B'.a = B.a``, and then places foreground CG over B'. This keeps the plate's
+alpha unchanged and prevents reflection color leaking into transparent plate
+pixels. Without a background, Color contains the additive RGB contribution
+without adding receiver coverage to alpha; for manual composition use the
+separate signed Reflection layer with Plus in scene-linear space. Export float
+EXR with all planes and linear output to preserve negative values.
+
+Render3D's **Reflection contribution** preview maps signed values around neutral
+gray: gray means no change, brighter values add radiance and darker values
+remove it. The exported Reflection layer always retains unmodified linear data.
+
+``ReflectionCpu`` checks strength, roughness, camera/secondary visibility,
+environment cancellation, dark reflections, foreground proxy occlusion and
+partial-alpha plate composition. The hardware path verifies referenced USD
+subtree controls and immutable published branches. Explicit checks::
+
+    .\tools\run-windows-qt6.ps1 -Program NatronReflection -ProgramArguments @('--gpu')
+    .\tools\run-windows-qt6.ps1 -Program NatronReflection -ProgramArguments @('--hdnvp')
+    .\tools\run-windows-owned-gui-test.ps1 -Program NatronRenderer -Script tools/reflection-catcher-smoke.py -Profile build/test-profiles/reflection-usd -Result build/camera-tracker-real/reflection-usd-result.json -TimeoutSeconds 300
+
+The real-plate smoke starts from the shadow/occlusion fixture above, adds
+reflections to the same ground, compares sharp/rough results, checks float EXR
+data, and reloads the project. Set ``NATRON_REFLECTION_BACKEND=CPU`` to exercise
+its native fixture instead. The shadow-catcher GUI smoke also checks the
+reflection creation button, combined-role controls, live strength/roughness
+previews and Outline role actions with Undo/Redo. Use fresh owned profiles.

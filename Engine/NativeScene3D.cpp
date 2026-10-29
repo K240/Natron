@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <Python.h>
 #include "Engine/NativeScene3D.h"
+#include "Gpu/Compositing.h"
+#include "Engine/CameraTracker.h"
 #include <QUuid>
 #include <algorithm>
 #include <cstring>
@@ -41,7 +43,7 @@ template<class K> auto sceneValueAt(const std::shared_ptr<K>& knob,double time,i
         return knob->getValue(dimension,view);
     return knob->getValueAtTime(time,dimension,view);
 }
-const char* names[]={"Card","Camera","Axis","TransformGeo","Scene","Project3D","Render3D","ReadGeo","ReadCamera","Light","PBRMaterial","ReadUSD","ReadUSDCamera","USDTransform","USDVisibility","BindMaterial","USDCompositing"};
+const char* names[]={"Card","Camera","Axis","TransformGeo","Scene","Project3D","Render3D","ReadGeo","ReadCamera","Light","PBRMaterial","ReadUSD","ReadUSDCamera","USDTransform","USDVisibility","BindMaterial","USDCompositing","ReconstructionScene","SceneCamera","SceneSetup","ShadowCatcher","Occluder","ReflectionCatcher"};
 bool usdEditKind(Scene3DKind k){return k==Scene3DKind::USDTransform || k==Scene3DKind::USDVisibility || k==Scene3DKind::BindMaterial || k==Scene3DKind::USDCompositing;}
 std::vector<std::string> targetPaths(const KnobStringWPtr& knob,ViewIdx view) {
     std::vector<std::string> paths;std::istringstream text(knob.lock()->getValue(0,view));std::string path;
@@ -49,7 +51,7 @@ std::vector<std::string> targetPaths(const KnobStringWPtr& knob,ViewIdx view) {
     if(paths.empty())throw std::runtime_error("USD edit requires at least one absolute Prim path.");return paths;
 }
 bool geometryLeaf(Scene3DKind kind){return kind==Scene3DKind::Card || kind==Scene3DKind::ReadGeo || kind==Scene3DKind::ReadUSD;}
-bool cameraKind(Scene3DKind kind){return kind==Scene3DKind::Camera || kind==Scene3DKind::ReadCamera || kind==Scene3DKind::ReadUSDCamera;}
+bool cameraKind(Scene3DKind kind){return kind==Scene3DKind::Camera || kind==Scene3DKind::ReadCamera || kind==Scene3DKind::ReadUSDCamera || kind==Scene3DKind::SceneCamera;}
 EffectInstancePtr resolve(EffectInstancePtr effect) {
     // getInput() already redirects Group Input/Output connections.
     for(int i=0;effect && i<1024;++i) {
@@ -137,6 +139,12 @@ std::string NativeScene3D::getPluginLabel() const {return names[int(_kind)];}
 std::string NativeScene3D::getPluginID() const {return std::string("fr.inria.built-in.")+names[int(_kind)];}
 std::string NativeScene3D::getPluginDescription() const {
     switch(_kind) {
+    case Scene3DKind::ShadowCatcher:return "Receive CG shadows on proxy geometry while keeping the real plate visible. Connect a Card, mesh or USD asset. Shadow density and linear tint affect the independent Shadow RGBA output. Add scene lights and connect the plate to Render3D background. The surface also occludes CG behind it.";
+    case Scene3DKind::ReflectionCatcher:return "Receive added CG reflections on a plate proxy. Reflection strength scales the signed radiance difference; roughness spreads the reflected image. Connect the real plate to Render3D background. Enable Catch shadows to receive both on the same surface. USD / hdNVP uses path tracing; native renderers use a CPU single-reflection approximation.";
+    case Scene3DKind::Occluder:return "Use proxy geometry to hide CG behind a real plate object. Connect a Card, mesh or USD asset, then adjust the upstream geometry in the 3D Viewer. The plate stays visible through the proxy. Camera, shadow and reflection visibility are independent; Occlusion is an independent matte output.";
+    case Scene3DKind::ReconstructionScene:return "Publish the accepted CameraTracker solve as a linked USD camera and guide point cloud. Connect CameraTracker's image output; analysis data is saved in that node.";
+    case Scene3DKind::SceneCamera:return "Read a camera from the connected composed scene for Render3D or Project3D. The source camera remains in its USD hierarchy.";
+    case Scene3DKind::SceneSetup:return "Align a reconstruction, set ground/origin/metric scale, and place USD assets or projected cards. Camera, landmarks and placed geometry share the scene frame. Select landmarks in the 3D Viewer's Points mode.";
     case Scene3DKind::ReadUSD:return "Read a composed OpenUSD stage into the shared Scene and Render3D. Supports Mesh hierarchy/instances, time samples, primvars, PreviewSurface values and base-color/normal/roughness/metallic maps, distant, approximated sphere and latitude-longitude dome lights. References, sublayers, variants and payload loading use OpenUSD. Unsupported shaders/textures, subdivision, area lights and deformation are reported in Source info. USD cameras use ReadUSDCamera.";
     case Scene3DKind::Light:return "Distant, point, spot or environment light in the shared 3D Scene. Distant/spot lights shine down local -Z. Intensity is multiplied by 2^Exposure; point/spot lights use inverse-square attenuation. Environment lights integrate diffuse and GGX reflections from an optional latitude-longitude image (linear straight RGB; alpha ignored), or uniform Color. Rotation and an Axis orient the environment. Shadows respect geometry and texture opacity. Connect to Scene; input 0 optionally parents the light with an Axis.";
     case Scene3DKind::PBRMaterial:return "GGX metallic/roughness surface for Card, ReadGeo or ReadUSD. The optional image or Project3D input supplies base color; Base color multiplies that image or the mesh's imported colors. Without Scene lights only emission is visible. Existing image/Project3D connections remain unlit. Direct and environment lighting are supported. Optional normal, roughness and metallic image inputs use mesh UVs. Connected scalar maps replace the numeric values; choose their RGBA channels. Set map Readers to raw/linear data and unpremultiplied output. Normal maps default to 0..1 RGB with optional Y inversion.";
@@ -159,6 +167,7 @@ std::string NativeScene3D::getPluginDescription() const {
 void NativeScene3D::getPluginGrouping(std::list<std::string>* groups) const {groups->push_back("3D");}
 int NativeScene3D::getNInputs() const {
     switch(_kind) {
+    case Scene3DKind::ReconstructionScene:case Scene3DKind::SceneCamera:case Scene3DKind::SceneSetup:case Scene3DKind::ShadowCatcher:case Scene3DKind::ReflectionCatcher:case Scene3DKind::Occluder:return 1;
     case Scene3DKind::Axis:case Scene3DKind::Camera:case Scene3DKind::ReadUSDCamera:case Scene3DKind::ReadCamera:return 1;
     case Scene3DKind::Light:return 2;
     case Scene3DKind::PBRMaterial:return 4;
@@ -171,6 +180,10 @@ int NativeScene3D::getNInputs() const {
 bool NativeScene3D::isInputOptional(int input) const {return _kind!=Scene3DKind::Render3D || input==2;}
 std::string NativeScene3D::getInputLabel(int input) const {
     switch(_kind) {
+    case Scene3DKind::ReconstructionScene:return "CameraTracker";
+    case Scene3DKind::SceneCamera:return "scene";
+    case Scene3DKind::SceneSetup:return "scene";
+    case Scene3DKind::ShadowCatcher:case Scene3DKind::ReflectionCatcher:case Scene3DKind::Occluder:return "proxy geometry / scene";
     case Scene3DKind::ReadUSD:case Scene3DKind::Card:case Scene3DKind::ReadGeo:return input==0?"image / material":"axis";
     case Scene3DKind::Camera:case Scene3DKind::ReadUSDCamera:case Scene3DKind::ReadCamera:case Scene3DKind::Axis:return "axis";
     case Scene3DKind::Light:return input==0?"axis":"environment image";
@@ -185,7 +198,7 @@ std::string NativeScene3D::getInputLabel(int input) const {
 }
 void NativeScene3D::addAcceptedComponents(int input,std::list<ImagePlaneDesc>* comps) {
     comps->push_back(ImagePlaneDesc::getRGBAComponents());
-    if(input==-1 && _kind==Scene3DKind::Render3D){comps->push_back(depthPlane());comps->push_back(albedoPlane());comps->push_back(normalPlane());comps->push_back(positionPlane());}
+    if(input==-1 && _kind==Scene3DKind::Render3D){comps->push_back(depthPlane());comps->push_back(albedoPlane());comps->push_back(normalPlane());comps->push_back(positionPlane());comps->push_back(shadowPlane());comps->push_back(occlusionPlane());comps->push_back(reflectionPlane());}
 }
 const ImagePlaneDesc& NativeScene3D::depthPlane() {
     static const ImagePlaneDesc plane("Depth","Depth","Z",std::vector<std::string>{"Z"});return plane;
@@ -193,11 +206,14 @@ const ImagePlaneDesc& NativeScene3D::depthPlane() {
 const ImagePlaneDesc& NativeScene3D::albedoPlane(){static const ImagePlaneDesc p("Albedo","Albedo","RGB",{"R","G","B"});return p;}
 const ImagePlaneDesc& NativeScene3D::normalPlane(){static const ImagePlaneDesc p("N","N","XYZ",{"X","Y","Z"});return p;}
 const ImagePlaneDesc& NativeScene3D::positionPlane(){static const ImagePlaneDesc p("P","P","XYZ",{"X","Y","Z"});return p;}
+const ImagePlaneDesc& NativeScene3D::shadowPlane(){static const ImagePlaneDesc p("Shadow","Shadow","RGBA",{"R","G","B","A"});return p;}
+const ImagePlaneDesc& NativeScene3D::reflectionPlane(){static const ImagePlaneDesc p("Reflection","Reflection","RGB",{"R","G","B"});return p;}
+const ImagePlaneDesc& NativeScene3D::occlusionPlane(){static const ImagePlaneDesc p("Occlusion","Occlusion","R",{"R"});return p;}
 void NativeScene3D::getComponentsNeededAndProduced(double time,ViewIdx view,ComponentsNeededMap* comps,
                                                    double* passTime,int* passView,int* passInput) {
     if(_kind!=Scene3DKind::Render3D){EffectInstance::getComponentsNeededAndProduced(time,view,comps,passTime,passView,passInput);return;}
     *passTime=time;*passView=view.value();*passInput=-1;
-    (*comps)[-1]={ImagePlaneDesc::getRGBAComponents(),depthPlane()};
+    (*comps)[-1]={ImagePlaneDesc::getRGBAComponents(),depthPlane(),shadowPlane(),occlusionPlane(),reflectionPlane()};
     if(rendererBackendAt(time,view)==3){(*comps)[-1].push_back(albedoPlane());(*comps)[-1].push_back(normalPlane());(*comps)[-1].push_back(positionPlane());}
     // Geometry and camera inputs are traversed by sceneAt, not image rendering.
     if(getInput(2))(*comps)[2]={ImagePlaneDesc::getRGBAComponents()};
@@ -205,12 +221,24 @@ void NativeScene3D::getComponentsNeededAndProduced(double time,ViewIdx view,Comp
 bool NativeScene3D::depthPreviewAt(double time,ViewIdx view) const {
     const auto knob=_output.lock();return knob && sceneValueAt(knob,time,0,view)==1;
 }
+Gpu::Cards::RenderPass NativeScene3D::displayPassAt(double time,ViewIdx view)const {return _output.lock()?Gpu::Cards::RenderPass(sceneValueAt(_output.lock(),time,0,view)):Gpu::Cards::RenderPass::Color;}
+std::shared_ptr<const Gpu::Cards::Texture> NativeScene3D::backgroundAt(double time,ViewIdx view,bool draft)const {auto input=getInput(2);return input?fetchTexture(input,time,view,draft):nullptr;}
+Gpu::Cards::Compositing NativeScene3D::compositingAt(double time,ViewIdx view)const {
+    Gpu::Cards::Compositing r;r.role=_kind==Scene3DKind::ShadowCatcher?Gpu::Cards::GeometryRole::ShadowCatcher:_kind==Scene3DKind::Occluder?Gpu::Cards::GeometryRole::Occluder:_kind==Scene3DKind::ReflectionCatcher?Gpu::Cards::GeometryRole::ReflectionCatcher:Gpu::Cards::GeometryRole(sceneValueAt(_compositingRole.lock(),time,0,view));
+    if((_catchShadows.lock() && sceneValueAt(_catchShadows.lock(),time,0,view)) || (_catchReflections.lock() && sceneValueAt(_catchReflections.lock(),time,0,view)))r.role=Gpu::Cards::GeometryRole::ShadowReflectionCatcher;
+    r.cameraVisible=sceneValueAt(_cameraVisible.lock(),time,0,view);r.shadowVisible=sceneValueAt(_shadowVisible.lock(),time,0,view);r.reflectionVisible=sceneValueAt(_reflectionVisible.lock(),time,0,view);
+    r.holdout=_holdout.lock() && sceneValueAt(_holdout.lock(),time,0,view);r.shadowDensity=sceneValueAt(_shadowDensity.lock(),time,0,view);r.shadowTint=color3(_shadowTint,time,view);
+    r.reflectionStrength=sceneValueAt(_reflectionStrength.lock(),time,0,view);r.reflectionRoughness=sceneValueAt(_reflectionRoughness.lock(),time,0,view);Gpu::Cards::validateCompositing(r);return r;
+}
 std::array<double,2> NativeScene3D::depthPreviewRangeAt(double time,ViewIdx view) const {
     const auto knob=_depthRange.lock();return knob?std::array<double,2>{sceneValueAt(knob,time,0,view),sceneValueAt(knob,time,1,view)}:std::array<double,2>{0,10};
 }
 void NativeScene3D::addSupportedBitDepth(std::list<ImageBitDepthEnum>* depths) const {depths->push_back(eImageBitDepthFloat);}
 NodeDataType NativeScene3D::getOutputDataType() const {
     switch(_kind) {
+    case Scene3DKind::ReconstructionScene:return NodeDataType::Scene;
+    case Scene3DKind::SceneSetup:case Scene3DKind::ShadowCatcher:case Scene3DKind::ReflectionCatcher:case Scene3DKind::Occluder:return NodeDataType::Scene;
+    case Scene3DKind::SceneCamera:return NodeDataType::Camera;
     case Scene3DKind::Card:case Scene3DKind::ReadGeo:case Scene3DKind::TransformGeo:return NodeDataType::Geometry;
     case Scene3DKind::Camera:case Scene3DKind::ReadUSDCamera:case Scene3DKind::ReadCamera:return NodeDataType::Camera;
     case Scene3DKind::Axis:return NodeDataType::Transform;
@@ -224,12 +252,15 @@ bool NativeScene3D::acceptsInputDataType(int i,NodeDataType t) const {
     if(t==NodeDataType::Unknown)return true;
     const bool geo=t==NodeDataType::Geometry || t==NodeDataType::Scene;
     switch(_kind) {
+    case Scene3DKind::ReconstructionScene:return i==0 && t==NodeDataType::Image;
+    case Scene3DKind::SceneCamera:return i==0 && geo;
+    case Scene3DKind::SceneSetup:case Scene3DKind::ShadowCatcher:case Scene3DKind::ReflectionCatcher:case Scene3DKind::Occluder:return i==0 && geo;
     case Scene3DKind::ReadUSD:case Scene3DKind::Card:case Scene3DKind::ReadGeo:return i==0?(t==NodeDataType::Image || t==NodeDataType::Material):t==NodeDataType::Transform;
     case Scene3DKind::Camera:case Scene3DKind::ReadUSDCamera:case Scene3DKind::ReadCamera:case Scene3DKind::Axis:return t==NodeDataType::Transform;
     case Scene3DKind::Light:return i==0?t==NodeDataType::Transform:i==1 && t==NodeDataType::Image;
     case Scene3DKind::PBRMaterial:return i>=0 && i<4 && (t==NodeDataType::Image || (i==0 && t==NodeDataType::Material));
     case Scene3DKind::TransformGeo:return i==0?geo:t==NodeDataType::Transform;
-    case Scene3DKind::Scene:return geo || t==NodeDataType::Light;
+    case Scene3DKind::Scene:return geo || t==NodeDataType::Light || t==NodeDataType::Transform;
     case Scene3DKind::Project3D:return i==0?t==NodeDataType::Image:t==NodeDataType::Camera;
     case Scene3DKind::BindMaterial:return i==0?geo:t==NodeDataType::Material || t==NodeDataType::Image;
     case Scene3DKind::USDTransform:case Scene3DKind::USDVisibility:case Scene3DKind::USDCompositing:return i==0 && geo;
@@ -240,6 +271,9 @@ void NativeScene3D::initializeKnobs() {
     auto page=AppManager::createKnob<KnobPage>(this,tr("Controls"));page->setName("controls");
     auto identity=AppManager::createKnob<KnobString>(this,tr("USD identity"));identity->setName("usdIdentity");identity->setAnimationEnabled(false);identity->setSecret(true);identity->setEvaluateOnChange(false);
     identity->setValue(QUuid::createUuid().toString(QUuid::Id128).toStdString());page->addKnob(identity);_sceneId=identity;
+    if(_kind==Scene3DKind::ReconstructionScene)return;
+    if(_kind==Scene3DKind::SceneSetup){initializeLayoutKnobs(page);return;}
+    if(_kind==Scene3DKind::SceneCamera){auto path=AppManager::createKnob<KnobString>(this,tr("Camera prim path"));path->setName("cameraPath");path->setAnimationEnabled(false);path->setDefaultValue("/Reconstruction/Camera");page->addKnob(path);_usdCamera=path;return;}
     auto number=[&](const char* name,const char* label,int dimensions,double value) {
         auto knob=AppManager::createKnob<KnobDouble>(this,tr(label),dimensions);knob->setName(name);
         for(int i=0;i<dimensions;++i)knob->setDefaultValue(value,i);page->addKnob(knob);return knob;
@@ -254,7 +288,30 @@ void NativeScene3D::initializeKnobs() {
         auto knob=AppManager::createKnob<KnobColor>(this,tr(label),3);knob->setName(name);
         for(int i=0;i<3;++i)knob->setDefaultValue(value,i);page->addKnob(knob);return knob;
     };
+    if(_kind==Scene3DKind::USDCompositing || _kind==Scene3DKind::ShadowCatcher || _kind==Scene3DKind::ReflectionCatcher || _kind==Scene3DKind::Occluder){
+        if(_kind==Scene3DKind::USDCompositing){auto role=AppManager::createKnob<KnobChoice>(this,tr("Geometry role"));role->setName("compositingRole");role->populateChoices({ChoiceOption("Surface"),ChoiceOption("ShadowCatcher","Shadow catcher","Receive CG shadows without showing the surface."),ChoiceOption("Occluder","Occluder","Hide CG behind a plate object."),ChoiceOption("ReflectionCatcher","Reflection catcher","Receive added CG reflections."),ChoiceOption("ShadowReflectionCatcher","Shadow and reflection catcher","Receive shadows and reflections on the same proxy.")});page->addKnob(role);_compositingRole=role;}
+        _shadowDensity=number("shadowDensity","Shadow density",1,1);_shadowDensity.lock()->setMinimum(0);_shadowDensity.lock()->setMaximum(10);_shadowDensity.lock()->setDisplayMaximum(2);
+        _shadowTint=color("shadowTint","Shadow tint (linear)",0);
+        _reflectionStrength=number("reflectionStrength","Reflection strength",1,.25);_reflectionStrength.lock()->setMinimum(0);_reflectionStrength.lock()->setMaximum(10);_reflectionStrength.lock()->setDisplayMaximum(1);
+        _reflectionRoughness=number("reflectionRoughness","Reflection roughness",1,.2);_reflectionRoughness.lock()->setMinimum(0);_reflectionRoughness.lock()->setMaximum(1);
+        _reflectionStrength.lock()->setHintToolTip(tr("Scales the added model's signed reflection contribution. 0 preserves the plate exactly; 1 uses a white reflector. Match scene lighting to the plate. The Reflection RGB layer can contain negative values when CG blocks an environment reflection."));
+        _reflectionRoughness.lock()->setHintToolTip(tr("0 is a sharp mirror; larger values spread and soften reflections using the surface BRDF. Increase path samples for rough reflections in USD / hdNVP."));
+        _shadowDensity.lock()->setHintToolTip(tr("0 removes received shadows while retaining the proxy's occlusion. 1 applies the measured lighting loss; larger values strengthen it. Shadow tint is scene-linear RGB."));
+        if(_kind!=Scene3DKind::USDCompositing){
+            auto flag=[&](const char* name,const char* label,bool value){auto k=AppManager::createKnob<KnobBool>(this,tr(label));k->setName(name);k->setDefaultValue(value);page->addKnob(k);return k;};
+            if(_kind==Scene3DKind::ReflectionCatcher)_catchShadows=flag("catchShadows","Catch shadows",false);
+            if(_kind==Scene3DKind::ShadowCatcher)_catchReflections=flag("catchReflections","Catch reflections",false);
+            _cameraVisible=flag("cameraVisible","Occlude CG / receive lighting",true);_shadowVisible=flag("shadowVisible","Cast shadows",true);_reflectionVisible=flag("reflectionVisible","Visible to secondary rays",false);
+            updateCompositingControls();
+            return;
+        }
+        updateCompositingControls();
+    }
     if(usdEditKind(_kind)) {
+        if(_kind==Scene3DKind::USDTransform) {
+            _usdPivot=number("pivot","Pivot",3,0);
+            _usdPivot.lock()->setHintToolTip(tr("World-space rotation and scale pivot in Y-up meters. Outline initializes it at the selected Prims' bounds. Zero preserves existing USDTransform behavior."));
+        }
         auto targets=AppManager::createKnob<KnobString>(this,tr("USD Prim paths"));targets->setName("primPaths");targets->setAsMultiLine();targets->setAnimationEnabled(false);
         targets->setHintToolTip(tr("Absolute paths in the composed stage, separated by whitespace. Edits affect only this node's downstream branch. Instance child edits create a private override of that instance."));page->addKnob(targets);_usdTargets=targets;
         auto flag=[&](const char* name,const char* label,bool value){auto k=AppManager::createKnob<KnobBool>(this,tr(label));k->setName(name);k->setDefaultValue(value);page->addKnob(k);return k;};
@@ -385,7 +442,10 @@ void NativeScene3D::initializeKnobs() {
         aa->populateChoices({ChoiceOption("1x"),ChoiceOption("2x2"),ChoiceOption("4x4")});aa->setDefaultValue(1);page->addKnob(aa);_samples=aa;
         auto output=AppManager::createKnob<KnobChoice>(this,tr("Output"));output->setName("output");
         output->populateChoices({ChoiceOption("Color","","Premultiplied RGBA. Depth.Z remains available as a separate float layer."),
-                                 ChoiceOption("DepthPreview","Depth preview","Near-white / far-black visualization. Depth.Z retains its raw values.")});page->addKnob(output);_output=output;
+                                 ChoiceOption("DepthPreview","Depth preview","Near-white / far-black visualization. Depth.Z retains its raw values."),
+                                 ChoiceOption("ShadowPreview","Shadow mask","Display the shadow coverage. Shadow RGBA remains available as a separate float layer."),
+                                 ChoiceOption("OcclusionPreview","Occlusion mask","Display the visible proxy coverage. Occlusion.R remains available as a separate float layer."),
+                                 ChoiceOption("ReflectionPreview","Reflection contribution","Signed reflection preview: neutral gray is unchanged, brighter adds radiance, darker removes it. Reflection RGB remains scene-linear data.")});page->addKnob(output);_output=output;
         auto range=number("depthRange","Depth preview range",2,0);range->setDefaultValue(10,1);
         range->setDimensionName(0,"Near");range->setDimensionName(1,"Far");
         range->setHintToolTip(tr("Near and far camera-space depths for the white-to-black preview. Requires 0 <= near < far. Does not change clipping or Depth.Z."));
@@ -409,8 +469,20 @@ void NativeScene3D::onKnobsLoaded() {
     for(const auto& node:nodes)if(node!=getNode())if(auto native=dynamic_cast<NativeScene3D*>(node->getEffectInstance().get()))if(native->_sceneId.lock() && native->sceneId()==sceneId()){duplicate=true;break;}
     if(duplicate)_sceneId.lock()->setValue(QUuid::createUuid().toString(QUuid::Id128).toStdString());
     if(_file.lock())refreshAnimationInfo();
+    if(_kind==Scene3DKind::SceneSetup)updateLayoutStatus();
+    updateCompositingControls();
+}
+void NativeScene3D::updateCompositingControls() {
+    if(!_shadowDensity.lock() || !_reflectionRoughness.lock())return;
+    const int role=_compositingRole.lock()?_compositingRole.lock()->getValue():0;
+    const bool shadow=_kind==Scene3DKind::ShadowCatcher || ( _catchShadows.lock() && _catchShadows.lock()->getValue()) || Gpu::Cards::catchesShadows(Gpu::Cards::GeometryRole(role));
+    const bool reflection=_kind==Scene3DKind::ReflectionCatcher || (_catchReflections.lock() && _catchReflections.lock()->getValue()) || Gpu::Cards::catchesReflections(Gpu::Cards::GeometryRole(role));
+    _shadowDensity.lock()->setSecret(!shadow);_shadowTint.lock()->setSecret(!shadow);
+    _reflectionStrength.lock()->setSecret(!reflection);_reflectionRoughness.lock()->setSecret(!reflection);
 }
 bool NativeScene3D::knobChanged(KnobI* knob,ValueChangedReasonEnum,ViewSpec,double,bool) {
+    if(knob==_compositingRole.lock().get() || knob==_catchShadows.lock().get() || knob==_catchReflections.lock().get()){updateCompositingControls();return true;}
+    if(_kind==Scene3DKind::SceneSetup)return layoutKnobChanged(knob);
     if(!_file.lock() || (knob!=_file.lock().get() && knob!=_variants.lock().get() && knob!=_loadPayloads.lock().get() && knob!=_primPath.lock().get()))return false;
     refreshAnimationInfo();return true;
 }
@@ -507,6 +579,7 @@ Gpu::Cards::Camera NativeScene3D::importedCameraAt(double time,ViewIdx view) con
     return _importedCamera;
 }
 Matrix NativeScene3D::transformAt(double time,ViewIdx view) const {
+    if(_kind==Scene3DKind::SceneCamera)return cameraAt(time,view).transform;
     if(_kind==Scene3DKind::ReadCamera || _kind==Scene3DKind::ReadUSDCamera)return cameraAt(time,view).transform;
     Matrix local=Matrix::transform(value3(_translate,time,view),value3(_rotate,time,view),value3(_scale,time,view,{1,1,1}));
     const int parentInput=(geometryLeaf(_kind) || _kind==Scene3DKind::TransformGeo)?1:0;
@@ -528,6 +601,12 @@ Gpu::Cards::Light NativeScene3D::lightAt(double time,ViewIdx view) const {
 }
 Gpu::Cards::Camera NativeScene3D::cameraAt(double time,ViewIdx view) const {
     Gpu::Cards::Camera camera;
+    if(_kind==Scene3DKind::SceneCamera){
+        auto source=input3D(this,0);if(!source)throw std::runtime_error("SceneCamera needs a scene input");
+        const auto scene=source->sceneAt(time,view,true);Gpu::Cards::UsdSceneBridge bridge;Gpu::Cards::Settings settings;
+        settings.lights=scene.lights;settings.edits=scene.usdEdits;std::vector<Gpu::Cards::Card> cards;for(const auto& item:scene.items)cards.push_back(item.card);
+        bridge.exportScene(cards,scene.camera,settings,scene.usdSources);return bridge.sceneValue()->camera(_usdCamera.lock()->getValue(0,view),true);
+    }
     if(_kind==Scene3DKind::ReadCamera || _kind==Scene3DKind::ReadUSDCamera) {
         camera=_kind==Scene3DKind::ReadCamera?importedCameraAt(time,view):usdAssetAt(view)->camera(_cameraName.lock()->getValue(0,view),_readAnimation.lock()->getValue(0,view)?fbxSecondsAt(time,view):0,_readAnimation.lock()->getValue(0,view));
         const Vec3 position=camera.transform.point({})+value3(_translate,time,view);
@@ -546,14 +625,20 @@ Gpu::Cards::Camera NativeScene3D::cameraAt(double time,ViewIdx view) const {
     return camera;
 }
 Scene3DObject NativeScene3D::editorObjectAt(double time,ViewIdx view) const {
+    if(_kind==Scene3DKind::USDTransform) {
+        Scene3DObject object;object.kind=_kind;object.owner=getNode();object.time=time;
+        object.transform=Matrix::transform(value3(_usdPivot,time,view)+value3(_translate,time,view),value3(_rotate,time,view),value3(_scale,time,view,{1,1,1}));
+        object.primPaths=targetPaths(_usdTargets,view);return object;
+    }
     Scene3DObject object;object.kind=_kind;object.owner=getNode();object.time=time;object.transform=transformAt(time,view);
     const int parentInput=(geometryLeaf(_kind) || _kind==Scene3DKind::TransformGeo)?1:0;
     if(auto parent=input3D(this,parentInput))object.editParentTransform=parent->transformAt(time,view);
-    if(cameraKind(_kind))object.camera=cameraAt(time,view);
+    if(cameraKind(_kind) || _kind==Scene3DKind::SceneCamera)object.camera=cameraAt(time,view);
     if(_kind==Scene3DKind::Light)object.light=lightAt(time,view);
     return object;
 }
 void NativeScene3D::appendParentObjects(Scene3DSnapshot& scene,double time,ViewIdx view,bool worldSpace) const {
+    if(_kind==Scene3DKind::SceneCamera)return;
     const int parentInput=(geometryLeaf(_kind) || _kind==Scene3DKind::TransformGeo)?1:0;
     auto parent=input3D(this,parentInput);
     for(int i=0;parent && i<1024;++i) {
@@ -563,6 +648,32 @@ void NativeScene3D::appendParentObjects(Scene3DSnapshot& scene,double time,ViewI
 }
 Scene3DSnapshot NativeScene3D::sceneAt(double time,ViewIdx view,bool preserveUsd) const {
     Scene3DSnapshot scene;
+    if(_kind==Scene3DKind::ShadowCatcher || _kind==Scene3DKind::ReflectionCatcher || _kind==Scene3DKind::Occluder){
+        auto input=input3D(this,0);if(!input)throw std::runtime_error("Connect proxy geometry to the compositing node");
+        scene=input->sceneAt(time,view,preserveUsd);const auto comp=compositingAt(time,view);
+        for(auto& item:scene.items)item.card.compositing=comp;
+        if(!scene.usdSources.empty()){
+            Gpu::Cards::UsdSceneBridge bridge;Gpu::Cards::Settings settings;bridge.exportScene({},scene.camera,settings,scene.usdSources);
+            auto value=bridge.sceneValue();const auto roots=value->children().prims;
+            Gpu::Cards::UsdPrimEdit edit;edit.kind=Gpu::Cards::UsdPrimEdit::Kind::Compositing;edit.identity=sceneId();
+            edit.cameraVisible=comp.cameraVisible;edit.shadowVisible=comp.shadowVisible;edit.reflectionVisible=comp.reflectionVisible;edit.holdout=comp.holdout;edit.role=comp.role;edit.shadowDensity=comp.shadowDensity;edit.shadowTint=comp.shadowTint;edit.reflectionStrength=comp.reflectionStrength;edit.reflectionRoughness=comp.reflectionRoughness;
+            for(const auto& source:scene.usdSources){if(!source.mountPath.empty())edit.paths.push_back(source.mountPath);else for(const auto& root:roots)if(root.ownerId==source.ownerId)edit.paths.push_back(root.path);}
+            if(!edit.paths.empty())scene.usdEdits.push_back(std::move(edit));
+        }return scene;
+    }
+    if(_kind==Scene3DKind::SceneSetup)return layoutSceneAt(time,view,preserveUsd);
+    if(_kind==Scene3DKind::ReconstructionScene){
+        auto tracker=std::dynamic_pointer_cast<CameraTracker>(resolve(getInput(0)));
+        if(!tracker)throw std::runtime_error("ReconstructionScene needs a CameraTracker input");
+        const auto result=tracker->reconstruction();if(!result)throw std::runtime_error("CameraTracker has no accepted solve");
+        Gpu::Cards::UsdSceneSource source;source.filename=tracker->usdAssetPath();source.ownerId=sceneId();source.label=getNode()->getLabel();
+        source.mountPath="/Natron/Assets/n_"+sceneId();source.timeCode=time;source.timeCodesPerSecond=getApp()->getProjectFrameRate();
+        source.revision=std::hash<std::string>{}(source.filename);scene.usdSources.push_back(std::move(source));
+        scene.reconstructions.push_back({getNode(),result,QFileInfo(QString::fromStdString(tracker->usdAssetPath())).completeBaseName().toStdString()});
+        scene.reconstructions.back().imagePixelAspect=tracker->getAspectRatio(-1);
+        for(const auto& point:result->points)scene.guidePoints.push_back({{point.position[0],point.position[1],point.position[2]},point.trackId,getNode(),getNode(),point.rmsPixels});
+        return scene;
+    }
     if(_kind==Scene3DKind::Render3D) {
         auto geometry=input3D(this,0);auto camera=input3D(this,1);
         if(!geometry || (!camera && _usdCamera.lock()->getValue(0,view).empty()))throw std::runtime_error("Render3D requires a Scene and a Camera input or USD render camera path.");
@@ -580,7 +691,7 @@ Scene3DSnapshot NativeScene3D::sceneAt(double time,ViewIdx view,bool preserveUsd
         for(const auto& candidate:scene.objects) {
             auto duplicate=std::find_if(unique.begin(),unique.end(),[&](const Scene3DObject& other){
                 return candidate.itemIndex<0 && other.owner==candidate.owner && other.time==candidate.time &&
-                    other.transform.m==candidate.transform.m && other.worldSpace==candidate.worldSpace && other.cameraAspect==candidate.cameraAspect;
+                    other.transform.m==candidate.transform.m && other.worldSpace==candidate.worldSpace && other.cameraAspect==candidate.cameraAspect && other.primPaths==candidate.primPaths;
             });
             if(duplicate==unique.end())unique.push_back(candidate);
             else {duplicate->renderCamera |= candidate.renderCamera;duplicate->projectionCamera |= candidate.projectionCamera;}
@@ -596,6 +707,8 @@ Scene3DSnapshot NativeScene3D::sceneAt(double time,ViewIdx view,bool preserveUsd
     } else if(_kind==Scene3DKind::Scene) {
         for(int i=0;i<getNInputs();++i)if(auto child=input3D(this,i)) {
             auto part=child->sceneAt(time,view,preserveUsd);const int offset=int(scene.items.size());
+            scene.guidePoints.insert(scene.guidePoints.end(),part.guidePoints.begin(),part.guidePoints.end());
+            scene.reconstructions.insert(scene.reconstructions.end(),part.reconstructions.begin(),part.reconstructions.end());
             scene.usdSources.insert(scene.usdSources.end(),part.usdSources.begin(),part.usdSources.end());
             // Input zero is the strongest branch, matching USD source arcs.
             scene.usdEdits.insert(scene.usdEdits.begin(),part.usdEdits.begin(),part.usdEdits.end());
@@ -632,9 +745,13 @@ Scene3DSnapshot NativeScene3D::sceneAt(double time,ViewIdx view,bool preserveUsd
             Gpu::Cards::UsdPrimEdit binding;binding.kind=Gpu::Cards::UsdPrimEdit::Kind::Material;binding.identity=sceneId();binding.paths=paths;binding.materialPath="/Natron/Materials/n_"+sceneId();scene.usdEdits.push_back(std::move(binding));
         } else {
             Gpu::Cards::UsdPrimEdit edit;edit.identity=sceneId();edit.paths=paths;
-            if(_kind==Scene3DKind::USDTransform){edit.kind=Gpu::Cards::UsdPrimEdit::Kind::Transform;edit.transform=Matrix::transform(value3(_translate,time,view),value3(_rotate,time,view),value3(_scale,time,view,{1,1,1}));}
+            if(_kind==Scene3DKind::USDTransform){
+                edit.kind=Gpu::Cards::UsdPrimEdit::Kind::Transform;const auto pivot=value3(_usdPivot,time,view);
+                edit.transform=Matrix::transform(value3(_translate,time,view)+pivot,value3(_rotate,time,view),value3(_scale,time,view,{1,1,1}))*Matrix::transform(pivot*(-1),{});
+                scene.objects.push_back(editorObjectAt(time,view));
+            }
             else if(_kind==Scene3DKind::USDVisibility){edit.kind=Gpu::Cards::UsdPrimEdit::Kind::Visibility;edit.visible=sceneValueAt(_visible.lock(),time,0,view);}
-            else {edit.kind=Gpu::Cards::UsdPrimEdit::Kind::Compositing;edit.cameraVisible=sceneValueAt(_cameraVisible.lock(),time,0,view);edit.shadowVisible=sceneValueAt(_shadowVisible.lock(),time,0,view);edit.reflectionVisible=sceneValueAt(_reflectionVisible.lock(),time,0,view);edit.holdout=sceneValueAt(_holdout.lock(),time,0,view);}
+            else {const auto comp=compositingAt(time,view);edit.kind=Gpu::Cards::UsdPrimEdit::Kind::Compositing;edit.cameraVisible=comp.cameraVisible;edit.shadowVisible=comp.shadowVisible;edit.reflectionVisible=comp.reflectionVisible;edit.holdout=comp.holdout;edit.role=comp.role;edit.shadowDensity=comp.shadowDensity;edit.shadowTint=comp.shadowTint;edit.reflectionStrength=comp.reflectionStrength;edit.reflectionRoughness=comp.reflectionRoughness;}
             scene.usdEdits.push_back(std::move(edit));
         }
     } else if(_kind==Scene3DKind::TransformGeo) {
@@ -648,9 +765,11 @@ Scene3DSnapshot NativeScene3D::sceneAt(double time,ViewIdx view,bool preserveUsd
                 const auto previous=source.mountPath;source.mountPath+="_t_"+sceneId();
                 auto remap=[&](std::string& path){if(path==previous || path.compare(0,previous.size()+1,previous+"/")==0)path.replace(0,previous.size(),source.mountPath);};
                 for(auto& edit:scene.usdEdits)for(auto& path:edit.paths)remap(path);
+                for(auto& object:scene.objects)for(auto& path:object.primPaths)remap(path);
                 for(auto& item:scene.items)for(auto& path:item.card.bindingPaths)remap(path);
             }
         }
+        for(auto& point:scene.guidePoints)point.position=matrix.point(point.position);
         for(auto& light:scene.lights){light.transform=matrix*light.transform;light.instanceId=(light.instanceId.empty()?light.ownerId:light.instanceId)+"_t_"+sceneId();}
         for(auto& item:scene.items) {
             item.card.transform=matrix*item.card.transform;
@@ -664,6 +783,8 @@ Scene3DSnapshot NativeScene3D::sceneAt(double time,ViewIdx view,bool preserveUsd
             object.transform=matrix*object.transform;object.editParentTransform=matrix*object.editParentTransform;
             if(object.kind==Scene3DKind::Light)object.light.transform=object.transform;
         }
+        scene.objects.push_back(editorObjectAt(time,view));appendParentObjects(scene,time,view);
+    } else if(_kind==Scene3DKind::Axis) {
         scene.objects.push_back(editorObjectAt(time,view));appendParentObjects(scene,time,view);
     } else if(_kind==Scene3DKind::Light) {
         scene.lights.push_back(lightAt(time,view));scene.objects.push_back(editorObjectAt(time,view));appendParentObjects(scene,time,view);
@@ -815,6 +936,7 @@ StatusEnum NativeScene3D::render(const RenderActionArgs& args) {
         Gpu::Cards::Settings settings;settings.width=output.width();settings.height=output.height();settings.pixelAspect=format.getPixelAspectRatio();
         settings.lights=scene.lights;
         settings.edits=scene.usdEdits;
+        settings.transparentBackground=bool(getInput(2));
         settings.samples=1<<sceneValueAt(_samples.lock(),args.time,0,args.view);
         const int backend=sceneValueAt(_backend.lock(),args.time,0,args.view);
         std::shared_ptr<const Gpu::Cards::HdNvpFrame> completed;
@@ -836,10 +958,16 @@ StatusEnum NativeScene3D::render(const RenderActionArgs& args) {
             settings.pass=pass;std::vector<float> pixels;
             if(backend==3) {
                 if(pass==Gpu::Cards::RenderPass::Color)return usdFrame.color;
+                if(pass==Gpu::Cards::RenderPass::Shadow)return usdFrame.shadow.empty()?std::vector<float>(size_t(settings.width)*settings.height*4):usdFrame.shadow;
+                if(pass==Gpu::Cards::RenderPass::Reflection)return usdFrame.reflection.empty()?std::vector<float>(size_t(settings.width)*settings.height*4):usdFrame.reflection;
+                if(pass==Gpu::Cards::RenderPass::Occlusion){pixels.resize(size_t(settings.width)*settings.height*4);for(size_t i=0;i<usdFrame.occlusion.size();++i)for(int c=0;c<4;++c)pixels[i*4+c]=usdFrame.occlusion[i];return pixels;}
                 pixels.resize(usdFrame.depth.size()*4);
                 for(size_t i=0;i<usdFrame.depth.size();++i){for(int c=0;c<3;++c)pixels[i*4+c]=usdFrame.depth[i];pixels[i*4+3]=usdFrame.depth[i]>0?1.f:0.f;}
                 return pixels;
             }
+            if(pass==Gpu::Cards::RenderPass::Shadow && std::none_of(cards.begin(),cards.end(),[](const auto& c){return Gpu::Cards::catchesShadows(c.compositing.role);}))return std::vector<float>(size_t(settings.width)*settings.height*4);
+            if(pass==Gpu::Cards::RenderPass::Occlusion && std::none_of(cards.begin(),cards.end(),[](const auto& c){return c.compositing.role==Gpu::Cards::GeometryRole::Occluder || c.compositing.holdout;}))return std::vector<float>(size_t(settings.width)*settings.height*4);
+            if(pass==Gpu::Cards::RenderPass::Reflection){if(std::none_of(cards.begin(),cards.end(),[](const auto& c){return Gpu::Cards::catchesReflections(c.compositing.role) && c.compositing.reflectionStrength>0;}))return std::vector<float>(size_t(settings.width)*settings.height*4);return Gpu::Cards::renderCpu(cards,scene.camera,settings,[this]{return aborted();});}
             if(backend!=1) {
                 try {
                     const auto context=sharedVulkanImageContext();
@@ -853,25 +981,26 @@ StatusEnum NativeScene3D::render(const RenderActionArgs& args) {
             if(pixels.empty())pixels=Gpu::Cards::renderCpu(cards,scene.camera,settings,[this]{return aborted();});
             return pixels;
         };
-        const bool preview=depthPreviewAt(args.time,args.view);
+        const auto displayPass=displayPassAt(args.time,args.view);const bool preview=displayPass!=Gpu::Cards::RenderPass::Color;
         const bool needColor=std::any_of(args.outputPlanes.begin(),args.outputPlanes.end(),[](const auto& plane){return plane.first.isColorPlane();});
-        const bool needDepth=(needColor && preview) || std::any_of(args.outputPlanes.begin(),args.outputPlanes.end(),[](const auto& plane){return plane.first==depthPlane();});
-        std::vector<float> pixels,depth;
+        const bool needDepth=(needColor && displayPass==Gpu::Cards::RenderPass::Depth) || std::any_of(args.outputPlanes.begin(),args.outputPlanes.end(),[](const auto& plane){return plane.first==depthPlane();});
+        const bool needShadow=(needColor && (displayPass==Gpu::Cards::RenderPass::Color || displayPass==Gpu::Cards::RenderPass::Shadow)) || std::any_of(args.outputPlanes.begin(),args.outputPlanes.end(),[](const auto& plane){return plane.first==shadowPlane();});
+        const bool needOcclusion=(needColor && displayPass==Gpu::Cards::RenderPass::Occlusion) || std::any_of(args.outputPlanes.begin(),args.outputPlanes.end(),[](const auto& plane){return plane.first==occlusionPlane();});
+        const bool needReflection=(needColor && (displayPass==Gpu::Cards::RenderPass::Color || displayPass==Gpu::Cards::RenderPass::Reflection)) || std::any_of(args.outputPlanes.begin(),args.outputPlanes.end(),[](const auto& plane){return plane.first==reflectionPlane();});
+        std::vector<float> pixels,depth,shadow,occlusion,reflection;
         if(needDepth)depth=renderPass(Gpu::Cards::RenderPass::Depth);
+        if(needShadow)shadow=renderPass(Gpu::Cards::RenderPass::Shadow);
+        if(needOcclusion)occlusion=renderPass(Gpu::Cards::RenderPass::Occlusion);
+        if(needReflection)reflection=renderPass(Gpu::Cards::RenderPass::Reflection);
         if(needColor) {
-            if(preview) {
+            if(displayPass==Gpu::Cards::RenderPass::Depth) {
                 pixels=depth;const auto range=depthPreviewRangeAt(args.time,args.view);
                 Gpu::Cards::makeDepthPreview(pixels,range[0],range[1]);
-            }else pixels=renderPass(Gpu::Cards::RenderPass::Color);
+            }else if(displayPass==Gpu::Cards::RenderPass::Reflection){pixels=reflection;Gpu::Cards::makeReflectionPreview(pixels);}
+            else if(preview){pixels=displayPass==Gpu::Cards::RenderPass::Shadow?shadow:occlusion;for(size_t i=0;i<pixels.size();i+=4){const float a=displayPass==Gpu::Cards::RenderPass::Shadow?pixels[i+3]:pixels[i];for(int c=0;c<3;++c)pixels[i+c]=a;pixels[i+3]=1;}}
+            else pixels=renderPass(Gpu::Cards::RenderPass::Color);
         }
-        if(needColor && !preview)if(const auto background=getInput(2)) {
-            auto texture=fetchTexture(background,args.time,args.view,args.draftMode);
-            if(texture)for(int y=0;y<settings.height;++y)for(int x=0;x<settings.width;++x) {
-                const auto bg=texture->sample((x+.5)/settings.width,(y+.5)/settings.height);
-                float* p=pixels.data()+(size_t(y)*settings.width+x)*4;const float weight=1-p[3];
-                for(int c=0;c<4;++c)p[c]+=bg[c]*weight;
-            }
-        }
+        if(needColor && !preview){const auto plate=backgroundAt(args.time,args.view,args.draftMode);Gpu::Cards::compositePlate(pixels,shadow,plate.get(),settings.width,settings.height,reflection);}
         if(aborted())return eStatusOK;
         for(const auto& plane:args.outputPlanes) {
             const auto image=plane.second;Image::WriteAccess write(image.get());
@@ -881,6 +1010,9 @@ StatusEnum NativeScene3D::render(const RenderActionArgs& args) {
                 float* to=reinterpret_cast<float*>(write.pixelAt(x,y));
                 const size_t at=((size_t(y-output.y1)*settings.width)+(x-output.x1))*4;
                 if(z)to[0]=depth[at];
+                else if(plane.first==shadowPlane())std::copy_n(shadow.data()+at,std::min(channels,4u),to);
+                else if(plane.first==occlusionPlane())to[0]=occlusion[at];
+                else if(plane.first==reflectionPlane())std::copy_n(reflection.data()+at,std::min(channels,3u),to);
                 else if(plane.first==albedoPlane() || plane.first==normalPlane() || plane.first==positionPlane()) {
                     if(backend!=3)throw std::runtime_error("Albedo, N and P outputs require USD / hdNVP.");
                     const auto& values=plane.first==albedoPlane()?usdFrame.albedo:plane.first==normalPlane()?usdFrame.normal:usdFrame.position;

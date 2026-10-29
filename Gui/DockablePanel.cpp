@@ -781,6 +781,10 @@ DockablePanel::onKnobsInitialized()
 {
     assert(_imp->_tabWidget);
     _imp->_rightContainerLayout->addWidget(_imp->_tabWidget);
+    // Lazy panels can be created after the Properties bin is visible. Moving
+    // the new tab widget into its layout reparents it; show it explicitly so
+    // Qt also displays the controls in that case.
+    _imp->_tabWidget->show();
 
 
     RotoPanel* roto = initializeRotoPanel();

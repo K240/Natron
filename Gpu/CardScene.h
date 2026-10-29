@@ -32,6 +32,10 @@ struct Camera {
     // Both film offsets use horizontal aperture units. Vertical offsets stay
     // physically consistent when the output aspect conforms the film gate.
     double offsetX = 0, offsetY = 0;
+    // Calibrated cameras can retain their full film gate. Zero keeps the
+    // historical horizontal-fit behavior for native and imported cameras.
+    double apertureAspect = 0;
+    double filmAspect(double outputAspect) const { return apertureAspect > 0 ? apertureAspect : outputAspect; }
     std::string ownerId,label;
 };
 enum class TextureAddress { Black = 0, Clamp = 1, Repeat = 2, Mirror = 3 };
@@ -111,6 +115,16 @@ struct Mesh {
     void buildAcceleration();
     void intersect(Vec3 origin,Vec3 direction,double nearClip,double farClip,std::vector<MeshHit>& hits) const;
 };
+enum class GeometryRole { Surface = 0, ShadowCatcher = 1, Occluder = 2, ReflectionCatcher = 3, ShadowReflectionCatcher = 4 };
+inline bool catchesShadows(GeometryRole role) {return role==GeometryRole::ShadowCatcher || role==GeometryRole::ShadowReflectionCatcher;}
+inline bool catchesReflections(GeometryRole role) {return role==GeometryRole::ReflectionCatcher || role==GeometryRole::ShadowReflectionCatcher;}
+struct Compositing {
+    GeometryRole role = GeometryRole::Surface;
+    bool cameraVisible = true, shadowVisible = true, reflectionVisible = true, holdout = false;
+    double shadowDensity = 1;
+    Vec3 shadowTint;
+    double reflectionStrength = .25, reflectionRoughness = .2;
+};
 struct Card {
     Matrix transform;
     double width = 2, height = 2, opacity = 1;
@@ -128,6 +142,7 @@ struct Card {
     std::string ownerId,label,instanceId;
     // A material-only card authors bindings on these composed USD paths.
     std::vector<std::string> bindingPaths;
+    Compositing compositing;
 };
 
 struct UsdPrimEdit {
@@ -139,8 +154,12 @@ struct UsdPrimEdit {
     bool visible = true;
     std::string materialPath;
     bool cameraVisible = true, shadowVisible = true, reflectionVisible = true, holdout = false;
+    GeometryRole role = GeometryRole::Surface;
+    double shadowDensity = 1;
+    Vec3 shadowTint;
+    double reflectionStrength = .25, reflectionRoughness = .2;
 };
-enum class RenderPass { Color, Depth };
+enum class RenderPass { Color = 0, Depth = 1, Shadow = 2, Occlusion = 3, Reflection = 4 };
 struct Settings {
     int width = 1, height = 1;
     double pixelAspect = 1;
@@ -152,6 +171,7 @@ struct Settings {
     // render camera or its USD edit opinions.
     std::shared_ptr<const Camera> stageCamera;
     double stageCameraAspect=0; // zero conforms to the requested output
+    bool transparentBackground=false; // retain lighting while hiding dome backgrounds
 };
 struct Hit { int card = -1; double depth = 0, u = 0, v = 0;
     std::array<float,4> tint{1,1,1,1};unsigned primitive=0;

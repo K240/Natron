@@ -17,12 +17,14 @@ struct alignas(16) GpuObject {
     uint32_t geometry[4]; // root + 1, image index + 1, override material, material UV flag
     GpuMaterial surface;
     uint32_t maps[4],channels[4];
+    uint32_t compositing[4];
+    float shadow[4];
 };
 struct alignas(16) GpuSampler {float uvRows[2][4];uint32_t flags[4];};
 struct alignas(16) Uniforms {float camera[16],film[4],output[4],clip[4],lightInfo[4];GpuLight lights[maxLights];GpuObject objects[maxObjects];GpuSampler samplers[maxObjects];};
 struct alignas(16) Triangle {float positions[3][4],uv01[4],uv2[4],colors[3][4],material[4];uint32_t info[4];float normals[3][4];GpuMaterial surface;float mapUvs[9][4];};
 struct alignas(16) BvhNode {float minimum[4],maximum[4];uint32_t info[4];}; // begin, count, left, right
-static_assert(sizeof(Triangle)==400 && sizeof(BvhNode)==48 && sizeof(GpuObject)==288 && sizeof(GpuSampler)==48 && sizeof(GpuLight)==144,"Mesh std430 layout mismatch.");
+static_assert(sizeof(Triangle)==400 && sizeof(BvhNode)==48 && sizeof(GpuObject)==320 && sizeof(GpuSampler)==48 && sizeof(GpuLight)==144,"Mesh std430 layout mismatch.");
 float asFloat(double value) {
     const float result=float(value);
     if(!std::isfinite(result))throw std::invalid_argument("3D geometry exceeds Vulkan float precision; select CPU.");
@@ -33,7 +35,7 @@ std::string meshShader() {
     std::ostringstream out;out<<"#version 450\n";
     for(size_t i=0;i<maxObjects;++i)out<<"layout(set=0,binding="<<i<<") uniform sampler2D image"<<i<<";\n";
     out<<lightingShader()<<R"(
-struct Object {mat4 inverse;mat4 projector;vec4 size;vec4 projection;vec4 clip;vec4 textureUv;uvec4 geometry;Surface surface;uvec4 maps;uvec4 channels;};
+struct Object {mat4 inverse;mat4 projector;vec4 size;vec4 projection;vec4 clip;vec4 textureUv;uvec4 geometry;Surface surface;uvec4 maps;uvec4 channels;uvec4 compositing;vec4 shadow;};
 struct Sampler {vec4 uvRows[2];uvec4 flags;};
 layout(std140,set=0,binding=16) uniform Parameters {mat4 camera;vec4 film;vec4 outputInfo;vec4 clip;vec4 lightInfo;Light lights[16];Object objects[16];Sampler samplers[16];} p;
 struct Triangle {vec4 positions[3];vec4 uv01;vec4 uv2;vec4 colors[3];vec4 material;uvec4 info;vec4 normals[3];Surface surface;vec4 mapUvs[9];};
@@ -167,13 +169,14 @@ Hit nextHit(int index,vec3 origin,vec3 direction,float first,float last) {
 vec4 surfaceColor(int index,Hit hit) {
     Object object=p.objects[index];
     if(((object.geometry.w&1u)==0u || object.size.w>.5) && !inside(hit.uv))return vec4(0);
-    vec4 c=object.geometry.y==0u && (object.geometry.x!=0u || hit.surface.parameters.w>.5)?vec4(1):readImage(int(object.geometry.y)-1,hit.uv);
+    vec4 c=object.geometry.y==0u && (object.geometry.x!=0u || hit.surface.parameters.w>.5 || object.compositing.x!=0u || object.compositing.w!=0u)?vec4(1):readImage(int(object.geometry.y)-1,hit.uv);
     c*=vec4(hit.tint.rgb*hit.tint.a,hit.tint.a);
     return c*vec4(hit.surface.base.rgb*hit.surface.base.a,hit.surface.base.a);
 }
-float shadowTransmission(vec3 point,vec3 normal,vec3 toward,float last,float bias) {
+float shadowTransmission(vec3 point,vec3 normal,vec3 toward,float last,float bias,bool reference) {
     vec3 origin=point+normal*bias;float transmission=1.;last-=bias;if(last<=bias)return transmission;
     for(int i=0;i<int(p.outputInfo.z);++i) {
+        if(p.objects[i].compositing.z==0u || (reference && p.objects[i].compositing.x==0u && p.objects[i].compositing.w==0u))continue;
         Hit hit=nextHit(i,origin,toward,bias,last);
         while(hit.depth>=0.) {
             transmission*=1.-clamp(surfaceColor(i,hit).a,0.,1.)*p.objects[i].size.z;
@@ -183,14 +186,15 @@ float shadowTransmission(vec3 point,vec3 normal,vec3 toward,float last,float bia
     }
     return transmission;
 }
-vec4 litColor(int index,Hit hit,vec3 origin,vec3 direction,vec4 c) {
+vec4 litColor(int index,Hit hit,vec3 origin,vec3 direction,vec4 c,bool reference,bool receiver) {
+    if(receiver){hit.surface.base=vec4(1);hit.surface.parameters=vec4(0,1,1,1);hit.surface.emission=vec4(0);c=vec4(1);}
     if(hit.surface.parameters.w<.5 || c.a<=0.)return c;
     vec3 base=c.rgb/c.a,view=safeNormalize(-direction),normal=hit.normal;
     if(dot(normal,view)<0.)normal=-normal;
     vec3 geometricNormal=normal;Object object=p.objects[index];
-    if(object.maps.y!=0u)hit.surface.parameters.y=clamp(readImage(int(object.maps.y)-1,hit.mapUv[1])[int(object.channels.y&3u)],0.,1.);
-    if(object.maps.z!=0u)hit.surface.parameters.x=clamp(readImage(int(object.maps.z)-1,hit.mapUv[2])[int(object.channels.z&3u)],0.,1.);
-    if(object.maps.x!=0u) {
+    if(!receiver && object.maps.y!=0u)hit.surface.parameters.y=clamp(readImage(int(object.maps.y)-1,hit.mapUv[1])[int(object.channels.y&3u)],0.,1.);
+    if(!receiver && object.maps.z!=0u)hit.surface.parameters.x=clamp(readImage(int(object.maps.z)-1,hit.mapUv[2])[int(object.channels.z&3u)],0.,1.);
+    if(!receiver && object.maps.x!=0u) {
         vec3 tangent=safeNormalize(hit.tangent-normal*dot(normal,hit.tangent)),bitangent=cross(normal,tangent);
         if(dot(bitangent,hit.bitangent)<0.)bitangent=-bitangent;
         vec3 mapValue=readImage(int(object.maps.x)-1,hit.mapUv[0]).rgb;
@@ -211,7 +215,7 @@ vec4 litColor(int index,Hit hit,vec3 origin,vec3 direction,vec4 c) {
                     vec2 uv=vec2(.5-atan(d.x,d.z)/6.283185307179586,.5+asin(clamp(d.y,-1.,1.))/3.141592653589793);
                     radiance*=max(vec3(0),readImage(int(light.environment.x)-1,uv).rgb);
                 }
-                if(light.cone.z>.5)radiance*=shadowTransmission(point,geometricNormal,l,1.e30,light.cone.w);
+                if(light.cone.z>.5)radiance*=shadowTransmission(point,geometricNormal,l,1.e30,light.cone.w,reference);
                 shaded+=weight*radiance;
             }
             continue;
@@ -225,20 +229,20 @@ vec4 litColor(int index,Hit hit,vec3 origin,vec3 direction,vec4 c) {
             }
         }
         if(dot(normal,toward)<=0. || attenuation<=0. || light.color.w==0.)continue;
-        if(light.cone.z>.5)attenuation*=shadowTransmission(point,geometricNormal,toward,distance,light.cone.w);
+        if(light.cone.z>.5)attenuation*=shadowTransmission(point,geometricNormal,toward,distance,light.cone.w,reference);
         shaded+=shadeDirect(hit.surface,base,normal,view,toward,light.color.rgb*light.color.w*attenuation);
     }
     return vec4(shaded*c.a,c.a);
 }
 void main() {
-    color=vec4(0);int samples=int(p.outputInfo.w),objects=int(p.outputInfo.z);bool depthPass=p.clip.z>.5;
+    color=vec4(0);int samples=int(p.outputInfo.w),objects=int(p.outputInfo.z),pass=int(p.clip.z);bool depthPass=pass==1;
     float nearest=0.,coverage=0.;
     for(int sy=0;sy<samples;++sy)for(int sx=0;sx<samples;++sx) {
         vec2 xy=gl_FragCoord.xy-vec2(.5)+vec2(sx+.5,sy+.5)/float(samples),ndc=2.*xy/p.outputInfo.xy-1.+vec2(p.film.w,p.clip.w);
         bool ortho=p.film.z>.5;
         vec3 origin=(p.camera*vec4(ortho?vec3(ndc*p.film.xy,0):vec3(0),1)).xyz;
         vec3 direction=(p.camera*vec4(ortho?vec3(0,0,-1):vec3(ndc*p.film.xy,-1),0)).xyz;
-        Hit hits[16];for(int i=0;i<objects;++i)hits[i]=nextHit(i,origin,direction,p.clip.x,p.clip.y);
+        Hit hits[16];for(int i=0;i<objects;++i)hits[i]=p.objects[i].compositing.y==0u?miss():nextHit(i,origin,direction,p.clip.x,p.clip.y);
         float transmission=1.;vec4 sum=vec4(0);
         while(true) {
             int chosen=-1;
@@ -251,8 +255,22 @@ void main() {
                 nearest=coverage>0.?min(nearest,hit.depth):hit.depth;coverage+=1./float(samples*samples);break;
             }
             if(!depthPass) {
-                c=litColor(chosen,hit,origin,direction,c);
-                sum+=vec4(c.rgb*object.size.z,alpha)*transmission;transmission*=1.-alpha;
+                if(pass==2){
+                    if(object.compositing.x==1u || object.compositing.x==4u){
+                        vec3 lit=litColor(chosen,hit,origin,direction,vec4(1),false,true).rgb;
+                        vec3 ref=litColor(chosen,hit,origin,direction,vec4(1),true,true).rgb;
+                        float reference=dot(ref,vec3(.2126,.7152,.0722));
+                        float a=reference>1.e-8?clamp((1.-max(0.,dot(lit,vec3(.2126,.7152,.0722)))/reference)*object.shadow.a,0.,1.):0.;
+                        sum+=vec4(object.shadow.rgb,1)*a*alpha*transmission;
+                    }
+                    if(object.compositing.x!=0u || object.compositing.w!=0u)transmission*=1.-alpha;
+                }else if(pass==3){
+                    if(object.compositing.x==2u || object.compositing.w!=0u)sum+=vec4(alpha*transmission);
+                    transmission*=1.-alpha;
+                }else{
+                    if(object.compositing.x==0u && object.compositing.w==0u){c=litColor(chosen,hit,origin,direction,c,false,false);sum+=vec4(c.rgb*object.size.z,alpha)*transmission;}
+                    transmission*=1.-alpha;
+                }
                 if(transmission==0.)break;
             }
             // Collapse coplanar shared-edge hits within float roundoff, then seek
@@ -269,10 +287,10 @@ void main() {
 std::vector<float> Renderer::renderMeshes(const std::vector<Card>& cards,const Camera& camera,const Settings& s) {
     if(cards.size()>maxObjects)throw std::invalid_argument("Vulkan 3D renderer supports up to 16 geometry objects; select CPU for larger scenes.");
     Uniforms u{};copyMatrix(u.camera,camera.transform);
-    const double aspect=s.width*s.pixelAspect/s.height;
+    const double aspect=camera.filmAspect(s.width*s.pixelAspect/s.height);
     u.film[0]=asFloat(camera.orthographic?camera.orthoWidth*.5:camera.aperture/(2*camera.focal));u.film[1]=asFloat(u.film[0]/aspect);u.film[2]=camera.orthographic?1.f:0.f;u.film[3]=asFloat(2*camera.offsetX);u.clip[3]=asFloat(2*camera.offsetY*aspect);
     u.output[0]=float(s.width);u.output[1]=float(s.height);u.output[2]=float(cards.size());u.output[3]=float(s.samples);
-    u.clip[0]=asFloat(camera.nearClip);u.clip[1]=asFloat(camera.farClip);u.clip[2]=s.pass==RenderPass::Depth?1.f:0.f;
+    u.clip[0]=asFloat(camera.nearClip);u.clip[1]=asFloat(camera.farClip);u.clip[2]=float(s.pass);
     packLights(u.lights,s.lights);u.lightInfo[0]=float(s.lights.size());
     std::vector<Triangle> triangles;std::vector<BvhNode> nodes;
     std::map<const Mesh*,uint32_t> roots;
@@ -296,13 +314,15 @@ std::vector<float> Renderer::renderMeshes(const std::vector<Card>& cards,const C
         u.lights[i].environment[0]=upload(s.lights[i].environment);
     for(size_t i=0;i<cards.size();++i) {
         const Card& card=cards[i];auto& dest=u.objects[i];copyMatrix(dest.inverse,card.transform.inverse());
+        dest.compositing[0]=uint32_t(card.compositing.role);dest.compositing[1]=card.compositing.cameraVisible;dest.compositing[2]=card.compositing.shadowVisible;dest.compositing[3]=card.compositing.holdout;
+        dest.shadow[0]=asFloat(card.compositing.shadowTint.x);dest.shadow[1]=asFloat(card.compositing.shadowTint.y);dest.shadow[2]=asFloat(card.compositing.shadowTint.z);dest.shadow[3]=asFloat(card.compositing.shadowDensity);
         copyMatrix(dest.projector,card.projected?card.projector.transform.inverse():Matrix());
         dest.size[0]=asFloat(card.width);dest.size[1]=asFloat(card.height);dest.size[2]=float(std::clamp(card.opacity,0.,1.));dest.size[3]=card.projected?1.f:0.f;
         const auto& projector=card.projector;
         dest.projection[0]=asFloat(projector.orthographic?projector.orthoWidth*.5:projector.aperture/(2*projector.focal));
-        dest.projection[1]=asFloat(dest.projection[0]/card.projectionAspect);dest.projection[2]=projector.orthographic?1.f:0.f;
+        dest.projection[1]=asFloat(dest.projection[0]/projector.filmAspect(card.projectionAspect));dest.projection[2]=projector.orthographic?1.f:0.f;
         dest.clip[0]=asFloat(projector.nearClip);dest.clip[1]=asFloat(projector.farClip);dest.textureUv[0]=dest.textureUv[1]=1;
-        dest.clip[2]=asFloat(projector.offsetX);dest.clip[3]=asFloat(projector.offsetY*card.projectionAspect);
+        dest.clip[2]=asFloat(projector.offsetX);dest.clip[3]=asFloat(projector.offsetY*projector.filmAspect(card.projectionAspect));
         dest.geometry[1]=upload(card.texture);
         for(int j=0;j<3;++j){dest.maps[j]=upload(card.maps[j].texture);dest.channels[j]=card.maps[j].channel|(card.maps[j].useMeshUv?4u:0u);}
         dest.geometry[2]=card.overrideMaterial?1u:0u;packMaterial(dest.surface,card.material);

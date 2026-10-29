@@ -3971,6 +3971,9 @@ void
 ViewerCurrentFrameRequestScheduler::renderCurrentFrame(bool enableRenderStats,
         bool canAbort)
 {
+    if (_imp->viewer->getApp()->getProject()->isProjectClosing()) {
+        return;
+    }
     int frame = _imp->viewer->getTimeline()->currentFrame();
     int viewsCount = _imp->viewer->getRenderViewsCount();
     ViewIdx view = viewsCount > 0 ? _imp->viewer->getViewerCurrentView() : ViewIdx(0);
@@ -4133,7 +4136,9 @@ ViewerCurrentFrameRequestScheduler::renderCurrentFrame(bool enableRenderStats,
             ++_imp->ageCounter;
         }
 
-        startTask(request);
+        if (!startTask(request)) {
+            return;
+        }
         functorArgs->request = request;
 
         /*

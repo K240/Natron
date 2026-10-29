@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "Gpu/UsdStageValue.h"
+#include "Gpu/Compositing.h"
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -18,6 +19,8 @@
 #include <pxr/usd/usdGeom/xformCache.h>
 #include <pxr/usd/usdGeom/camera.h>
 #include <pxr/usd/usdGeom/primvarsAPI.h>
+#include <pxr/usd/usdGeom/mesh.h>
+#include <pxr/usd/usdShade/shader.h>
 #include <pxr/usd/usdShade/material.h>
 #include <pxr/usd/sdf/copyUtils.h>
 #include <pxr/usd/usdShade/materialBindingAPI.h>
@@ -34,6 +37,15 @@ SdfPath primPath(const std::string& text) {
 }
 GfMatrix4d matrix(const Matrix& m) {GfMatrix4d r;for(int i=0;i<4;++i)for(int j=0;j<4;++j)r[i][j]=m.m[i*4+j];return r;}
 Matrix matrix(const GfMatrix4d& m) {Matrix r;for(int i=0;i<4;++i)for(int j=0;j<4;++j)r.m[i*4+j]=m[i][j];return r;}
+Compositing compositing(const UsdPrim& prim,double time) {
+    auto integer=[&](const char* name,int fallback){int v=fallback;auto p=UsdGeomPrimvarsAPI(prim).FindPrimvarWithInheritance(TfToken(name));if(p)p.Get(&v,UsdTimeCode(time));return v;};
+    Compositing r;r.role=GeometryRole(integer("natron:compositingRole",0));
+    const int mask=integer("natron:rayMask",7);r.cameraVisible=mask&1;r.reflectionVisible=mask&2;r.shadowVisible=mask&4;r.holdout=integer("natron:holdout",0)!=0;
+    float density=1;auto d=UsdGeomPrimvarsAPI(prim).FindPrimvarWithInheritance(TfToken("natron:shadowDensity"));if(d)d.Get(&density,UsdTimeCode(time));r.shadowDensity=density;
+    GfVec3f tint(0);auto t=UsdGeomPrimvarsAPI(prim).FindPrimvarWithInheritance(TfToken("natron:shadowTint"));if(t)t.Get(&tint,UsdTimeCode(time));r.shadowTint={tint[0],tint[1],tint[2]};
+    auto scalar=[&](const char* name,float fallback){auto p=UsdGeomPrimvarsAPI(prim).FindPrimvarWithInheritance(TfToken(name));if(p)p.Get(&fallback,UsdTimeCode(time));return fallback;};
+    r.reflectionStrength=scalar("natron:reflectionStrength",.25f);r.reflectionRoughness=scalar("natron:reflectionRoughness",.2f);validateCompositing(r);return r;
+}
 std::string summarize(const VtValue& value) {
     if(value.IsArrayValued())return std::to_string(value.GetArraySize())+" elements ("+value.GetTypeName()+")";
     const auto s=TfStringify(value);return s.size()>512?s.substr(0,512)+"...":s;
@@ -80,13 +92,17 @@ struct UsdSceneValue::Impl {
         }
         if(UsdGeomImageable imageable{prim})r.visibility=imageable.ComputeVisibility(UsdTimeCode(time)).GetString();
         if(!details)return r;
+        if(prim.IsActive() && prim.IsLoaded() && UsdGeomXformable(prim)) {
+            UsdGeomXformCache cache{UsdTimeCode(time)};
+            r.transform=basis*matrix(cache.GetLocalToWorldTransform(prim));r.hasTransform=true;
+        }
         for(const auto& spec:prim.GetPrimStack()) {
             const auto& id=spec->GetLayer()->GetIdentifier();
             if(std::find(r.layers.begin(),r.layers.end(),id)==r.layers.end())r.layers.push_back(id);
         }
         for(const auto& api:prim.GetAppliedSchemas())r.apis.push_back(api.GetString());
         if(prim.IsActive() && prim.IsLoaded() && UsdGeomImageable(prim)) {
-            UsdGeomBBoxCache cache(UsdTimeCode(time),{UsdGeomTokens->default_,UsdGeomTokens->render,UsdGeomTokens->proxy},true);
+            UsdGeomBBoxCache cache(UsdTimeCode(time),{UsdGeomTokens->default_,UsdGeomTokens->render,UsdGeomTokens->proxy,UsdGeomTokens->guide},true);
             const auto box=cache.ComputeWorldBound(prim);const auto range=box.ComputeAlignedRange();
             if(!range.IsEmpty()) {
                 bool first=true;
@@ -194,7 +210,7 @@ std::shared_ptr<const UsdSceneValue> UsdSceneValue::compose(const std::string& a
     for(const auto& edit:edits) {
         // A shared upstream edit can reach Scene through several inputs.
         // Apply identical opinions once, while retaining distinct instances.
-        if(!edit.identity.empty() && std::any_of(applied.begin(),applied.end(),[&](const UsdPrimEdit* p){return p->identity==edit.identity && p->kind==edit.kind && p->paths==edit.paths && p->transform.m==edit.transform.m && p->visible==edit.visible && p->materialPath==edit.materialPath && p->cameraVisible==edit.cameraVisible && p->shadowVisible==edit.shadowVisible && p->reflectionVisible==edit.reflectionVisible && p->holdout==edit.holdout;}))continue;
+        if(!edit.identity.empty() && std::any_of(applied.begin(),applied.end(),[&](const UsdPrimEdit* p){return p->identity==edit.identity && p->kind==edit.kind && p->paths==edit.paths && p->transform.m==edit.transform.m && p->visible==edit.visible && p->materialPath==edit.materialPath && p->cameraVisible==edit.cameraVisible && p->shadowVisible==edit.shadowVisible && p->reflectionVisible==edit.reflectionVisible && p->holdout==edit.holdout && p->role==edit.role && p->shadowDensity==edit.shadowDensity && p->shadowTint.x==edit.shadowTint.x && p->shadowTint.y==edit.shadowTint.y && p->shadowTint.z==edit.shadowTint.z && p->reflectionStrength==edit.reflectionStrength && p->reflectionRoughness==edit.reflectionRoughness;}))continue;
         applied.push_back(&edit);
         std::vector<UsdPrim> targets;
         for(const auto& text:edit.paths) {
@@ -206,6 +222,17 @@ std::shared_ptr<const UsdSceneValue> UsdSceneValue::compose(const std::string& a
                 prim=stage->GetPrimAtPath(path);
             }
             targets.push_back(prim);
+        }
+        if(edit.kind==UsdPrimEdit::Kind::Compositing){
+            // A downstream role applies to the selected subtree even if a
+            // source Mesh authors its own inherited-primvar defaults.
+            std::vector<SdfPath> instances;
+            for(const auto& root:targets)for(const auto& p:UsdPrimRange(root,UsdTraverseInstanceProxies()))if(p.IsInstance())instances.push_back(p.GetPath());
+            for(const auto& path:instances)if(auto prim=stage->GetPrimAtPath(path))prim.SetInstanceable(false);
+            std::vector<UsdPrim> expanded=targets;
+            for(const auto& root:targets)for(const auto& p:UsdPrimRange(stage->GetPrimAtPath(root.GetPath())))if(UsdGeomMesh(p))expanded.push_back(p);
+            std::sort(expanded.begin(),expanded.end(),[](const auto& a,const auto& b){return a.GetPath()<b.GetPath();});
+            expanded.erase(std::unique(expanded.begin(),expanded.end()),expanded.end());targets=std::move(expanded);
         }
         if(edit.kind==UsdPrimEdit::Kind::Transform) {
             for(double v:edit.transform.m)if(!std::isfinite(v))throw std::runtime_error("USD transform delta must be finite");
@@ -237,12 +264,23 @@ std::shared_ptr<const UsdSceneValue> UsdSceneValue::compose(const std::string& a
                 const auto material=UsdShadeMaterial(stage->GetPrimAtPath(primPath(edit.materialPath)));
                 if(!material || !UsdShadeMaterialBindingAPI::Apply(prim).Bind(material,UsdShadeTokens->strongerThanDescendants))throw std::runtime_error("Cannot bind USD material: "+edit.materialPath);
             } else {
+                Compositing comp;comp.role=edit.role;comp.shadowDensity=edit.shadowDensity;comp.shadowTint=edit.shadowTint;comp.reflectionStrength=edit.reflectionStrength;comp.reflectionRoughness=edit.reflectionRoughness;validateCompositing(comp);
                 prim.AddAppliedSchema(TfToken("NatronCompositingAPI"));
+                prim.CreateAttribute(TfToken("natron:compositingRole"),SdfValueTypeNames->Int).Set(int(edit.role));
+                prim.CreateAttribute(TfToken("natron:shadowDensity"),SdfValueTypeNames->Float).Set(float(edit.shadowDensity));
+                prim.CreateAttribute(TfToken("natron:shadowTint"),SdfValueTypeNames->Color3f).Set(GfVec3f(edit.shadowTint.x,edit.shadowTint.y,edit.shadowTint.z));
+                prim.CreateAttribute(TfToken("natron:reflectionStrength"),SdfValueTypeNames->Float).Set(float(edit.reflectionStrength));
+                prim.CreateAttribute(TfToken("natron:reflectionRoughness"),SdfValueTypeNames->Float).Set(float(edit.reflectionRoughness));
                 for(const auto& flag:std::vector<std::pair<const char*,bool>>{{"natron:cameraVisible",edit.cameraVisible},{"natron:shadowVisible",edit.shadowVisible},{"natron:reflectionVisible",edit.reflectionVisible},{"natron:holdout",edit.holdout}})
                     prim.CreateAttribute(TfToken(flag.first),SdfValueTypeNames->Bool).Set(flag.second);
                 const int mask=(edit.cameraVisible?1:0)|(edit.reflectionVisible?2:0)|(edit.shadowVisible?4:0);
                 UsdGeomPrimvarsAPI pv(prim);pv.CreatePrimvar(TfToken("natron:rayMask"),SdfValueTypeNames->Int,UsdGeomTokens->constant).Set(mask);
-                pv.CreatePrimvar(TfToken("natron:holdout"),SdfValueTypeNames->Int,UsdGeomTokens->constant).Set(edit.holdout?1:0);
+                pv.CreatePrimvar(TfToken("natron:holdout"),SdfValueTypeNames->Int,UsdGeomTokens->constant).Set(edit.holdout || edit.role!=GeometryRole::Surface?1:0);
+                pv.CreatePrimvar(TfToken("natron:compositingRole"),SdfValueTypeNames->Int,UsdGeomTokens->constant).Set(int(edit.role));
+                pv.CreatePrimvar(TfToken("natron:shadowDensity"),SdfValueTypeNames->Float,UsdGeomTokens->constant).Set(float(edit.shadowDensity));
+                pv.CreatePrimvar(TfToken("natron:shadowTint"),SdfValueTypeNames->Color3f,UsdGeomTokens->constant).Set(GfVec3f(edit.shadowTint.x,edit.shadowTint.y,edit.shadowTint.z));
+                pv.CreatePrimvar(TfToken("natron:reflectionStrength"),SdfValueTypeNames->Float,UsdGeomTokens->constant).Set(float(edit.reflectionStrength));
+                pv.CreatePrimvar(TfToken("natron:reflectionRoughness"),SdfValueTypeNames->Float,UsdGeomTokens->constant).Set(float(edit.reflectionRoughness));
             }
         }
     }
@@ -254,6 +292,52 @@ uint64_t UsdSceneValue::revision()const{return _impl->revision;}
 double UsdSceneValue::timeCode()const{return _impl->time;}
 double UsdSceneValue::metersPerUnit()const{return _impl->meters;}
 bool UsdSceneValue::loadPayloads()const{return _impl->payloads;}
+std::vector<UsdCompositingTarget> UsdSceneValue::compositingTargets()const {
+    std::lock_guard<std::mutex> lock(_impl->mutex);std::vector<UsdCompositingTarget> result;
+    for(const auto& prim:UsdPrimRange(_impl->stage->GetPseudoRoot(),UsdTraverseInstanceProxies()))if(UsdGeomMesh(prim)){
+        auto imageable=UsdGeomImageable(prim);const auto purpose=imageable.ComputePurpose();
+        if(imageable.ComputeVisibility(UsdTimeCode(_impl->time))==UsdGeomTokens->invisible || purpose==UsdGeomTokens->guide || purpose==UsdGeomTokens->proxy)continue;
+        result.push_back({prim.GetPath().GetString(),compositing(prim,_impl->time)});
+    }return result;
+}
+std::shared_ptr<const UsdSceneValue> UsdSceneValue::compositingProbe(const std::vector<std::string>& receivers,bool reference,bool reflection,double roughness)const {
+    const auto targets=compositingTargets();std::lock_guard<std::mutex> lock(_impl->mutex);
+    auto impl=std::make_unique<Impl>();impl->time=_impl->time;impl->meters=_impl->meters;impl->basis=_impl->basis;impl->payloads=_impl->payloads;impl->revision=_impl->revision;
+    const auto root=SdfLayer::CreateAnonymous("NatronCompositingProbe.usda");root->TransferContent(_impl->stage->GetRootLayer());
+    impl->stage=UsdStage::Open(root,UsdStage::LoadNone);auto stage=impl->stage;stage->SetLoadRules(_impl->stage->GetLoadRules());
+    // Private per-instance primary/secondary overrides never modify source
+    // prototypes. Preserve the published instance structure in the UI stage.
+    std::vector<SdfPath> instances;for(const auto& prim:UsdPrimRange(stage->GetPseudoRoot(),UsdTraverseInstanceProxies()))if(prim.IsInstance())instances.push_back(prim.GetPath());
+    for(const auto& path:instances)stage->GetPrimAtPath(path).SetInstanceable(false);
+    const auto material=UsdShadeMaterial::Define(stage,SdfPath("/Natron/Materials/CompositingProbe"));
+    auto shader=UsdShadeShader::Define(stage,SdfPath("/Natron/Materials/CompositingProbe/Surface"));shader.CreateIdAttr().Set(TfToken("UsdPreviewSurface"));
+    const bool matte=receivers.empty();
+    shader.CreateInput(TfToken("diffuseColor"),SdfValueTypeNames->Color3f).Set(matte?GfVec3f(0):GfVec3f(1));
+    shader.CreateInput(TfToken("emissiveColor"),SdfValueTypeNames->Color3f).Set(matte?GfVec3f(1):GfVec3f(0));
+    shader.CreateInput(TfToken("useSpecularWorkflow"),SdfValueTypeNames->Int).Set(1);shader.CreateInput(TfToken("specularColor"),SdfValueTypeNames->Color3f).Set(GfVec3f(0));
+    shader.CreateInput(TfToken("roughness"),SdfValueTypeNames->Float).Set(1.f);shader.CreateInput(TfToken("ior"),SdfValueTypeNames->Float).Set(1.f);
+    if(reflection){
+        shader.CreateInput(TfToken("diffuseColor"),SdfValueTypeNames->Color3f).Set(GfVec3f(1));
+        shader.CreateInput(TfToken("useSpecularWorkflow"),SdfValueTypeNames->Int).Set(0);
+        shader.CreateInput(TfToken("metallic"),SdfValueTypeNames->Float).Set(1.f);
+        shader.CreateInput(TfToken("roughness"),SdfValueTypeNames->Float).Set(float(roughness));
+    }
+    shader.CreateOutput(TfToken("surface"),SdfValueTypeNames->Token);material.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(),TfToken("surface"));
+    for(const auto& target:targets){
+        auto prim=stage->GetPrimAtPath(SdfPath(target.path));if(!prim)continue;const auto& c=target.value;
+        int mask=(c.cameraVisible?1:0)|(c.reflectionVisible?2:0)|(c.shadowVisible?4:0);bool holdout=c.holdout || c.role!=GeometryRole::Surface;
+        const bool proxy=c.role==GeometryRole::Occluder || (c.role==GeometryRole::Surface && c.holdout);
+        const bool receiver=std::find(receivers.begin(),receivers.end(),target.path)!=receivers.end();
+        if(matte){holdout=!proxy;mask&=1;}
+        else if(receiver){holdout=false;}
+        else if(c.role==GeometryRole::Surface && !c.holdout){mask&=~1;if(reference)mask=reflection?(mask&~2):0;holdout=false;}
+        else holdout=true;
+        UsdGeomPrimvarsAPI pv(prim);pv.CreatePrimvar(TfToken("natron:rayMask"),SdfValueTypeNames->Int,UsdGeomTokens->constant).Set(mask);
+        pv.CreatePrimvar(TfToken("natron:holdout"),SdfValueTypeNames->Int,UsdGeomTokens->constant).Set(holdout?1:0);
+        if((matte && proxy) || receiver)UsdShadeMaterialBindingAPI::Apply(prim).Bind(material,UsdShadeTokens->strongerThanDescendants);
+    }
+    return std::shared_ptr<const UsdSceneValue>(new UsdSceneValue(std::move(impl)));
+}
 UsdPrimPage UsdSceneValue::children(const std::string& path,size_t offset,size_t limit)const {
     std::lock_guard<std::mutex> lock(_impl->mutex);auto prim=_impl->stage->GetPrimAtPath(primPath(path));if(!prim)throw std::runtime_error("USD prim no longer exists: "+path);
     UsdPrimPage result;limit=std::clamp<size_t>(limit,1,256);size_t i=0;
@@ -265,7 +349,7 @@ UsdPrimPage UsdSceneValue::children(const std::string& path,size_t offset,size_t
 UsdPrimInfo UsdSceneValue::inspect(const std::string& path)const {
     std::lock_guard<std::mutex> lock(_impl->mutex);auto prim=_impl->stage->GetPrimAtPath(primPath(path));if(!prim)throw std::runtime_error("USD prim no longer exists: "+path);return _impl->info(prim,true);
 }
-Camera UsdSceneValue::camera(const std::string& path)const {
+Camera UsdSceneValue::camera(const std::string& path,bool retainFilmGate)const {
     std::lock_guard<std::mutex> lock(_impl->mutex);auto c=UsdGeomCamera(_impl->stage->GetPrimAtPath(primPath(path)));
     if(!c)throw std::runtime_error("USD Prim is not a camera: "+path);
     const auto time=UsdTimeCode(_impl->time);UsdGeomXformCache cache(time);Camera result;
@@ -275,6 +359,7 @@ Camera UsdSceneValue::camera(const std::string& path)const {
     const auto horizontal=value(c.GetHorizontalApertureAttr(),20.955f),vertical=value(c.GetVerticalApertureAttr(),15.2908f);
     if(!std::isfinite(horizontal) || horizontal<=0 || !std::isfinite(vertical) || vertical<=0)throw std::runtime_error("USD camera aperture must be finite and positive");
     result.focal=value(c.GetFocalLengthAttr(),50)*_impl->meters*100;result.aperture=horizontal*_impl->meters*100;
+    if(retainFilmGate)result.apertureAspect=horizontal/vertical;
     result.offsetX=value(c.GetHorizontalApertureOffsetAttr(),0)/horizontal;result.offsetY=value(c.GetVerticalApertureOffsetAttr(),0)/horizontal;
     TfToken projection;c.GetProjectionAttr().Get(&projection,time);result.orthographic=projection==UsdGeomTokens->orthographic;
     result.orthoWidth=horizontal*_impl->meters*.1;GfVec2f clip(1,1000000);c.GetClippingRangeAttr().Get(&clip,time);
@@ -300,11 +385,13 @@ bool UsdSceneValue::saveRenderAssembly(const std::string& filename,const std::st
 struct UsdSceneValue::Impl {};
 UsdSceneValue::UsdSceneValue(std::unique_ptr<Impl> impl):_impl(std::move(impl)){}UsdSceneValue::~UsdSceneValue()=default;
 bool UsdSceneValue::available(){return false;}
+std::vector<UsdCompositingTarget> UsdSceneValue::compositingTargets()const{throw std::runtime_error("OpenUSD is unavailable");}
+std::shared_ptr<const UsdSceneValue> UsdSceneValue::compositingProbe(const std::vector<std::string>&,bool,bool,double)const{throw std::runtime_error("OpenUSD is unavailable");}
 std::shared_ptr<const UsdSceneValue> UsdSceneValue::compose(const std::string&,const std::vector<UsdSceneSource>&,uint64_t,const std::vector<UsdPrimEdit>&){throw std::runtime_error("OpenUSD is unavailable");}
 uint64_t UsdSceneValue::revision()const{return 0;}double UsdSceneValue::timeCode()const{return 1;}double UsdSceneValue::metersPerUnit()const{return 1;}bool UsdSceneValue::loadPayloads()const{return false;}
 UsdPrimPage UsdSceneValue::children(const std::string&,size_t,size_t)const{throw std::runtime_error("OpenUSD is unavailable");}
 UsdPrimInfo UsdSceneValue::inspect(const std::string&)const{throw std::runtime_error("OpenUSD is unavailable");}
-Camera UsdSceneValue::camera(const std::string&)const{throw std::runtime_error("OpenUSD is unavailable");}
+Camera UsdSceneValue::camera(const std::string&,bool)const{throw std::runtime_error("OpenUSD is unavailable");}
 void UsdSceneValue::saveAssembly(const std::string&)const{throw std::runtime_error("OpenUSD is unavailable");}
 bool UsdSceneValue::saveRenderAssembly(const std::string&,const std::string&,std::string&,bool)const{throw std::runtime_error("OpenUSD is unavailable");}
 #endif

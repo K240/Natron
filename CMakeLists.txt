@@ -153,6 +153,8 @@ add_subdirectory(libs)
 
 add_subdirectory(Gpu)
 
+add_subdirectory(Scene)
+
 add_subdirectory(HostSupport)
 
 add_subdirectory(Engine)
